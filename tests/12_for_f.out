@@ -1,0 +1,4 @@
+Testing FOR /F with string:
+Hello
+Testing FOR /F with multiple lines:
+First word: Line1

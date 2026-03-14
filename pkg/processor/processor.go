@@ -19,6 +19,9 @@ type Processor struct {
 	Stdout  io.Writer
 	Stdin   io.Reader
 	Stderr  io.Writer
+	Nodes   []parser.Node
+	PC      int
+	Exited  bool
 }
 
 // New creates a Processor.
@@ -75,9 +78,12 @@ func (p *Processor) ExpandNode(n *parser.SimpleCommand) *parser.SimpleCommand {
 		Suppressed: n.Suppressed,
 		Redirects:  n.Redirects,
 	}
-	out.Name = p.ProcessLine(n.Name)
+	out.Name = strings.TrimSpace(p.ProcessLine(n.Name))
 	for _, a := range n.Args {
-		out.Args = append(out.Args, p.ProcessLine(a))
+		expanded := strings.TrimSpace(p.ProcessLine(a))
+		if expanded != "" {
+			out.Args = append(out.Args, expanded)
+		}
 	}
 	return out
 }
@@ -94,21 +100,35 @@ func (p *Processor) ShouldEcho(n *parser.SimpleCommand) bool {
 // HandleEchoBuiltin processes the "echo" builtin command, updating p.Echo and
 // returning the text to print (empty string if it is a state-change command).
 func (p *Processor) HandleEchoBuiltin(args []string) (output string, stateChanged bool) {
-	if len(args) == 0 {
+	var filtered []string
+	for _, a := range args {
+		trimmed := strings.TrimSpace(a)
+		if trimmed != "" {
+			filtered = append(filtered, trimmed)
+		}
+	}
+
+	if len(filtered) == 0 {
 		if p.Echo {
 			return "ECHO is on", false
 		}
 		return "ECHO is off", false
 	}
-	switch strings.ToLower(args[0]) {
-	case "on":
+	
+	first := strings.ToLower(filtered[0])
+	if first == "on" {
 		p.Echo = true
 		return "", true
-	case "off":
+	}
+	if first == "off" {
 		p.Echo = false
 		return "", true
 	}
-	return strings.Join(args, " "), false
+	
+	// JOIN original args to preserve spaces between words if they were intended
+	// but we must be careful about leading spaces from TokenWhitespace.
+	// Systematic way: join the filtered ones.
+	return strings.Join(filtered, " "), false
 }
 
 // HandleSetBuiltin parses and applies a SET command.

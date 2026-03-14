@@ -1,0 +1,3 @@
+This is a long command that spans multiple lines.
+X is 1 ^(inline with caret^)
+Caret at end of line is continued.

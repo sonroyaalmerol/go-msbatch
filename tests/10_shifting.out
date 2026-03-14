@@ -1,0 +1,8 @@
+Arg 1 is A
+Arg 2 is B
+After shift:
+Arg 1 is B
+Arg 2 is C
+After second shift:
+Arg 1 is C
+Arg 2 is

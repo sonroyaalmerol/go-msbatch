@@ -12,8 +12,9 @@ type item = lex.Item[lexer.TokenType, rune]
 
 // Parser converts a BatchLexer token stream into an AST.
 type Parser struct {
-	tokens []item
-	pos    int
+	tokens        []item
+	pos           int
+	compoundDepth int
 }
 
 // New drains all tokens from src into a Parser.
@@ -37,7 +38,7 @@ func (p *Parser) Parse() []Node {
 		if p.pos >= len(p.tokens) {
 			break
 		}
-		
+
 		if n := p.parseCommand(); n != nil {
 			nodes = append(nodes, n)
 		} else {
@@ -74,25 +75,16 @@ func val(t item) string {
 	return string(t.Value)
 }
 
-// skipWS advances past whitespace-only TokenText tokens (space/tab/CR/LF).
+// skipWS advances past whitespace and newline tokens.
 func (p *Parser) skipWS() {
 	for p.pos < len(p.tokens) {
 		t := p.tokens[p.pos]
-		if t.Type != lexer.TokenText {
-			break
-		}
-		if strings.TrimSpace(val(t)) == "" {
+		if t.Type == lexer.TokenWhitespace || t.Type == lexer.TokenNewline {
 			p.pos++
 			continue
 		}
 		break
 	}
-}
-
-// isWSRune reports whether r is a CMD token-delimiter whitespace character.
-// Space and tab are the delimiters that split arguments; the rest are kept.
-func isWSRune(r rune) bool {
-	return r == ' ' || r == '\t' || r == '\r' || r == '\n'
 }
 
 // isPipeOrAmpVal reports whether a TokenPunctuation value is a command separator.
@@ -101,5 +93,22 @@ func isPipeOrAmpVal(v string) bool {
 	case "|", "||", "&", "&&":
 		return true
 	}
+	return false
+}
+
+func isCommandStart(s string) bool {
+	// Standard CMD keywords that start a command.
+	// We must be careful not to match them if they are just prefixes of other words.
+	// But our lexer already emits them as separate words usually.
+	lower := strings.ToLower(strings.TrimSpace(s))
+	switch lower {
+	case "if", "for", "rem", "goto", "call", "set", "echo", "exit", "setlocal", "endlocal", "shift", "do", "in", "else":
+		return true
+	}
+	if strings.HasPrefix(lower, ":") {
+		return true
+	}
+	// logical operators and redirections are structural, not 'command names'
+	// but they delimit commands.
 	return false
 }

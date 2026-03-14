@@ -1,0 +1,9 @@
+Testing tokens and delims:
+Token 2: part2
+Token 3: part3
+Testing usebackq with backquoted command:
+I: hello
+J: world
+Testing file parsing with custom delims:
+KEY=key
+VALUE=value

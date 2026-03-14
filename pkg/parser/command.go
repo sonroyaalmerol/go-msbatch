@@ -91,7 +91,7 @@ func (p *Parser) parsePrimary() Node {
 	if t.Type == lexer.TokenKeyword {
 		switch strings.ToLower(val(t)) {
 		case "if":
-			return p.parseIf(suppressed)
+			return p.parseIf()
 		case "for":
 			return p.parseFor(suppressed)
 		case "rem":
@@ -113,15 +113,15 @@ func (p *Parser) parsePrimary() Node {
 	return cmd
 }
 
-// parseSimpleCommand reads one keyword or text token as the command name,
+// parseSimpleCommand reads one keyword or text/word token as the command name,
 // then collects argument and redirection tokens.
 func (p *Parser) parseSimpleCommand(suppressed bool) *SimpleCommand {
 	t := p.peek()
-	if t.Type == lexer.TokenEOF || t.Type == lexer.TokenPunctuation {
+	if t.Type == lexer.TokenEOF || t.Type == lexer.TokenPunctuation || t.Type == lexer.TokenNewline {
 		return nil
 	}
 	cmd := &SimpleCommand{Suppressed: suppressed}
-	cmd.Name = strings.TrimSpace(val(p.consume()))
+	cmd.Name = val(p.consume())
 	p.collectArgs(cmd)
 	return cmd
 }
@@ -131,8 +131,8 @@ func (p *Parser) collectArgs(cmd *SimpleCommand) {
 	var cur strings.Builder
 
 	flushArg := func() {
-		if s := cur.String(); s != "" {
-			cmd.Args = append(cmd.Args, s)
+		if cur.Len() > 0 {
+			cmd.Args = append(cmd.Args, cur.String())
 			cur.Reset()
 		}
 	}
@@ -140,71 +140,42 @@ func (p *Parser) collectArgs(cmd *SimpleCommand) {
 	for p.pos < len(p.tokens) {
 		t := p.peek()
 		switch t.Type {
-		case lexer.TokenEOF:
+		case lexer.TokenEOF, lexer.TokenNewline:
 			flushArg()
 			return
 
-		case lexer.TokenPunctuation:
-			v := val(t)
-			if isPipeOrAmpVal(v) || v == ")" {
+		case lexer.TokenWhitespace:
+			p.consume()
+			flushArg()
+
+		case lexer.TokenKeyword:
+			v := strings.ToLower(val(t))
+			if v == "else" || v == "do" || v == "in" {
 				flushArg()
 				return
 			}
-			// Other punctuation (like "=", ":", "@") — include in current arg
+			cur.WriteString(val(p.consume()))
+
+		case lexer.TokenPunctuation:
+			v := val(t)
+			if isPipeOrAmpVal(v) || (v == ")" && p.compoundDepth > 0) {
+				flushArg()
+				return
+			}
 			cur.WriteString(val(p.consume()))
 
 		case lexer.TokenRedirect:
 			flushArg()
 			p.collectRedirect(cmd)
 
-		case lexer.TokenText:
-			s := val(p.consume())
-			// A token that is only newline characters ends the command.
-			if isNewlineOnly(s) {
-				flushArg()
-				return
-			}
-			// Split on whitespace; whitespace segments flush the current arg.
-			splitTextArgs(s, &cur, cmd)
+		case lexer.TokenStringDouble, lexer.TokenStringSingle, lexer.TokenStringBT:
+			cur.WriteString(p.collectQuotedString())
 
 		default:
-			// TokenNameVariable, TokenStringDouble, TokenStringEscape,
-			// TokenNumber, TokenOperator, TokenOperatorWord, TokenKeyword,
-			// TokenComment, TokenNameLabel — concatenate to current arg.
-			p.consume()
-			cur.WriteString(val(t))
+			cur.WriteString(val(p.consume()))
 		}
 	}
 	flushArg()
-}
-
-// splitTextArgs splits a raw text token by whitespace, flushing the current
-// arg builder on each whitespace boundary.
-func splitTextArgs(s string, cur *strings.Builder, cmd *SimpleCommand) {
-	runes := []rune(s)
-	i := 0
-	for i < len(runes) {
-		// consume whitespace run → flush arg
-		j := i
-		for j < len(runes) && isWSRune(runes[j]) {
-			j++
-		}
-		if j > i {
-			if cur.Len() > 0 {
-				cmd.Args = append(cmd.Args, cur.String())
-				cur.Reset()
-			}
-			i = j
-			continue
-		}
-		// consume non-whitespace run → build arg
-		j = i
-		for j < len(runes) && !isWSRune(runes[j]) {
-			j++
-		}
-		cur.WriteString(string(runes[i:j]))
-		i = j
-	}
 }
 
 // collectRedirect reads a TokenRedirect and its target from the stream.
@@ -241,9 +212,10 @@ func (p *Parser) collectRedirect(cmd *SimpleCommand) {
 		r.FD = extractFD(v, "<", 0)
 	}
 
-	// Target file is the next TokenText
-	if p.pos < len(p.tokens) && p.tokens[p.pos].Type == lexer.TokenText {
-		r.Target = strings.TrimSpace(val(p.consume()))
+	p.skipWS() // skip to target
+	t := p.peek()
+	if t.Type != lexer.TokenEOF && t.Type != lexer.TokenNewline && t.Type != lexer.TokenPunctuation {
+		r.Target = p.collectStoken()
 	}
 	cmd.Redirects = append(cmd.Redirects, r)
 }
@@ -271,31 +243,10 @@ func (p *Parser) parseRem() Node {
 			sb.WriteString(val(p.consume()))
 			break
 		}
-		if isNewlineToken(t) {
+		if t.Type == lexer.TokenNewline || t.Type == lexer.TokenEOF {
 			break
 		}
-		// rare: consume stray tokens
 		p.consume()
 	}
 	return &CommentNode{Text: sb.String()}
-}
-
-func isNewlineToken(t item) bool {
-	if t.Type != lexer.TokenText {
-		return false
-	}
-	return isNewlineOnly(val(t))
-}
-
-// isNewlineOnly reports whether s contains only CR/LF characters.
-func isNewlineOnly(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r != '\n' && r != '\r' {
-			return false
-		}
-	}
-	return true
 }

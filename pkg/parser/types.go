@@ -152,3 +152,4 @@ type CommentNode struct {
 }
 
 func (n *CommentNode) Kind() NodeKind { return NodeComment }
+

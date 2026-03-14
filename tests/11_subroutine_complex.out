@@ -1,0 +1,5 @@
+Initial GLOBAL_VAR is Global
+Inside subroutine, GLOBAL_VAR is Overridden
+Inside subroutine, LOCAL_VAR is Local
+After subroutine, GLOBAL_VAR is Global
+After subroutine, LOCAL_VAR is

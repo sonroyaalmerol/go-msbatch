@@ -1,0 +1,9 @@
+STR is HelloWorld
+Slicing first 5: Hello
+Slicing last 5: World
+Slicing mid: llo
+Slicing till end: World
+REPLACE is The quick brown fox
+Replace fox with cat: The quick brown cat
+Replace space with underscore: The_quick_brown_fox
+Wildcard replace: brown fox

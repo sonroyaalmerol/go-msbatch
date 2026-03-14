@@ -1,0 +1,7 @@
+Testing FOR /L:
+Step 1
+Step 2
+Step 3
+Testing FOR file globbing:
+Found file1.test
+Found file2.test

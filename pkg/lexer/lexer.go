@@ -28,6 +28,9 @@ const (
 	TokenOperator
 	TokenOperatorWord
 	TokenRedirect
+	TokenWhitespace
+	TokenNewline
+	TokenWord
 )
 
 func (t TokenType) String() string {
@@ -39,7 +42,8 @@ func (t TokenType) String() string {
 		TokenStringSingle: "String.Single", TokenStringBT: "String.Backtick",
 		TokenStringEscape: "String.Escape", TokenNumber: "Number",
 		TokenOperator: "Operator", TokenOperatorWord: "Operator.Word",
-		TokenRedirect: "Redirect",
+		TokenRedirect: "Redirect", TokenWhitespace: "Whitespace",
+		TokenNewline: "Newline", TokenWord: "Word",
 	}
 	if s, ok := names[t]; ok {
 		return s
@@ -49,13 +53,20 @@ func (t TokenType) String() string {
 
 const wsChars = "\t\v\f\r ,;=\xa0"
 
-func isNL(r rune) bool    { return r == '\n' || r == '\x1a' }
-func isWS(r rune) bool    { return strings.ContainsRune(wsChars, r) }
-func isPunct(r rune) bool { return r == '&' || r == '<' || r == '>' || r == '|' }
+func isWS(r rune) bool {
+	return r == ' ' || r == '\t' || r == '\v' || r == '\f' || r == '\xa0'
+}
+
+func isNL(r rune) bool {
+	return r == '\r' || r == '\n'
+}
+
+func isPunct(r rune) bool {
+	return strings.ContainsRune("()@:|[&><", r)
+}
+
 func isKeywordEnd(r rune) bool {
-	return r == 0 || isWS(r) || isNL(r) || isPunct(r) ||
-		r == '(' || r == '+' || r == '.' || r == '/' ||
-		r == ':' || r == '[' || r == '\\' || r == ']'
+	return r == 0 || isNL(r) || isWS(r) || isPunct(r) || r == '/'
 }
 
 var builtinCommands = map[string]bool{
@@ -94,21 +105,18 @@ func (bl *BatchLexer) NextItem() lex.Item[TokenType, rune] {
 func skipWS(l lex.Lexer[TokenType, rune]) {
 	l.AcceptRun(isWS)
 	if l.Width() > 0 {
-		l.Ignore()
+		l.Emit(TokenWhitespace)
 	}
 }
 
 func (bl *BatchLexer) isFollowPlain(r rune) bool {
-	if r == 0 || isNL(r) {
+	if r == 0 || isNL(r) || isWS(r) {
 		return false
 	}
 	if r == '|' || r == '&' || r == '>' || r == '<' {
 		return false
 	}
-	if r == '"' || r == '%' || r == '!' || r == '^' {
-		return false
-	}
-	if r == '(' {
+	if r == '"' || r == '%' || r == '!' || r == '^' || r == '`' {
 		return false
 	}
 	if r == ')' && bl.compoundDepth > 0 {
@@ -124,11 +132,11 @@ func (bl *BatchLexer) stateRoot(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenT
 		return nil
 	case isNL(r):
 		l.AcceptRun(isNL)
-		l.Emit(TokenText)
+		l.Emit(TokenNewline)
 		return bl.stateRoot
 	case isWS(r):
 		l.AcceptRun(isWS)
-		l.Emit(TokenText)
+		l.Emit(TokenWhitespace)
 		return bl.stateRoot
 	case r == '(':
 		bl.compoundDepth++
@@ -161,6 +169,8 @@ func (bl *BatchLexer) stateRoot(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenT
 		return bl.stateRedirectRune(l, r)
 	case r == '"':
 		return bl.lexStringDoubleBody(bl.stateRoot)(l)
+	case r == '`':
+		return bl.lexStringBTBody(bl.stateRoot)(l)
 	case r == '^':
 		r2 := l.Next()
 		if r2 == 0 {
@@ -213,11 +223,22 @@ func (bl *BatchLexer) stateWord(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenT
 		if r == 0 {
 			return nil
 		}
-		l.Emit(TokenText)
+		l.Prev()
 		return bl.stateRoot
 	}
 	word := bl.drainBuf(l)
 	lower := strings.ToLower(word)
+
+	if word == "==" {
+		l.Emit(TokenOperator)
+		return bl.stateFollow
+	}
+
+	if opWords[lower] {
+		l.Emit(TokenOperatorWord)
+		return bl.stateFollow
+	}
+
 	switch lower {
 	case "rem":
 		l.Emit(TokenKeyword)
@@ -243,11 +264,17 @@ func (bl *BatchLexer) stateWord(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenT
 	case "call":
 		l.Emit(TokenKeyword)
 		return bl.stateCall
+	case "do":
+		l.Emit(TokenKeyword)
+		return bl.stateRoot
+	case "in":
+		l.Emit(TokenKeyword)
+		return bl.stateRoot
 	default:
 		if builtinCommands[lower] {
 			l.Emit(TokenKeyword)
 		} else {
-			l.Emit(TokenText)
+			l.Emit(TokenWord)
 		}
 		return bl.stateFollow
 	}
@@ -275,110 +302,42 @@ func (bl *BatchLexer) stateFollow(l lex.Lexer[TokenType, rune]) lex.StateFn[Toke
 	case r == 0:
 		return bl.stateRoot
 	case isNL(r):
-		l.Emit(TokenText)
+		l.Prev()
+		return bl.stateRoot
+	case isWS(r):
+		l.Prev()
 		return bl.stateRoot
 	case r == '|' || r == '&':
-		l.AcceptRun(func(r rune) bool { return r == '|' || r == '&' })
-		l.Emit(TokenPunctuation)
+		l.Prev()
 		return bl.stateRoot
-	case r == ')' && bl.compoundDepth > 0:
-		bl.compoundDepth--
-		l.Emit(TokenPunctuation)
-		return bl.stateRoot
-	case r == '(':
-		bl.compoundDepth++
-		l.Emit(TokenPunctuation)
+	case r == ')' || r == '(':
+		l.Prev()
 		return bl.stateRoot
 	case r == '>' || r == '<':
-		return bl.stateRedirectRune(l, r)
+		l.Prev()
+		return bl.stateRoot
 	case r == '"':
-		return bl.lexStringDoubleBody(bl.stateFollow)(l)
+		l.Prev()
+		return bl.stateRoot
 	case r == '%':
-		l.Backup()
-		bl.lexPercent(l)
-		return bl.stateFollow
+		l.Prev()
+		return bl.stateRoot
 	case r == '!':
-		l.Backup()
-		bl.lexDelayedVar(l)
-		return bl.stateFollow
+		l.Prev()
+		return bl.stateRoot
 	case r == '^':
-		r2 := l.Next()
-		if r2 == 0 {
-			return bl.stateRoot
-		}
-		if isNL(r2) {
-			l.Ignore()
-		} else {
-			l.Emit(TokenStringEscape)
-		}
-		return bl.stateFollow
+		l.Prev()
+		return bl.stateRoot
 	default:
-		l.Emit(TokenText)
+		l.Prev()
 		return bl.stateRoot
 	}
 }
 
 func (bl *BatchLexer) stateRem(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
-	l.AcceptRun(func(r rune) bool { return r != 0 && !isNL(r) })
-	if l.Width() > 0 {
-		l.Emit(TokenComment)
-	}
+	l.AcceptRun(func(r rune) bool { return !isNL(r) && r != 0 })
+	l.Emit(TokenComment)
 	return bl.stateRoot
-}
-
-func (bl *BatchLexer) stateLabelName(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
-	l.AcceptRun(func(r rune) bool {
-		return r != 0 && !isNL(r) && !isWS(r) && !isPunct(r) && r != ':' && r != '+'
-	})
-	if l.Width() > 0 {
-		l.Emit(TokenNameLabel)
-		return bl.stateLabelName
-	}
-	l.AcceptRun(func(r rune) bool { return r != 0 && !isNL(r) })
-	if l.Width() > 0 {
-		l.Emit(TokenComment)
-	}
-	return bl.stateRoot
-}
-
-func (bl *BatchLexer) stateGoto(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
-	skipWS(l)
-	if l.Check(func(r rune) bool { return r == ':' }) {
-		l.Next()
-		l.Emit(TokenPunctuation)
-		return bl.stateGotoLabel
-	}
-	return bl.stateGotoLabel
-}
-
-func (bl *BatchLexer) stateGotoLabel(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
-	l.AcceptRun(func(r rune) bool {
-		return r != 0 && !isNL(r) && !isWS(r) && !isPunct(r)
-	})
-	if l.Width() > 0 {
-		l.Emit(TokenNameLabel)
-	}
-	return bl.stateFollow
-}
-
-func (bl *BatchLexer) stateCall(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
-	skipWS(l)
-	if l.Check(func(r rune) bool { return r == ':' }) {
-		l.Next()
-		l.Emit(TokenPunctuation)
-		return bl.stateCallLabel
-	}
-	return bl.stateFollow
-}
-
-func (bl *BatchLexer) stateCallLabel(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
-	l.AcceptRun(func(r rune) bool {
-		return r != 0 && !isNL(r) && !isWS(r) && !isPunct(r)
-	})
-	if l.Width() > 0 {
-		l.Emit(TokenNameLabel)
-	}
-	return bl.stateFollow
 }
 
 func (bl *BatchLexer) stateSet(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
@@ -396,24 +355,21 @@ func (bl *BatchLexer) stateSet(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenTy
 			return bl.stateSetVar
 		default:
 			if flag != 0 {
-				l.Backup()
+				l.Prev()
 			}
-			l.Backup()
 		}
 	}
 	return bl.stateSetVar
 }
 
 func (bl *BatchLexer) stateSetVar(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
-	l.AcceptRun(func(r rune) bool { return r != 0 && r != '=' && !isNL(r) })
+	l.AcceptRun(func(r rune) bool {
+		return r != 0 && !isNL(r) && !isWS(r) && !isPunct(r) && r != '='
+	})
 	if l.Width() > 0 {
 		l.Emit(TokenNameVariable)
-		return bl.stateSetEq
 	}
-	return bl.stateFollow
-}
-
-func (bl *BatchLexer) stateSetEq(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
+	skipWS(l)
 	if l.Check(func(r rune) bool { return r == '=' }) {
 		l.Next()
 		l.Emit(TokenPunctuation)
@@ -435,9 +391,8 @@ func (bl *BatchLexer) stateArithmetic(l lex.Lexer[TokenType, rune]) lex.StateFn[
 	case r == ')' && bl.compoundDepth > 0:
 		l.Backup()
 		return bl.stateRoot
-	case isWS(r) && r != '=':
-		// Treat '=' as an operator, not whitespace, in arithmetic expressions.
-		l.AcceptRun(func(r rune) bool { return r != '=' && isWS(r) })
+	case isWS(r):
+		l.AcceptRun(isWS)
 		l.Ignore()
 		return bl.stateArithmetic
 	case r == '(':
@@ -465,17 +420,13 @@ func (bl *BatchLexer) stateArithmetic(l lex.Lexer[TokenType, rune]) lex.StateFn[
 				return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
 			})
 		} else if r2 >= '0' && r2 <= '7' {
-			l.AcceptRun(func(r rune) bool { return r >= '0' && r <= '7' })
+			l.AcceptRun(func(r rune) bool { return r >= '0' && r >= '7' })
 		} else if r2 != 0 {
 			l.Prev()
 		}
 		l.Emit(TokenNumber)
 		return bl.stateArithmetic
 	case r >= '1' && r <= '9':
-		l.AcceptRun(func(r rune) bool { return r >= '0' && r <= '9' })
-		l.Emit(TokenNumber)
-		return bl.stateArithmetic
-	case r == '-':
 		l.AcceptRun(func(r rune) bool { return r >= '0' && r <= '9' })
 		l.Emit(TokenNumber)
 		return bl.stateArithmetic
@@ -491,118 +442,75 @@ func (bl *BatchLexer) stateArithmetic(l lex.Lexer[TokenType, rune]) lex.StateFn[
 		if l.Width() > 0 {
 			l.Emit(TokenNameVariable)
 		}
-		return bl.stateArithmetic
 	}
+	return bl.stateArithmetic
 }
 
 func (bl *BatchLexer) stateFor(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
 	skipWS(l)
+
+	isForF := false
 	if l.Check(func(r rune) bool { return r == '/' }) {
 		l.Next()
 		flag := l.Next()
-		switch unicode.ToLower(flag) {
-		case 'f':
+		flagLower := unicode.ToLower(flag)
+		if flagLower == 'f' || flagLower == 'l' {
 			l.Emit(TokenKeyword)
 			skipWS(l)
-			return bl.stateForF
-		case 'l':
-			l.Emit(TokenKeyword)
-			return bl.stateForVarIn
-		default:
-			if flag != 0 {
-				l.Backup()
-			}
-			l.Backup()
-		}
-	}
-	return bl.stateForVarIn
-}
-
-func (bl *BatchLexer) stateForVarIn(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
-	skipWS(l)
-	if l.Check(func(r rune) bool { return r == '%' }) {
-		l.Next()
-		if !l.Check(func(r rune) bool { return r == '%' }) {
-			l.AcceptRun(func(r rune) bool { return r != 0 && !isWS(r) && !isNL(r) })
+			isForF = (flagLower == 'f')
 		} else {
-			l.Next()
-			l.AcceptRun(func(r rune) bool { return r != 0 && !isWS(r) && !isNL(r) })
+			if flag != 0 {
+				l.Prev()
+			}
+			l.Prev()
 		}
-		l.Emit(TokenNameVariable)
 	}
-	skipWS(l)
+
+	// For /F: consume optional options string before the loop variable.
+	if isForF && l.Check(func(r rune) bool { return r == '"' || r == '\'' || r == '`' }) {
+		quoteChar := l.Next()
+		for {
+			r2 := l.Next()
+			if r2 == quoteChar || r2 == 0 || isNL(r2) {
+				if r2 != quoteChar && r2 != 0 {
+					l.Prev()
+				}
+				break
+			}
+		}
+		switch quoteChar {
+		case '\'':
+			l.Emit(TokenStringSingle)
+		case '`':
+			l.Emit(TokenStringBT)
+		default:
+			l.Emit(TokenStringDouble)
+		}
+		skipWS(l)
+	}
+
+	// Consume loop variable: %%X or %X → emit as TokenNameVariable.
+	if l.Check(func(r rune) bool { return r == '%' }) {
+		l.Next() // first %
+		if l.Check(func(r rune) bool { return r == '%' }) {
+			l.Next() // second %
+		}
+		l.AcceptRun(func(r rune) bool {
+			return r != 0 && !isNL(r) && !isWS(r) && !isPunct(r) && r != '(' && r != ')'
+		})
+		l.Emit(TokenNameVariable)
+		skipWS(l)
+	}
+
 	bl.lexKeyword(l, "in")
 	skipWS(l)
 	if l.Check(func(r rune) bool { return r == '(' }) {
 		l.Next()
+		bl.compoundDepth++
 		l.Emit(TokenPunctuation)
+		return bl.stateRoot
 	}
-	return bl.stateForVarInBody
-}
-
-func (bl *BatchLexer) stateForVarInBody(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
-	l.AcceptRun(func(r rune) bool { return r != ')' && r != 0 && !isNL(r) })
-	if l.Width() > 0 {
-		l.Emit(TokenText)
-		return bl.stateForVarInBody
-	}
-	if l.Check(func(r rune) bool { return r == ')' }) {
-		l.Next()
-		l.Emit(TokenPunctuation)
-	}
-	skipWS(l)
-	bl.lexKeyword(l, "do")
-	return bl.stateFollow
-}
-
-func (bl *BatchLexer) stateForF(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
-	r := l.Next()
-	switch r {
-	case '"':
-		l.AcceptRun(func(r rune) bool { return r != '"' && r != 0 && !isNL(r) })
-		l.Accept(func(r rune) bool { return r == '"' })
-		l.Emit(TokenStringDouble)
-	case '\'':
-		l.AcceptRun(func(r rune) bool { return r != '\'' && r != 0 && !isNL(r) })
-		l.Accept(func(r rune) bool { return r == '\'' })
-		l.Emit(TokenStringSingle)
-	case '`':
-		l.AcceptRun(func(r rune) bool { return r != '`' && r != 0 && !isNL(r) })
-		l.Accept(func(r rune) bool { return r == '`' })
-		l.Emit(TokenStringBT)
-	default:
-		if r != 0 {
-			l.Backup()
-		}
-	}
-	return bl.stateForVarIn
-}
-
-func (bl *BatchLexer) lexKeyword(l lex.Lexer[TokenType, rune], kw string) {
-	runes := []rune(kw)
-	for i, expected := range runes {
-		r := l.Next()
-		if r == 0 || unicode.ToLower(r) != expected {
-			if r != 0 {
-				l.Backup()
-			}
-			for range i {
-				l.Backup()
-			}
-			if l.Width() > 0 {
-				l.Emit(TokenText)
-			}
-			return
-		}
-	}
-	if !l.Check(isKeywordEnd) {
-		l.Backup()
-		if l.Width() > 0 {
-			l.Emit(TokenText)
-		}
-		return
-	}
-	l.Emit(TokenKeyword)
+	return bl.stateRoot
 }
 
 func (bl *BatchLexer) stateIf(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
@@ -640,148 +548,106 @@ func (bl *BatchLexer) stateIf(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenTyp
 		skipWS(l)
 	}
 
-	switch {
-	case bl.tryKeyword(l, "exist"):
+	if bl.tryKeyword(l, "exist") {
 		l.Emit(TokenKeyword)
 		skipWS(l)
-		bl.lexStoken(l)
-	case bl.tryKeyword(l, "defined"):
-		l.Emit(TokenKeyword)
-		skipWS(l)
-		bl.lexStoken(l)
-	case bl.tryKeyword(l, "errorlevel"):
-		l.Emit(TokenKeyword)
-		skipWS(l)
-		l.AcceptRun(func(r rune) bool { return r >= '0' && r <= '9' })
-		if l.Width() > 0 {
-			l.Emit(TokenNumber)
-		}
-	case bl.tryKeyword(l, "cmdextversion"):
-		l.Emit(TokenKeyword)
-		skipWS(l)
-		l.AcceptRun(func(r rune) bool { return r >= '0' && r <= '9' })
-		if l.Width() > 0 {
-			l.Emit(TokenNumber)
-		}
-	default:
-		bl.lexStoken(l)
-		if l.Check(func(r rune) bool { return r == '=' }) {
-			l.Next()
-			l.Accept(func(r rune) bool { return r == '=' })
-			l.Emit(TokenOperator)
-		} else {
-			skipWS(l)
-			var buf strings.Builder
-			l.AcceptRun(func(r rune) bool {
-				if r != 0 && !isWS(r) && !isNL(r) && !isPunct(r) {
-					buf.WriteRune(unicode.ToLower(r))
-					return true
-				}
-				return false
-			})
-			if l.Width() > 0 {
-				if opWords[buf.String()] {
-					l.Emit(TokenOperatorWord)
-				} else {
-					l.Emit(TokenText)
-				}
-			}
-		}
-		skipWS(l)
-		bl.lexStoken(l)
+		return bl.stateFollow
 	}
-	return bl.stateIfThen
+
+	if bl.tryKeyword(l, "defined") {
+		l.Emit(TokenKeyword)
+		skipWS(l)
+		return bl.stateFollow
+	}
+
+	if bl.tryKeyword(l, "errorlevel") {
+		l.Emit(TokenKeyword)
+		skipWS(l)
+		return bl.stateFollow
+	}
+
+	return bl.stateFollow
 }
 
-func (bl *BatchLexer) lexStoken(l lex.Lexer[TokenType, rune]) {
+func (bl *BatchLexer) stateGoto(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
+	skipWS(l)
+	if l.Check(func(r rune) bool { return r == ':' }) {
+		l.Next()
+		l.Emit(TokenPunctuation)
+	}
+	l.AcceptRun(func(r rune) bool { return !isWS(r) && !isNL(r) && r != 0 })
+	l.Emit(TokenNameLabel)
+	return bl.stateRoot
+}
+
+func (bl *BatchLexer) stateCall(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
+	skipWS(l)
+	if l.Check(func(r rune) bool { return r == ':' }) {
+		l.Next()
+		l.Emit(TokenPunctuation)
+		l.AcceptRun(func(r rune) bool { return !isWS(r) && !isNL(r) && r != 0 })
+		l.Emit(TokenNameLabel)
+		return bl.stateFollow
+	}
+	return bl.stateFollow
+}
+
+func (bl *BatchLexer) stateLabelName(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
+	l.AcceptRun(func(r rune) bool { return !isWS(r) && !isNL(r) && r != 0 })
+	l.Emit(TokenNameLabel)
+	return bl.stateRoot
+}
+
+func (bl *BatchLexer) stateRedirectRune(l lex.Lexer[TokenType, rune], r rune) lex.StateFn[TokenType, rune] {
+	if r == '>' && l.Check(func(r rune) bool { return r == '>' }) {
+		l.Next()
+	}
+	if l.Check(func(r rune) bool { return r == '&' }) {
+		l.Next()
+	}
+	l.Emit(TokenRedirect)
+	return bl.stateFollow
+}
+
+func (bl *BatchLexer) stateRedirect(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
+	l.Accept(func(r rune) bool { return r >= '0' && r <= '9' })
 	r := l.Next()
-	switch r {
-	case '"':
-		fn := bl.lexStringDoubleBody(nil)
-		for fn != nil {
-			fn = fn(l)
+	if r != '>' && r != '<' {
+		if r != 0 {
+			l.Prev()
 		}
-		return
-	case '%':
-		l.Backup()
-		bl.lexPercent(l)
-	case '!':
-		l.Backup()
-		bl.lexDelayedVar(l)
-	case 0:
-	default:
-		l.Backup()
-		l.AcceptRun(func(r rune) bool {
-			return r != 0 && !isNL(r) && !isWS(r) && !isPunct(r) &&
-				r != '"' && r != '%' && r != '!'
-		})
 		if l.Width() > 0 {
 			l.Emit(TokenText)
 		}
+		return bl.stateRoot
+	}
+	return bl.stateRedirectRune(l, r)
+}
+
+func (bl *BatchLexer) lexKeyword(l lex.Lexer[TokenType, rune], kw string) {
+	if bl.tryKeyword(l, kw) {
+		l.Emit(TokenKeyword)
 	}
 }
 
 func (bl *BatchLexer) tryKeyword(l lex.Lexer[TokenType, rune], kw string) bool {
-	runes := []rune(kw)
-	consumed := 0
-	for _, expected := range runes {
+	for _, char := range kw {
 		r := l.Next()
-		consumed++
-		if r == 0 || unicode.ToLower(r) != expected {
-			for i := 0; i < consumed; i++ {
+		if unicode.ToLower(r) != unicode.ToLower(char) {
+			for i := 0; i < l.Width(); i++ {
 				l.Backup()
 			}
 			return false
 		}
 	}
-	if !l.Check(isKeywordEnd) {
-		l.Backup()
+	if !isKeywordEnd(l.Next()) {
+		for i := 0; i < l.Width(); i++ {
+			l.Backup()
+		}
 		return false
 	}
+	l.Prev()
 	return true
-}
-
-func (bl *BatchLexer) stateIfThen(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
-	skipWS(l)
-	if l.Check(func(r rune) bool { return r == '(' }) {
-		l.Next()
-		bl.compoundDepth++
-		l.Emit(TokenPunctuation)
-		return bl.stateRoot
-	}
-	return bl.stateRoot
-}
-
-// lexStringDoubleBody handles the interior of a double-quoted string, assuming
-// the opening '"' has already been consumed.
-func (bl *BatchLexer) lexStringDoubleBody(
-	next lex.StateFn[TokenType, rune],
-) lex.StateFn[TokenType, rune] {
-	return func(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
-		for {
-			r := l.Next()
-			switch {
-			case r == '"' || isNL(r) || r == 0:
-				l.Emit(TokenStringDouble)
-				return next
-			case r == '%':
-				l.Prev()
-				l.Emit(TokenStringDouble)
-				bl.lexPercent(l)
-				return bl.lexStringDoubleBody(next)
-			case r == '^':
-				r2 := l.Next()
-				if r2 == '!' {
-					l.Emit(TokenStringEscape)
-					return bl.lexStringDoubleBody(next)
-				}
-				if r2 == 0 {
-					l.Emit(TokenStringDouble)
-					return next
-				}
-			}
-		}
-	}
 }
 
 func (bl *BatchLexer) lexPercent(l lex.Lexer[TokenType, rune]) {
@@ -828,67 +694,47 @@ func (bl *BatchLexer) lexDelayedVar(l lex.Lexer[TokenType, rune]) {
 	l.Emit(TokenNameVariable)
 }
 
-// stateRedirect handles the old call pattern from stateRoot where the rune
-// has NOT yet been consumed. It peeks for a leading digit first.
-func (bl *BatchLexer) stateRedirect(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
-	l.Accept(func(r rune) bool { return r >= '0' && r <= '9' })
-	r := l.Next()
-	if r != '>' && r != '<' {
-		if r != 0 {
-			l.Backup()
+func (bl *BatchLexer) lexStringDoubleBody(next lex.StateFn[TokenType, rune]) lex.StateFn[TokenType, rune] {
+	return func(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
+		for {
+			r := l.Next()
+			switch {
+			case r == 0:
+				l.Emit(TokenStringDouble)
+				return nil
+			case r == '"':
+				l.Emit(TokenStringDouble)
+				return next
+			case r == '%':
+				l.Prev()
+				if l.Width() > 0 {
+					l.Emit(TokenStringDouble)
+				}
+				bl.lexPercent(l)
+				return bl.lexStringDoubleBody(next)
+			case r == '^':
+				r2 := l.Next()
+				if r2 == 0 {
+					l.Emit(TokenStringDouble)
+					return nil
+				}
+			}
 		}
-		if l.Width() > 0 {
-			l.Emit(TokenText)
-		}
-		return bl.stateFollow
 	}
-	return bl.stateRedirectRune(l, r)
 }
 
-// stateRedirectRune completes redirect handling after the '<' or '>' rune r
-// has already been consumed.
-func (bl *BatchLexer) stateRedirectRune(
-	l lex.Lexer[TokenType, rune],
-	r rune,
-) lex.StateFn[TokenType, rune] {
-	switch r {
-	case '>':
-		l.Accept(func(r rune) bool { return r == '>' })
-		if l.Accept(func(r rune) bool { return r == '&' }) {
-			l.Emit(TokenRedirect)
-			skipWS(l)
-			l.Accept(func(r rune) bool { return r >= '0' && r <= '9' })
-			if l.Width() > 0 {
-				l.Emit(TokenNumber)
-			}
-		} else {
-			l.Emit(TokenRedirect)
-			skipWS(l)
-			l.AcceptRun(func(r rune) bool {
-				return r != 0 && !isNL(r) && !isWS(r) && !isPunct(r)
-			})
-			if l.Width() > 0 {
-				l.Emit(TokenText)
-			}
-		}
-	case '<':
-		if l.Accept(func(r rune) bool { return r == '&' }) {
-			l.Emit(TokenRedirect)
-			skipWS(l)
-			l.Accept(func(r rune) bool { return r >= '0' && r <= '9' })
-			if l.Width() > 0 {
-				l.Emit(TokenNumber)
-			}
-		} else {
-			l.Emit(TokenRedirect)
-			skipWS(l)
-			l.AcceptRun(func(r rune) bool {
-				return r != 0 && !isNL(r) && !isWS(r) && !isPunct(r)
-			})
-			if l.Width() > 0 {
-				l.Emit(TokenText)
+func (bl *BatchLexer) lexStringBTBody(next lex.StateFn[TokenType, rune]) lex.StateFn[TokenType, rune] {
+	return func(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
+		for {
+			r := l.Next()
+			switch {
+			case r == 0:
+				l.Emit(TokenStringBT)
+				return nil
+			case r == '`':
+				l.Emit(TokenStringBT)
+				return next
 			}
 		}
 	}
-	return bl.stateFollow
 }

@@ -1,6 +1,7 @@
 package processor
 
 import (
+	"bytes"
 	"fmt"
 	"maps"
 	"os"
@@ -14,7 +15,12 @@ import (
 
 // Execute runs the AST nodes.
 func (p *Processor) Execute(nodes []parser.Node) error {
-	for _, n := range nodes {
+	p.Nodes = nodes
+	p.PC = 0
+	p.Exited = false
+	for p.PC < len(p.Nodes) && !p.Exited {
+		n := p.Nodes[p.PC]
+		p.PC++ // Advance PC before execution
 		if err := p.ExecuteNode(n); err != nil {
 			return err
 		}
@@ -24,11 +30,23 @@ func (p *Processor) Execute(nodes []parser.Node) error {
 
 // ExecuteNode runs a single AST node.
 func (p *Processor) ExecuteNode(n parser.Node) error {
+	if p.Exited {
+		return nil
+	}
 	switch node := n.(type) {
 	case *parser.SimpleCommand:
 		return p.executeSimpleCommand(node)
 	case *parser.Block:
-		return p.Execute(node.Body)
+		// Blocks execute their own nodes
+		for _, bn := range node.Body {
+			if err := p.ExecuteNode(bn); err != nil {
+				return err
+			}
+			if p.Exited {
+				break
+			}
+		}
+		return nil
 	case *parser.IfNode:
 		return p.executeIf(node)
 	case *parser.ForNode:
@@ -44,17 +62,34 @@ func (p *Processor) ExecuteNode(n parser.Node) error {
 	}
 }
 
+func (p *Processor) jumpToLabel(labelName string) error {
+	target := strings.ToLower(labelName)
+	for i, n := range p.Nodes {
+		if lbl, ok := n.(*parser.LabelNode); ok {
+			if strings.ToLower(lbl.Name) == target {
+				p.PC = i
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("the system cannot find the batch label specified - %s", labelName)
+}
+
 func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
-	// 1. Expand name and args
 	expanded := p.ExpandNode(n)
 
-	// Setup IO overrides for redirections (basic)
+	words := strings.Fields(expanded.Name)
+	if len(words) > 1 {
+		expanded.Name = words[0]
+		newArgs := append([]string{}, words[1:]...)
+		expanded.Args = append(newArgs, expanded.Args...)
+	}
+
 	origStdout := p.Stdout
 	origStdin := p.Stdin
 	origStderr := p.Stderr
 
 	defer func() {
-		// Basic cleanup of files we opened
 		if f, ok := p.Stdout.(*os.File); ok && f != os.Stdout && f != origStdout {
 			f.Close()
 		}
@@ -75,7 +110,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		case parser.RedirectOut:
 			f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
 			if err == nil {
-				if r.FD == 1 || r.FD == 0 { // 0 is default from extractFD for >, but 1 is usually standard out
+				if r.FD == 1 || r.FD == 0 {
 					p.Stdout = f
 				} else if r.FD == 2 {
 					p.Stderr = f
@@ -98,21 +133,16 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		}
 	}
 
-	// 2. Echo if needed
 	if p.ShouldEcho(n) {
 		prompt, ok := p.Env.Get("PROMPT")
 		if !ok {
-			prompt = "$P$G" // Default CMD prompt
+			prompt = "$P$G"
 		}
 
-		// Basic expansion of prompt variables
 		expandedPrompt := prompt
-		if strings.Contains(expandedPrompt, "$P") {
+		if strings.Contains(expandedPrompt, "$P") || strings.Contains(expandedPrompt, "$p") {
 			pwd, _ := os.Getwd()
 			expandedPrompt = strings.ReplaceAll(expandedPrompt, "$P", pwd)
-		}
-		if strings.Contains(expandedPrompt, "$p") {
-			pwd, _ := os.Getwd()
 			expandedPrompt = strings.ReplaceAll(expandedPrompt, "$p", pwd)
 		}
 		expandedPrompt = strings.ReplaceAll(expandedPrompt, "$G", ">")
@@ -124,9 +154,50 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 	}
 	name := strings.ToLower(expanded.Name)
 	switch name {
+	case "goto":
+		label := strings.Join(expanded.Args, "")
+		if strings.HasPrefix(label, ":") {
+			label = label[1:]
+		}
+		if strings.ToLower(label) == "eof" {
+			p.PC = len(p.Nodes)
+			return nil
+		}
+		return p.jumpToLabel(label)
+	case "call":
+		if len(expanded.Args) == 0 {
+			return nil
+		}
+		target := expanded.Args[0]
+		restArgs := expanded.Args[1:]
+		if strings.HasPrefix(target, ":") {
+			label := target[1:]
+			oldPC := p.PC
+			oldArgs := p.Args
+			p.Args = append([]string{target}, restArgs...)
+			if err := p.jumpToLabel(label); err != nil {
+				p.Args = oldArgs
+				return err
+			}
+			for p.PC < len(p.Nodes) && !p.Exited {
+				node := p.Nodes[p.PC]
+				p.PC++
+				if err := p.ExecuteNode(node); err != nil {
+					if err.Error() == "EXIT_LOCAL" {
+						p.PC = oldPC
+						p.Args = oldArgs
+						return nil
+					}
+					return err
+				}
+			}
+			p.PC = oldPC
+			p.Args = oldArgs
+			return nil
+		}
+		return p.executeSimpleCommand(&parser.SimpleCommand{Name: target, Args: restArgs})
 	case "echo", "echo.":
 		output, stateChanged := p.HandleEchoBuiltin(expanded.Args)
-		// If the command was "echo.", print an empty line even if there were no args.
 		if name == "echo." && len(expanded.Args) == 0 {
 			fmt.Fprintln(p.Stdout)
 			p.Env.Set("ERRORLEVEL", "0")
@@ -148,34 +219,22 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 
 		arg := strings.Join(expanded.Args, " ")
 
-		// Handle /A (Arithmetic)
 		if len(expanded.Args) > 0 && strings.HasPrefix(strings.ToLower(expanded.Args[0]), "/a") {
-			expr := arg[2:] // remove /A
-			if before, after, ok := strings.Cut(expr, "="); ok {
-				// Basic math for "+ 1"
-				after = strings.TrimSpace(after)
-				val := 0
-				if strings.Contains(after, "+") {
-					parts := strings.SplitSeq(after, "+")
-					for part := range parts {
-						n, _ := strconv.Atoi(strings.TrimSpace(part))
-						val += n
-					}
-				} else {
-					val, _ = strconv.Atoi(after)
-				}
-				p.HandleSetBuiltin(strings.TrimSpace(before), strconv.Itoa(val))
+			expr := arg[2:]
+			_, err := p.EvalArithmetic(expr)
+			if err != nil {
+				fmt.Fprintf(p.Stderr, "Invalid number.\n")
+				p.Env.Set("ERRORLEVEL", "1073741819")
+			} else {
+				p.Env.Set("ERRORLEVEL", "0")
 			}
-			p.Env.Set("ERRORLEVEL", "0")
 			return nil
 		}
 
-		// Handle /P (Prompt)
 		if len(expanded.Args) > 0 && strings.HasPrefix(strings.ToLower(expanded.Args[0]), "/p") {
-			promptStr := arg[2:] // remove /P
+			promptStr := arg[2:]
 			if before, after, ok := strings.Cut(promptStr, "="); ok {
 				fmt.Fprint(p.Stdout, after)
-
 				var input string
 				fmt.Fscanln(p.Stdin, &input)
 				p.HandleSetBuiltin(strings.TrimSpace(before), input)
@@ -187,7 +246,6 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		if before, after, ok := strings.Cut(arg, "="); ok {
 			p.HandleSetBuiltin(before, after)
 		} else {
-			// e.g. "set P" to list all variables starting with P
 			found := false
 			prefix := strings.ToUpper(arg)
 			for k, v := range p.Env.Snapshot() {
@@ -203,6 +261,17 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 			}
 		}
 		p.Env.Set("ERRORLEVEL", "0")
+		return nil
+	case "setlocal":
+		p.Env.Push()
+		return nil
+	case "endlocal":
+		p.Env.Pop()
+		return nil
+	case "shift":
+		if len(p.Args) > 1 {
+			p.Args = append(p.Args[:1], p.Args[2:]...)
+		}
 		return nil
 	case "cd", "chdir":
 		if len(expanded.Args) == 0 {
@@ -221,40 +290,51 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		return nil
 	case "exit":
 		code := 0
+		isLocal := false
 		if len(expanded.Args) > 0 {
-			if expanded.Args[0] != "/b" && expanded.Args[0] != "/B" {
+			if strings.ToLower(expanded.Args[0]) == "/b" {
+				isLocal = true
+				if len(expanded.Args) > 1 {
+					code, _ = strconv.Atoi(expanded.Args[1])
+				}
+			} else {
 				code, _ = strconv.Atoi(expanded.Args[0])
-			} else if len(expanded.Args) > 1 {
-				code, _ = strconv.Atoi(expanded.Args[1])
 			}
 		}
-		os.Exit(code)
+		p.Env.Set("ERRORLEVEL", strconv.Itoa(code))
+		if isLocal {
+			return fmt.Errorf("EXIT_LOCAL")
+		}
+		p.Exited = true
+		return nil
 	}
 
-	// 4. Handle external commands
 	return p.runExternalCommand(expanded)
 }
 
 func (p *Processor) runExternalCommand(n *parser.SimpleCommand) error {
-	// Map executable path
 	cmdName := MapPath(n.Name)
-
-	// Map arguments if they look like paths
-	mappedArgs := make([]string, len(n.Args))
-	for i, arg := range n.Args {
+	var mappedArgs []string
+	for _, arg := range n.Args {
+		mapped := arg
 		if strings.Contains(arg, "\\") || (len(arg) >= 2 && arg[1] == ':') {
-			mappedArgs[i] = MapPath(arg)
-		} else {
-			mappedArgs[i] = arg
+			mapped = MapPath(arg)
 		}
+		// Expand glob patterns (CMD.EXE passes globs to the OS; on Unix the shell
+		// would normally do this, but exec.Command bypasses the shell).
+		if strings.ContainsAny(mapped, "*?[") {
+			if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
+				mappedArgs = append(mappedArgs, matches...)
+				continue
+			}
+		}
+		mappedArgs = append(mappedArgs, mapped)
 	}
 
 	cmd := exec.Command(cmdName, mappedArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-
-	// Set environment
+	cmd.Stdout = p.Stdout
+	cmd.Stderr = p.Stderr
+	cmd.Stdin = p.Stdin
 	cmd.Env = os.Environ()
 	for k, v := range p.Env.Snapshot() {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
@@ -265,18 +345,16 @@ func (p *Processor) runExternalCommand(n *parser.SimpleCommand) error {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			p.Env.Set("ERRORLEVEL", strconv.Itoa(exitErr.ExitCode()))
 		} else {
-			fmt.Fprintf(os.Stderr, "'%s' is not recognized as an internal or external command, operable program or batch file.\n", n.Name)
+			fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command, operable program or batch file.\n", n.Name)
 			p.Env.Set("ERRORLEVEL", "9009")
 		}
 	} else {
 		p.Env.Set("ERRORLEVEL", "0")
 	}
-
 	return nil
 }
 
 func (p *Processor) executeIf(n *parser.IfNode) error {
-	// For simplicity, let's implement basic IF EXIST and comparison
 	conditionMet := false
 	cond := n.Cond
 
@@ -288,6 +366,19 @@ func (p *Processor) executeIf(n *parser.IfNode) error {
 	case parser.CondCompare:
 		left := p.ProcessLine(cond.Left)
 		right := p.ProcessLine(cond.Right)
+
+		unquote := func(s string) string {
+			if len(s) >= 2 {
+				q := s[0]
+				if (q == '"' || q == '\'' || q == '`') && s[len(s)-1] == q {
+					return s[1 : len(s)-1]
+				}
+			}
+			return s
+		}
+		left = unquote(left)
+		right = unquote(right)
+
 		if n.CaseInsensitive {
 			left = strings.ToLower(left)
 			right = strings.ToLower(right)
@@ -298,7 +389,6 @@ func (p *Processor) executeIf(n *parser.IfNode) error {
 			conditionMet = (left == right)
 		case parser.OpNeq:
 			conditionMet = (left != right)
-		// For LSS, LEQ, GTR, GEQ we might need numeric comparison if both are numbers
 		case parser.OpLss:
 			conditionMet = (left < right)
 		case parser.OpLeq:
@@ -309,7 +399,7 @@ func (p *Processor) executeIf(n *parser.IfNode) error {
 			conditionMet = (left >= right)
 		}
 	case parser.CondDefined:
-		_, conditionMet = p.Env.Get(cond.Arg)
+		_, conditionMet = p.Env.Get(p.ProcessLine(cond.Arg))
 	case parser.CondErrorLevel:
 		currLevelStr, _ := p.Env.Get("ERRORLEVEL")
 		currLevel, _ := strconv.Atoi(currLevelStr)
@@ -325,12 +415,10 @@ func (p *Processor) executeIf(n *parser.IfNode) error {
 	} else if n.Else != nil {
 		return p.ExecuteNode(n.Else)
 	}
-
 	return nil
 }
 
 func (p *Processor) executeFor(n *parser.ForNode) error {
-	// Save current ForVars
 	oldForVars := p.ForVars
 	p.ForVars = make(map[string]string)
 	maps.Copy(p.ForVars, oldForVars)
@@ -339,27 +427,28 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 	if n.Variant == parser.ForFiles {
 		for _, item := range n.Set {
 			expandedItem := p.ProcessLine(item)
-			// Glob the item
 			matches, err := filepath.Glob(MapPath(expandedItem))
 			if err != nil || len(matches) == 0 {
-				// If no matches, CMD uses the literal item
 				matches = []string{expandedItem}
 			}
-
 			for _, m := range matches {
 				p.ForVars[n.Variable] = m
 				if err := p.ExecuteNode(n.Do); err != nil {
 					return err
 				}
+				if p.Exited {
+					break
+				}
+			}
+			if p.Exited {
+				break
 			}
 		}
 	} else if n.Variant == parser.ForRange {
-		// FOR /L %var IN (start,step,end) DO command
 		if len(n.Set) >= 3 {
 			startStr := strings.TrimRight(p.ProcessLine(n.Set[0]), ",")
 			stepStr := strings.TrimRight(p.ProcessLine(n.Set[1]), ",")
 			endStr := strings.TrimRight(p.ProcessLine(n.Set[2]), ",")
-
 			start, _ := strconv.Atoi(startStr)
 			step, _ := strconv.Atoi(stepStr)
 			end, _ := strconv.Atoi(endStr)
@@ -370,6 +459,9 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 					if err := p.ExecuteNode(n.Do); err != nil {
 						return err
 					}
+					if p.Exited {
+						break
+					}
 				}
 			} else if step < 0 {
 				for i := start; i >= end; i += step {
@@ -377,36 +469,184 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 					if err := p.ExecuteNode(n.Do); err != nil {
 						return err
 					}
+					if p.Exited {
+						break
+					}
 				}
 			}
 		}
 	} else if n.Variant == parser.ForF {
-		// Basic FOR /F implementation for literal strings and basic files
-		// Proper FOR /F is complex, parsing "tokens= delims=" etc.
-		// For now, let's assume it iterates over words in the set if they are strings.
+		opts := parseForFOptions(unquoteStr(n.Options))
 		for _, item := range n.Set {
-			expandedItem := p.ProcessLine(item)
-			p.ForVars[n.Variable] = expandedItem
-			if err := p.ExecuteNode(n.Do); err != nil {
-				return err
+			var lines []string
+			isCommand := false
+			isString := false
+			rawItem := item
+
+			if strings.HasPrefix(item, "\"") && strings.HasSuffix(item, "\"") {
+				if !opts.usebackq {
+					isString = true
+					rawItem = item[1 : len(item)-1]
+				} else {
+					rawItem = item[1 : len(item)-1]
+				}
+			} else if strings.HasPrefix(item, "'") && strings.HasSuffix(item, "'") {
+				if opts.usebackq {
+					isString = true
+					rawItem = item[1 : len(item)-1]
+				} else {
+					isCommand = true
+					rawItem = item[1 : len(item)-1]
+				}
+			} else if strings.HasPrefix(item, "`") && strings.HasSuffix(item, "`") {
+				if opts.usebackq {
+					isCommand = true
+					rawItem = item[1 : len(item)-1]
+				}
+			}
+
+			if isCommand {
+				expandedCmd := p.ProcessLine(rawItem)
+				out, err := p.captureCommandOutput(expandedCmd)
+				if err == nil {
+					lines = strings.Split(out, "\n")
+				}
+			} else if isString {
+				expanded := p.ProcessLine(rawItem)
+				lines = []string{expanded}
+			} else {
+				path := MapPath(p.ProcessLine(rawItem))
+				content, err := os.ReadFile(path)
+				if err == nil {
+					lines = strings.Split(string(content), "\n")
+				}
+			}
+
+			for _, line := range lines {
+				line = strings.TrimRight(line, "\r")
+				if line == "" || strings.HasPrefix(line, opts.eol) {
+					continue
+				}
+				f := func(r rune) bool {
+					return strings.ContainsRune(opts.delims, r)
+				}
+				parts := strings.FieldsFunc(line, f)
+				tokenMap := applyForTokens(line, parts, opts.delims, opts.tokens, n.Variable)
+				maps.Copy(p.ForVars, tokenMap)
+				if len(tokenMap) > 0 {
+					if err := p.ExecuteNode(n.Do); err != nil {
+						return err
+					}
+					if p.Exited {
+						break
+					}
+				}
+			}
+			if p.Exited {
+				break
 			}
 		}
 	}
 	return nil
 }
 
+type forFOptions struct {
+	eol      string
+	skip     int
+	delims   string
+	tokens   string
+	usebackq bool
+}
+
+func unquoteStr(s string) string {
+	if len(s) >= 2 {
+		f, l := s[0], s[len(s)-1]
+		if (f == '"' && l == '"') || (f == '\'' && l == '\'') || (f == '`' && l == '`') {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
+}
+
+func parseForFOptions(optStr string) forFOptions {
+	opts := forFOptions{delims: " \t", tokens: "1", eol: ";"}
+	fields := strings.FieldsSeq(optStr)
+	for f := range fields {
+		if strings.HasPrefix(f, "delims=") {
+			opts.delims = f[7:]
+		} else if strings.HasPrefix(f, "tokens=") {
+			opts.tokens = f[7:]
+		} else if strings.HasPrefix(f, "skip=") {
+			opts.skip, _ = strconv.Atoi(f[5:])
+		} else if strings.HasPrefix(f, "eol=") {
+			opts.eol = f[4:]
+		} else if f == "usebackq" {
+			opts.usebackq = true
+		}
+	}
+	return opts
+}
+
+func applyForTokens(fullLine string, parts []string, delims string, tokens string, startVar string) map[string]string {
+	res := make(map[string]string)
+	if len(parts) == 0 {
+		return res
+	}
+	tokenSpecs := strings.Split(tokens, ",")
+	baseChar := rune(startVar[0])
+	lastIdx := -1
+	for i, spec := range tokenSpecs {
+		if spec == "*" {
+			startFrom := 0
+			if lastIdx >= 0 {
+				startFrom = lastIdx + 1
+			}
+			if startFrom < len(parts) {
+				res[string(baseChar+rune(i))] = strings.Join(parts[startFrom:], " ")
+			}
+			continue
+		}
+		idx, _ := strconv.Atoi(spec)
+		if idx > 0 && idx <= len(parts) {
+			varName := string(baseChar + rune(i))
+			res[varName] = parts[idx-1]
+			if idx-1 > lastIdx {
+				lastIdx = idx - 1
+			}
+		}
+	}
+	if len(tokenSpecs) == 1 && tokenSpecs[0] == "1" {
+		res[startVar] = parts[0]
+	}
+	return res
+}
+
+func (p *Processor) captureCommandOutput(cmdLine string) (string, error) {
+	expanded := p.ProcessLine(cmdLine)
+	nodes := ParseExpanded(expanded)
+	var buf bytes.Buffer
+	subProc := New(p.Env, p.Args)
+	subProc.Stdout = &buf
+	subProc.Stderr = p.Stderr
+	subProc.Echo = false
+	err := subProc.Execute(nodes)
+	return buf.String(), err
+}
+
 func (p *Processor) executeBinary(n *parser.BinaryNode) error {
 	p.ExecuteNode(n.Left)
-
+	if p.Exited {
+		return nil
+	}
 	switch n.Op {
-	case parser.NodeConcat: // &
+	case parser.NodeConcat:
 		return p.ExecuteNode(n.Right)
-	case parser.NodeAndThen: // &&
+	case parser.NodeAndThen:
 		levelStr, _ := p.Env.Get("ERRORLEVEL")
 		if levelStr == "0" {
 			return p.ExecuteNode(n.Right)
 		}
-	case parser.NodeOrElse: // ||
+	case parser.NodeOrElse:
 		levelStr, _ := p.Env.Get("ERRORLEVEL")
 		if levelStr != "0" {
 			return p.ExecuteNode(n.Right)
@@ -420,32 +660,24 @@ func (p *Processor) executePipe(n *parser.PipeNode) error {
 	if err != nil {
 		return err
 	}
-
-	// Run left side with output to pipe
-	leftProcessor := *p // shallow copy
+	leftProcessor := *p
 	leftProcessor.Stdout = pw
-
 	leftErrChan := make(chan error, 1)
 	go func() {
 		err := leftProcessor.ExecuteNode(n.Left)
-		pw.Close() // Close writer so reader gets EOF
+		pw.Close()
 		leftErrChan <- err
 	}()
-
-	// Run right side with input from pipe
 	rightProcessor := *p
 	rightProcessor.Stdin = pr
-
 	rightErrChan := make(chan error, 1)
 	go func() {
 		err := rightProcessor.ExecuteNode(n.Right)
 		pr.Close()
 		rightErrChan <- err
 	}()
-
 	leftErr := <-leftErrChan
 	rightErr := <-rightErrChan
-
 	if leftErr != nil {
 		return leftErr
 	}
