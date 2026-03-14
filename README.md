@@ -20,7 +20,7 @@ pkg/lexer/             Batch-specific tokenizer (BatchLexer → 19 token types)
 pkg/parser/            Recursive-descent AST builder
 pkg/processor/         Multi-phase expansion engine + executor
 main.go                CLI entry point (file mode or interactive REPL)
-tests/                 19 integration test pairs (*.bat + *.out)
+tests/                 20 integration test pairs (*.bat + *.out)
 ```
 
 ## Processing Phases
@@ -46,6 +46,8 @@ The interpreter follows `cmd.exe`'s documented 6-phase model exactly:
 | `FOR` files | `FOR %%i IN (set) DO` with glob expansion |
 | `FOR /L` | `FOR /L %%i IN (start,step,end) DO` range loops |
 | `FOR /F` | strings, files, command output (`usebackq`), `tokens=`, `delims=`, `eol=`, `skip=` |
+| `FOR /D` | `FOR /D %%i IN (pattern) DO` — directory-only glob |
+| `FOR /R` | `FOR /R [root] %%i IN (pattern) DO` — recursive directory tree walk |
 | `GOTO` | Static and dynamic labels (`goto %VAR%`), `goto :eof` |
 | `CALL` | Subroutines (`:label` with args), external commands |
 | Blocks | Parenthesised compound statements `( ... )` |
@@ -98,7 +100,7 @@ go test ./...            # unit + integration
 go test -v ./tests/...   # verbose integration output
 ```
 
-19 integration tests cover: basic echo/set, control flow, FOR loops, I/O redirection, path handling, arithmetic, logical operators, nesting, strings, SHIFT, subroutines, FOR /F, labels, dynamic GOTO, complex math, advanced FOR /F, line continuation, mkdir/rmdir, del/copy/move.
+20 integration tests cover: basic echo/set, control flow, FOR loops, I/O redirection, path handling, arithmetic, logical operators, nesting, strings, SHIFT, subroutines, FOR /F, labels, dynamic GOTO, complex math, advanced FOR /F, line continuation, mkdir/rmdir, del/copy/move, FOR /D and FOR /R.
 
 ## Gaps & Planned Work
 
@@ -108,7 +110,5 @@ go test -v ./tests/...   # verbose integration output
 | `%~` in Phase 1 | Modifier syntax for `%~nxf` on `%0`–`%9` not yet implemented |
 | `COPY` append (`+`) | Concatenating multiple sources into one destination not supported |
 | `DEL /A` attribute filter | Attribute-based file selection skipped |
-| `FOR /R` | Recursive directory tree walk variant not yet parsed |
-| `FOR /D` | Directory-only glob variant not yet parsed |
 | `ASSOC` / `FTYPE` | File association queries not implemented |
 | `FIND` / `FINDSTR` | Fall through to host; no native implementation |

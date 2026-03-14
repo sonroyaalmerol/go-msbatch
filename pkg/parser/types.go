@@ -106,9 +106,11 @@ func (n *IfNode) Kind() NodeKind { return NodeIf }
 type ForKind int
 
 const (
-	ForFiles ForKind = iota // FOR %%V IN (set) DO
-	ForRange                // FOR /L %%V IN (start,step,end) DO
-	ForF                    // FOR /F ["opts"] %%V IN (...) DO
+	ForFiles     ForKind = iota // FOR %%V IN (set) DO
+	ForRange                    // FOR /L %%V IN (start,step,end) DO
+	ForF                        // FOR /F ["opts"] %%V IN (...) DO
+	ForDir                      // FOR /D %%V IN (set) DO  — directories only
+	ForRecursive                // FOR /R [root] %%V IN (set) DO  — recursive walk
 )
 
 // ForNode represents a FOR loop.

@@ -2,6 +2,7 @@ package processor
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -759,6 +760,84 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 				}
 			}
 		}
+	} else if n.Variant == parser.ForDir {
+		for _, item := range n.Set {
+			expandedItem := p.ProcessLine(item)
+			mapped := MapPath(expandedItem)
+			dir := filepath.Dir(mapped)
+			pattern := filepath.Base(mapped)
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				if matched, _ := filepath.Match(pattern, e.Name()); matched {
+					p.ForVars[n.Variable] = filepath.Join(dir, e.Name())
+					if err := p.ExecuteNode(n.Do); err != nil {
+						return err
+					}
+					if p.Exited {
+						break
+					}
+				}
+			}
+			if p.Exited {
+				break
+			}
+		}
+	} else if n.Variant == parser.ForRecursive {
+		rootDir := "."
+		if n.Options != "" {
+			opt := strings.TrimSpace(n.Options)
+			opt = p.ProcessLine(opt)
+			if len(opt) >= 2 && opt[0] == '"' && opt[len(opt)-1] == '"' {
+				opt = opt[1 : len(opt)-1]
+			}
+			rootDir = MapPath(opt)
+		}
+		var walkErr error
+		err := filepath.Walk(rootDir, func(dirPath string, info os.FileInfo, err error) error {
+			if err != nil || !info.IsDir() {
+				return nil
+			}
+			for _, item := range n.Set {
+				expandedItem := p.ProcessLine(item)
+				fullPattern := filepath.Join(dirPath, expandedItem)
+				if strings.ContainsAny(expandedItem, "*?") {
+					matches, err := filepath.Glob(fullPattern)
+					if err != nil || len(matches) == 0 {
+						continue
+					}
+					for _, m := range matches {
+						p.ForVars[n.Variable] = m
+						if err := p.ExecuteNode(n.Do); err != nil {
+							walkErr = err
+							return errors.New("stop")
+						}
+						if p.Exited {
+							return errors.New("stop")
+						}
+					}
+				} else {
+					p.ForVars[n.Variable] = fullPattern
+					if err := p.ExecuteNode(n.Do); err != nil {
+						walkErr = err
+						return errors.New("stop")
+					}
+					if p.Exited {
+						return errors.New("stop")
+					}
+				}
+			}
+			return nil
+		})
+		if walkErr != nil {
+			return walkErr
+		}
+		_ = err
 	} else if n.Variant == parser.ForF {
 		opts := parseForFOptions(unquoteStr(n.Options))
 		for _, item := range n.Set {

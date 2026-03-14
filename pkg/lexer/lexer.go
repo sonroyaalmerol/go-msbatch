@@ -454,10 +454,18 @@ func (bl *BatchLexer) stateFor(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenTy
 		l.Next()
 		flag := l.Next()
 		flagLower := unicode.ToLower(flag)
-		if flagLower == 'f' || flagLower == 'l' {
+		if flagLower == 'f' || flagLower == 'l' || flagLower == 'd' || flagLower == 'r' {
 			l.Emit(TokenKeyword)
 			skipWS(l)
 			isForF = (flagLower == 'f')
+			// For /R: optionally scan a root path before the loop variable.
+			if flagLower == 'r' && !l.Check(func(r rune) bool { return r == '%' }) {
+				l.AcceptRun(func(r rune) bool { return r != 0 && !isNL(r) && r != '%' })
+				if l.Width() > 0 {
+					l.Emit(TokenText)
+				}
+				skipWS(l)
+			}
 		} else {
 			if flag != 0 {
 				l.Prev()

@@ -146,6 +146,19 @@ func (p *Parser) parseFor(_ bool) *ForNode {
 			n.Variant = ForRange
 			p.consume()
 			p.skipWS()
+		case "/d":
+			n.Variant = ForDir
+			p.consume()
+			p.skipWS()
+		case "/r":
+			n.Variant = ForRecursive
+			p.consume()
+			p.skipWS()
+			// The lexer emits the optional root path as TokenText before the loop variable.
+			if p.peek().Type == lexer.TokenText {
+				n.Options = strings.TrimSpace(val(p.consume()))
+				p.skipWS()
+			}
 		}
 	}
 
