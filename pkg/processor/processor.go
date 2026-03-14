@@ -19,9 +19,10 @@ type Processor struct {
 	Stdout  io.Writer
 	Stdin   io.Reader
 	Stderr  io.Writer
-	Nodes   []parser.Node
-	PC      int
-	Exited  bool
+	Nodes    []parser.Node
+	PC       int
+	Exited   bool
+	DirStack []string // directory stack for PUSHD/POPD
 }
 
 // New creates a Processor.

@@ -1,6 +1,7 @@
 package processor
 
 import (
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -271,24 +272,58 @@ func Phase4ForVarExpand(src string, forVars map[string]string) string {
 	return sb.String()
 }
 
-// applyForVarModifiers applies FOR variable modifiers (n=name, x=ext, p=path, d=drive).
+// applyForVarModifiers applies FOR variable modifiers to val.
+// Supported: d (drive), p (path), n (name), x (ext), f (full path),
+// s (absolute), e (expanded), a (attributes), t (timestamp), z (size).
 func applyForVarModifiers(val, mods string) string {
 	result := val
 	for _, mod := range strings.ToLower(mods) {
 		switch mod {
-		case 'n':
-			base := filepath.Base(result)
-			ext := filepath.Ext(base)
-			result = base[:len(base)-len(ext)]
-		case 'x':
-			result = filepath.Ext(filepath.Base(result))
-		case 'p':
-			result = filepath.Dir(result)
+		case 'f', 's', 'e':
+			// Full / short / expanded path — resolve to absolute path.
+			if abs, err := filepath.Abs(result); err == nil {
+				result = abs
+			}
 		case 'd':
+			// Drive letter (e.g. "C:"); on Unix always empty.
 			if len(result) >= 2 && result[1] == ':' {
 				result = result[:2]
 			} else {
 				result = ""
+			}
+		case 'p':
+			// Directory component (with trailing separator).
+			dir := filepath.Dir(result)
+			if dir != "." && !strings.HasSuffix(dir, string(filepath.Separator)) {
+				dir += string(filepath.Separator)
+			}
+			result = dir
+		case 'n':
+			// Filename without extension.
+			base := filepath.Base(result)
+			ext := filepath.Ext(base)
+			result = base[:len(base)-len(ext)]
+		case 'x':
+			// Extension only (including the dot).
+			result = filepath.Ext(filepath.Base(result))
+		case 'a':
+			// File attributes — return a simplified string.
+			if fi, err := os.Stat(result); err == nil {
+				attr := "--a------"
+				if fi.IsDir() {
+					attr = "d---------"
+				}
+				result = attr
+			}
+		case 't':
+			// Last-modified date/time.
+			if fi, err := os.Stat(result); err == nil {
+				result = fi.ModTime().Format("01/02/2006 03:04 PM")
+			}
+		case 'z':
+			// File size in bytes.
+			if fi, err := os.Stat(result); err == nil {
+				result = strconv.FormatInt(fi.Size(), 10)
 			}
 		}
 	}

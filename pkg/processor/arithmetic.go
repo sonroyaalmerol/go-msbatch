@@ -172,8 +172,122 @@ func isAssignmentOp(op string) bool {
 	return false
 }
 
+// parseExpression is the top of the binary operator precedence chain:
+// logical-or → logical-and → bitwise-or → bitwise-xor → bitwise-and → shift → add/sub
 func (ap *arithParser) parseExpression() (int, error) {
-	return ap.parseAddSub()
+	return ap.parseLogicalOr()
+}
+
+func (ap *arithParser) parseLogicalOr() (int, error) {
+	val, err := ap.parseLogicalAnd()
+	if err != nil {
+		return 0, err
+	}
+	for ap.peek() == "||" {
+		ap.consume()
+		right, err := ap.parseLogicalAnd()
+		if err != nil {
+			return 0, err
+		}
+		if val != 0 || right != 0 {
+			val = 1
+		} else {
+			val = 0
+		}
+	}
+	return val, nil
+}
+
+func (ap *arithParser) parseLogicalAnd() (int, error) {
+	val, err := ap.parseBitwiseOr()
+	if err != nil {
+		return 0, err
+	}
+	for ap.peek() == "&&" {
+		ap.consume()
+		right, err := ap.parseBitwiseOr()
+		if err != nil {
+			return 0, err
+		}
+		if val != 0 && right != 0 {
+			val = 1
+		} else {
+			val = 0
+		}
+	}
+	return val, nil
+}
+
+func (ap *arithParser) parseBitwiseOr() (int, error) {
+	val, err := ap.parseBitwiseXor()
+	if err != nil {
+		return 0, err
+	}
+	for ap.peek() == "|" {
+		ap.consume()
+		right, err := ap.parseBitwiseXor()
+		if err != nil {
+			return 0, err
+		}
+		val |= right
+	}
+	return val, nil
+}
+
+func (ap *arithParser) parseBitwiseXor() (int, error) {
+	val, err := ap.parseBitwiseAnd()
+	if err != nil {
+		return 0, err
+	}
+	for ap.peek() == "^" {
+		ap.consume()
+		right, err := ap.parseBitwiseAnd()
+		if err != nil {
+			return 0, err
+		}
+		val ^= right
+	}
+	return val, nil
+}
+
+func (ap *arithParser) parseBitwiseAnd() (int, error) {
+	val, err := ap.parseShift()
+	if err != nil {
+		return 0, err
+	}
+	for ap.peek() == "&" {
+		ap.consume()
+		right, err := ap.parseShift()
+		if err != nil {
+			return 0, err
+		}
+		val &= right
+	}
+	return val, nil
+}
+
+func (ap *arithParser) parseShift() (int, error) {
+	val, err := ap.parseAddSub()
+	if err != nil {
+		return 0, err
+	}
+	for {
+		op := ap.peek()
+		if op != "<<" && op != ">>" {
+			break
+		}
+		ap.consume()
+		right, err := ap.parseAddSub()
+		if err != nil {
+			return 0, err
+		}
+		if op == "<<" {
+			val <<= uint(right)
+		} else {
+			val >>= uint(right)
+		}
+	}
+	return val, nil
 }
 
 func (ap *arithParser) parseAddSub() (int, error) {

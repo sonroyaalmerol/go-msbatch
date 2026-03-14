@@ -3,6 +3,7 @@ package processor
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"os/exec"
@@ -307,6 +308,89 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		}
 		p.Exited = true
 		return nil
+	case "type":
+		for _, arg := range expanded.Args {
+			content, err := os.ReadFile(MapPath(arg))
+			if err != nil {
+				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
+				p.Env.Set("ERRORLEVEL", "1")
+				continue
+			}
+			fmt.Fprint(p.Stdout, string(content))
+		}
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
+	case "cls":
+		fmt.Fprint(p.Stdout, "\033[2J\033[H")
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
+	case "title":
+		fmt.Fprintf(p.Stdout, "\033]0;%s\a", strings.Join(expanded.Args, " "))
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
+	case "ver":
+		fmt.Fprintln(p.Stdout, "Microsoft Windows [Version 10.0.19045.5442]")
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
+	case "pause":
+		fmt.Fprint(p.Stdout, "Press any key to continue . . . ")
+		io.ReadFull(p.Stdin, make([]byte, 1)) //nolint:errcheck
+		fmt.Fprintln(p.Stdout)
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
+	case "color":
+		if len(expanded.Args) > 0 {
+			code := expanded.Args[0]
+			if len(code) == 2 {
+				bg := code[0]
+				fg := code[1]
+				ansiColors := map[byte]string{
+					'0': "30", '1': "34", '2': "32", '3': "36",
+					'4': "31", '5': "35", '6': "33", '7': "37",
+					'8': "90", '9': "94", 'a': "92", 'b': "96",
+					'c': "91", 'd': "95", 'e': "93", 'f': "97",
+					'A': "92", 'B': "96", 'C': "91", 'D': "95",
+					'E': "93", 'F': "97",
+				}
+				bgCode := ansiColors[bg]
+				fgCode := ansiColors[fg]
+				if bgCode != "" && fgCode != "" {
+					bgCode = strings.Replace(bgCode, "3", "4", 1)
+					bgCode = strings.Replace(bgCode, "9", "10", 1)
+					fmt.Fprintf(p.Stdout, "\033[%s;%sm", bgCode, fgCode)
+				}
+			}
+		} else {
+			fmt.Fprint(p.Stdout, "\033[0m")
+		}
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
+	case "pushd":
+		pwd, _ := os.Getwd()
+		p.DirStack = append(p.DirStack, pwd)
+		if len(expanded.Args) > 0 {
+			path := MapPath(expanded.Args[0])
+			if err := os.Chdir(path); err != nil {
+				fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
+				p.DirStack = p.DirStack[:len(p.DirStack)-1]
+				p.Env.Set("ERRORLEVEL", "1")
+				return nil
+			}
+		}
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
+	case "popd":
+		if len(p.DirStack) > 0 {
+			dir := p.DirStack[len(p.DirStack)-1]
+			p.DirStack = p.DirStack[:len(p.DirStack)-1]
+			if err := os.Chdir(dir); err != nil {
+				fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
+				p.Env.Set("ERRORLEVEL", "1")
+				return nil
+			}
+		}
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
 	}
 
 	return p.runExternalCommand(expanded)
@@ -400,6 +484,9 @@ func (p *Processor) executeIf(n *parser.IfNode) error {
 		}
 	case parser.CondDefined:
 		_, conditionMet = p.Env.Get(p.ProcessLine(cond.Arg))
+	case parser.CondCmdExtVersion:
+		// Command extensions are always version 2 in this implementation.
+		conditionMet = (2 >= cond.Level)
 	case parser.CondErrorLevel:
 		currLevelStr, _ := p.Env.Get("ERRORLEVEL")
 		currLevel, _ := strconv.Atoi(currLevelStr)
@@ -522,6 +609,13 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 				}
 			}
 
+			if opts.skip > 0 {
+				if opts.skip < len(lines) {
+					lines = lines[opts.skip:]
+				} else {
+					lines = nil
+				}
+			}
 			for _, line := range lines {
 				line = strings.TrimRight(line, "\r")
 				if line == "" || strings.HasPrefix(line, opts.eol) {

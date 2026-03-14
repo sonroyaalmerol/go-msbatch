@@ -1,68 +1,101 @@
-# Go MS-Batch Interpreter
+# go-msbatch
 
-A cross-platform, systematic implementation of the Windows CMD/Batch interpreter in Go. This project aims to faithfully mirror CMD.EXE's parsing and execution logic, including its unique multi-phase processing model.
+A cross-platform, systematic implementation of the Windows CMD/Batch interpreter in Go. The project faithfully mirrors `cmd.exe`'s multi-phase processing model, producing an AST from a recursive-descent parser and executing it with a PC-based engine.
+
+## Usage
+
+```bash
+# Run a batch file
+go run . script.bat [arg1 arg2 ...]
+
+# Interactive REPL
+go run .
+```
+
+## Architecture
+
+```
+internal/lex/          Generic cursor-based state-machine lexer framework
+pkg/lexer/             Batch-specific tokenizer (BatchLexer → 19 token types)
+pkg/parser/            Recursive-descent AST builder
+pkg/processor/         Multi-phase expansion engine + executor
+main.go                CLI entry point (file mode or interactive REPL)
+tests/                 17 integration test pairs (*.bat + *.out)
+```
 
 ## Processing Phases
 
-The interpreter follows the documented 6-phase processing model of `cmd.exe`:
+The interpreter follows `cmd.exe`'s documented 6-phase model exactly:
 
-### Phase 0: Read Line
-*   **Normalisation**: Replaces `0x1A` (Ctrl-Z) with a newline.
-*   **Line Continuity**: (Planned) Handling of the caret `^` at the end of a line for multi-line commands.
+| Phase | Name | Description |
+|-------|------|-------------|
+| 0 | Read Line | Ctrl-Z → `\n`; trailing `^` merges the next line |
+| 1 | Percent Expansion | `%VAR%`, `%0`–`%9`, `%*`, `%%`, slicing, substitution |
+| 2 | Lex & Parse | Tokenise then build AST (commands, blocks, operators) |
+| 3 | Echo Suppression | `@` prefix; `ECHO ON`/`OFF` state |
+| 4 | FOR Variable Expansion | `%%i` / `%i`, tilde modifiers (`%~nxi`, `%~dp`, …) |
+| 5 | Delayed Expansion | `!VAR!`; `^!` → literal `!` |
 
-### Phase 1: Percent Expansion
-*   **Variables**: `%VAR%` is replaced with its environment value.
-*   **Positional**: `%0` through `%9` and `%*` are resolved.
-*   **Manipulation**: Supports slicing (`%VAR:~0,5%`) and substitution (`%VAR:old=new%`).
-*   **Escaping**: `%%` becomes a literal `%`.
+## Implemented Features
 
-### Phase 2: Lexing & Parsing
-*   The expanded string is tokenized into keywords, text, punctuation, and operators.
-*   An Abstract Syntax Tree (AST) is built, identifying commands, blocks `()`, and logical operators (`&&`, `||`, `&`, `|`).
+### Language
 
-### Phase 3: Echo & Command Suppression
-*   Handles the `@` prefix to suppress command echoing.
-*   Tracks the global `ECHO ON/OFF` state.
+| Feature | Details |
+|---------|---------|
+| `IF` | `EXIST`, `DEFINED`, `ERRORLEVEL`, string `==`, word operators (`EQU NEQ LSS LEQ GTR GEQ`), `/I`, `NOT` |
+| `FOR` files | `FOR %%i IN (set) DO` with glob expansion |
+| `FOR /L` | `FOR /L %%i IN (start,step,end) DO` range loops |
+| `FOR /F` | strings, files, command output (`usebackq`), `tokens=`, `delims=`, `eol=`, `skip=` |
+| `GOTO` | Static and dynamic labels (`goto %VAR%`), `goto :eof` |
+| `CALL` | Subroutines (`:label` with args), external commands |
+| Blocks | Parenthesised compound statements `( ... )` |
+| Binary ops | `&&`, `\|\|`, `&`, `\|` (pipe) |
+| Redirects | `>`, `>>`, `<`, `>&N`, `<&N`, `2>` |
+| Labels | `:label` definitions |
+| Comments | `REM`, `::` |
 
-### Phase 4: FOR Variable Expansion
-*   Resolves loop variables like `%%i` (in batch) or `%i` (in cmd) just before executing the loop body.
-*   Supports tilde modifiers like `%~nxi` (filename and extension).
+### Built-in Commands
 
-### Phase 5: Delayed Expansion
-*   If enabled, resolves `!VAR!` variables just before execution.
-*   Allows variables to be updated and read within the same command block or loop.
+| Command | Notes |
+|---------|-------|
+| `ECHO` | Print text; `ECHO ON`/`OFF`/`.` (blank line) |
+| `SET` | Variable assignment; `SET /A` (full arithmetic); `SET /P` (user input) |
+| `SETLOCAL` / `ENDLOCAL` | Environment snapshot stack |
+| `GOTO` | Jump to label (PC-based) |
+| `CALL` | `:label` subroutine or external command dispatch |
+| `IF` / `FOR` | See Language table |
+| `SHIFT` | Rotate positional parameters |
+| `CD` / `CHDIR` | Change or print working directory |
+| `EXIT` | `EXIT [/B] [code]` |
 
----
+### SET /A Operators
 
-## Feature Roadmap
+Arithmetic (`+` `-` `*` `/` `%`), unary (`-` `+` `!` `~`), compound assignment (`+=` `-=` `*=` `/=` `%=` `&=` `^=` `\|=` `<<=` `>>=`), comma-separated multi-expressions, hex (`0x`), octal (`0`-prefix), parenthesised sub-expressions, variable references.
 
-### Implemented
-- [x] **Core Execution**: Recursive AST execution with instruction pointer (`PC`) for jumps.
-- [x] **Environment Scoping**: `SETLOCAL` and `ENDLOCAL` with a persistent environment stack.
-- [x] **Control Flow**:
-    - `GOTO` (including dynamic labels like `goto %VAR%`).
-    - `CALL` (both subroutine `:label` and external commands).
-    - `IF` (EXIST, DEFINED, ERRORLEVEL, and string comparison with `/I`).
-- [x] **Loops**: `FOR` (files), `FOR /L` (range), and basic `FOR /F` (strings/files).
-- [x] **Built-ins**: `ECHO`, `SET`, `SET /A` (basic math), `SET /P` (input), `SHIFT`, `EXIT`, `CD`.
-- [x] **I/O Redirection**:
-    - Pipes (`|`) using parallel goroutines.
-    - File redirection (`>`, `>>`, `<`).
-- [x] **Cross-Platform**: Automatic Windows-to-Unix path mapping (e.g., `C:\` -> `/mnt/c/`).
+### Cross-Platform
 
-### Unimplemented / Planned
-- [ ] **Complex Math**: Full expression evaluation for `SET /A` (currently only supports basic `+`).
-- [ ] **Advanced FOR /F**: Full `tokens=`, `delims=`, and `usebackq` option parsing.
-- [ ] **Command Output Parsing**: `FOR /F` iteration over command results (e.g., `FOR /F %%i IN ('dir')`).
-- [ ] **Delayed Expansion Escaping**: More robust handling of `^!` within delayed expansion blocks.
-- [ ] **Line Continuity**: Caret `^` at the very end of a physical line.
-- [ ] **Search Path**: Resolution of external commands via the `PATH` variable (currently relies on `os/exec` default).
+Windows drive paths are mapped automatically (`C:\foo` → `/mnt/c/foo`). External commands that don't exist on the host are attempted via `os/exec`; glob patterns in arguments are expanded before execution.
 
 ## Testing
 
-The project includes an extensive integration test suite in the `tests/` directory. Each `.bat` file is matched with a `.out` file containing the expected stdout.
-
-To run the tests:
 ```bash
-go test -v ./tests
+go test ./...            # unit + integration
+go test -v ./tests/...   # verbose integration output
 ```
+
+17 integration tests cover: basic echo/set, control flow, FOR loops, I/O redirection, path handling, arithmetic, logical operators, nesting, strings, SHIFT, subroutines, FOR /F, labels, dynamic GOTO, complex math, advanced FOR /F, line continuation.
+
+## Gaps & Planned Work
+
+| Area | Status |
+|------|--------|
+| Binary bitwise ops in `SET /A` (`&` `\|` `^` `<<` `>>`) | Compound-assign only; standalone binary form not yet parsed |
+| `IF CMDEXTVERSION` | Type defined; executor branch not wired |
+| FOR var modifiers `%~f` `%~s` `%~a` `%~t` `%~z` | Only `~n` `~x` `~p` `~d` implemented |
+| Built-in `TYPE` | Falls through to host `type`/`cat` |
+| Built-in `DIR` | Falls through to host `dir`/`ls` |
+| Built-in `COPY` / `MOVE` / `DEL` / `MKDIR` / `RMDIR` | Falls through to host equivalents |
+| Built-in `PUSHD` / `POPD` | Falls through to host |
+| Built-in `TITLE` / `CLS` / `COLOR` / `VER` / `PAUSE` | Falls through to host |
+| `PROMPT` variable codes | Only `$P` and `$G` expanded |
+| `%~` in Phase 1 | Modifier syntax partially skipped |
