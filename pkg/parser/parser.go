@@ -37,6 +37,7 @@ func (p *Parser) Parse() []Node {
 		if p.pos >= len(p.tokens) {
 			break
 		}
+		
 		if n := p.parseCommand(); n != nil {
 			nodes = append(nodes, n)
 		} else {

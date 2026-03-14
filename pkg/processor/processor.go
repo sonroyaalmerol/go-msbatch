@@ -1,6 +1,8 @@
 package processor
 
 import (
+	"io"
+	"os"
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/lexer"
@@ -10,28 +12,41 @@ import (
 // Processor applies the CMD.EXE parsing phases to a line of batch source and
 // returns the expanded result ready for execution.
 type Processor struct {
-	Env  *Environment
-	Args []string // %0..%N positional arguments (batch mode)
-	Echo bool     // ECHO state (phase 3)
+	Env     *Environment
+	Args    []string // %0..%N positional arguments (batch mode)
+	Echo    bool     // ECHO state (phase 3)
+	ForVars map[string]string
+	Stdout  io.Writer
+	Stdin   io.Reader
+	Stderr  io.Writer
 }
 
 // New creates a Processor.
 func New(env *Environment, args []string) *Processor {
 	return &Processor{
-		Env:  env,
-		Args: args,
-		Echo: true,
+		Env:     env,
+		Args:    args,
+		Echo:    true,
+		ForVars: make(map[string]string),
+		Stdout:  os.Stdout,
+		Stdin:   os.Stdin,
+		Stderr:  os.Stderr,
 	}
 }
 
-// ProcessLine applies phases 0–5 to a single source line and returns the
+// ProcessLine applies phases 0-5 to a single source line and returns the
 // fully-expanded line.  It does NOT execute the result.
 func (p *Processor) ProcessLine(src string) string {
-	// Phase 0: read-line normalisation (Ctrl-Z → LF)
+	// Phase 0: read-line normalisation (Ctrl-Z -> LF)
 	s := Phase0ReadLine(src)
 
 	// Phase 1: percent expansion
 	s = Phase1PercentExpand(s, p.Env, p.Args)
+
+	// Phase 4: FOR variable expansion
+	if len(p.ForVars) > 0 {
+		s = Phase4ForVarExpand(s, p.ForVars)
+	}
 
 	// Phase 5: delayed expansion (applied before execution per spec)
 	s = Phase5DelayedExpand(s, p.Env)

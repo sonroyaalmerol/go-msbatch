@@ -30,8 +30,6 @@ func (p *Parser) parseBinary() Node {
 			op = NodeConcat
 		case "&&":
 			op = NodeAndThen
-		default:
-			break
 		}
 		if op == 0 {
 			break
@@ -108,7 +106,11 @@ func (p *Parser) parsePrimary() Node {
 	}
 
 	// Everything else is a simple command
-	return p.parseSimpleCommand(suppressed)
+	cmd := p.parseSimpleCommand(suppressed)
+	if cmd == nil {
+		return nil
+	}
+	return cmd
 }
 
 // parseSimpleCommand reads one keyword or text token as the command name,
@@ -148,8 +150,8 @@ func (p *Parser) collectArgs(cmd *SimpleCommand) {
 				flushArg()
 				return
 			}
-			// Other punctuation (like leftover "@") — skip
-			p.consume()
+			// Other punctuation (like "=", ":", "@") — include in current arg
+			cur.WriteString(val(p.consume()))
 
 		case lexer.TokenRedirect:
 			flushArg()

@@ -28,16 +28,19 @@ func NewEnvironment(batchMode bool) *Environment {
 			e.vars[strings.ToUpper(before)] = after
 		}
 	}
+	e.vars["ERRORLEVEL"] = "0"
 	return e
 }
 
 // NewEmptyEnvironment creates an Environment with no OS variables.
 // Useful for deterministic tests.
 func NewEmptyEnvironment(batchMode bool) *Environment {
-	return &Environment{
+	e := &Environment{
 		vars:      make(map[string]string),
 		batchMode: batchMode,
 	}
+	e.vars["ERRORLEVEL"] = "0"
+	return e
 }
 
 // Set stores a variable.  Names are normalised to upper-case per CMD semantics.

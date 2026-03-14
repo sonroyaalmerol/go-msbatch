@@ -62,7 +62,7 @@ var builtinCommands = map[string]bool{
 	"assoc": true, "break": true, "cd": true, "chdir": true,
 	"cls": true, "color": true, "copy": true, "date": true,
 	"del": true, "dir": true, "dpath": true, "echo": true,
-	"else": true, "endlocal": true, "erase": true, "exit": true, "ftype": true,
+	"endlocal": true, "erase": true, "exit": true, "ftype": true,
 	"keys": true, "md": true, "mkdir": true, "mklink": true,
 	"move": true, "path": true, "pause": true, "popd": true,
 	"prompt": true, "pushd": true, "rd": true, "ren": true,
@@ -106,6 +106,9 @@ func (bl *BatchLexer) isFollowPlain(r rune) bool {
 		return false
 	}
 	if r == '"' || r == '%' || r == '!' || r == '^' {
+		return false
+	}
+	if r == '(' {
 		return false
 	}
 	if r == ')' && bl.compoundDepth > 0 {
@@ -231,6 +234,9 @@ func (bl *BatchLexer) stateWord(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenT
 	case "if":
 		l.Emit(TokenKeyword)
 		return bl.stateIf
+	case "else":
+		l.Emit(TokenKeyword)
+		return bl.stateRoot
 	case "goto":
 		l.Emit(TokenKeyword)
 		return bl.stateGoto
@@ -277,6 +283,10 @@ func (bl *BatchLexer) stateFollow(l lex.Lexer[TokenType, rune]) lex.StateFn[Toke
 		return bl.stateRoot
 	case r == ')' && bl.compoundDepth > 0:
 		bl.compoundDepth--
+		l.Emit(TokenPunctuation)
+		return bl.stateRoot
+	case r == '(':
+		bl.compoundDepth++
 		l.Emit(TokenPunctuation)
 		return bl.stateRoot
 	case r == '>' || r == '<':
@@ -414,7 +424,10 @@ func (bl *BatchLexer) stateSetEq(l lex.Lexer[TokenType, rune]) lex.StateFn[Token
 func (bl *BatchLexer) stateArithmetic(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
 	r := l.Next()
 	switch {
-	case r == 0 || isNL(r):
+	case r == 0:
+		return bl.stateRoot
+	case isNL(r):
+		l.Prev()
 		return bl.stateRoot
 	case r == '|' || r == '&':
 		l.Backup()
@@ -454,7 +467,7 @@ func (bl *BatchLexer) stateArithmetic(l lex.Lexer[TokenType, rune]) lex.StateFn[
 		} else if r2 >= '0' && r2 <= '7' {
 			l.AcceptRun(func(r rune) bool { return r >= '0' && r <= '7' })
 		} else if r2 != 0 {
-			l.Backup()
+			l.Prev()
 		}
 		l.Emit(TokenNumber)
 		return bl.stateArithmetic
@@ -601,24 +614,24 @@ func (bl *BatchLexer) stateIf(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenTyp
 			r3 := l.Next()
 			if isKeywordEnd(r3) {
 				if r3 != 0 {
-					l.Backup()
+					l.Prev()
 				}
 				l.Emit(TokenKeyword)
 				skipWS(l)
 			} else {
 				if r3 != 0 {
-					l.Backup()
+					l.Prev()
 				}
 				if r2 != 0 {
-					l.Backup()
+					l.Prev()
 				}
-				l.Backup()
+				l.Prev()
 			}
 		} else {
 			if r2 != 0 {
-				l.Backup()
+				l.Prev()
 			}
-			l.Backup()
+			l.Prev()
 		}
 	}
 
@@ -736,7 +749,7 @@ func (bl *BatchLexer) stateIfThen(l lex.Lexer[TokenType, rune]) lex.StateFn[Toke
 		l.Emit(TokenPunctuation)
 		return bl.stateRoot
 	}
-	return bl.stateFollow
+	return bl.stateRoot
 }
 
 // lexStringDoubleBody handles the interior of a double-quoted string, assuming
@@ -784,7 +797,7 @@ func (bl *BatchLexer) lexPercent(l lex.Lexer[TokenType, rune]) {
 		l.Emit(TokenNameVariable)
 	case r == 0 || isNL(r):
 		if r != 0 {
-			l.Backup()
+			l.Prev()
 		}
 		l.Emit(TokenNameVariable)
 	default:
@@ -792,7 +805,7 @@ func (bl *BatchLexer) lexPercent(l lex.Lexer[TokenType, rune]) {
 			r2 := l.Next()
 			if r2 == '%' || r2 == 0 || isNL(r2) {
 				if r2 != '%' && r2 != 0 {
-					l.Backup()
+					l.Prev()
 				}
 				break
 			}
@@ -807,7 +820,7 @@ func (bl *BatchLexer) lexDelayedVar(l lex.Lexer[TokenType, rune]) {
 		r := l.Next()
 		if r == '!' || r == 0 || isNL(r) {
 			if r != '!' && r != 0 {
-				l.Backup()
+				l.Prev()
 			}
 			break
 		}

@@ -237,25 +237,30 @@ func (p *Parser) peekKeyword(kw string) bool {
 // by: (a) for the first token with len>1 that ends with '"' → complete; (b)
 // for subsequent TokenStringDouble tokens that end with '"' → closing.
 func (p *Parser) collectStoken() string {
-	t := p.peek()
-	if t.Type == lexer.TokenEOF {
-		return ""
-	}
 	var sb strings.Builder
-	switch t.Type {
-	case lexer.TokenStringDouble:
-		return p.collectQuotedString()
-	case lexer.TokenStringSingle, lexer.TokenStringBT:
-		sb.WriteString(val(p.consume()))
-	case lexer.TokenNameVariable, lexer.TokenStringEscape:
-		sb.WriteString(val(p.consume()))
-	case lexer.TokenText:
-		s := val(t)
-		if isCommandStart(s) || isNewlineOnly(s) {
-			return "" // nothing to collect
+	for p.pos < len(p.tokens) {
+		t := p.peek()
+		if t.Type == lexer.TokenEOF {
+			break
 		}
-		p.consume()
-		sb.WriteString(s)
+		
+		switch t.Type {
+		case lexer.TokenStringDouble:
+			sb.WriteString(p.collectQuotedString())
+		case lexer.TokenStringSingle, lexer.TokenStringBT,
+			lexer.TokenNameVariable, lexer.TokenStringEscape:
+			sb.WriteString(val(p.consume()))
+		case lexer.TokenText:
+			s := val(t)
+			if isCommandStart(s) || isNewlineOnly(s) {
+				return sb.String()
+			}
+			p.consume()
+			sb.WriteString(s)
+		default:
+			// Stop at operators, keywords, punctuation (like '(')
+			return sb.String()
+		}
 	}
 	return sb.String()
 }
