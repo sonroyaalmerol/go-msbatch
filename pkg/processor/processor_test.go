@@ -1,6 +1,7 @@
 package processor_test
 
 import (
+	"os"
 	"testing"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
@@ -129,6 +130,50 @@ func TestProcessorExpandNode(t *testing.T) {
 	}
 	if len(expanded.Args) == 0 || expanded.Args[0] != "world" {
 		t.Errorf("expected expanded arg=world, got %v", expanded.Args)
+	}
+}
+
+// TestExpandPrompt tests all supported $X PROMPT codes.
+func TestExpandPrompt(t *testing.T) {
+	p := newProc(true)
+	p.Env.Set("ERRORLEVEL", "42")
+
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"$$", "$"},
+		{"$A", "&"},
+		{"$a", "&"},
+		{"$B", "|"},
+		{"$C", "("},
+		{"$E", "\x1B"},
+		{"$F", ")"},
+		{"$G", ">"},
+		{"$g", ">"},
+		{"$H", "\x08"},
+		{"$L", "<"},
+		{"$Q", "="},
+		{"$q", "="},
+		{"$R", "42"},
+		{"$S", " "},
+		{"$s", " "},
+		{"$V", "10.0.19045"},
+		{"$_", "\n"},
+		// Compound: default prompt shape
+		{"$P$G", func() string {
+			pwd, _ := os.Getwd()
+			return pwd + ">"
+		}()},
+		// Unknown code passes through literally
+		{"$Z", "$Z"},
+	}
+
+	for _, tc := range cases {
+		got := p.ExpandPrompt(tc.input)
+		if got != tc.want {
+			t.Errorf("ExpandPrompt(%q) = %q, want %q", tc.input, got, tc.want)
+		}
 	}
 }
 

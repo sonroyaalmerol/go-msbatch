@@ -20,7 +20,7 @@ pkg/lexer/             Batch-specific tokenizer (BatchLexer → 19 token types)
 pkg/parser/            Recursive-descent AST builder
 pkg/processor/         Multi-phase expansion engine + executor
 main.go                CLI entry point (file mode or interactive REPL)
-tests/                 20 integration test pairs (*.bat + *.out)
+tests/                 21 integration test pairs (*.bat + *.out)
 ```
 
 ## Processing Phases
@@ -30,7 +30,7 @@ The interpreter follows `cmd.exe`'s documented 6-phase model exactly:
 | Phase | Name | Description |
 |-------|------|-------------|
 | 0 | Read Line | Ctrl-Z → `\n`; trailing `^` merges the next line |
-| 1 | Percent Expansion | `%VAR%`, `%0`–`%9`, `%*`, `%%`, slicing, substitution |
+| 1 | Percent Expansion | `%VAR%`, `%0`–`%9`, `%*`, `%%`, slicing, substitution, `%~[mods]n` tilde modifiers |
 | 2 | Lex & Parse | Tokenise then build AST (commands, blocks, operators) |
 | 3 | Echo Suppression | `@` prefix; `ECHO ON`/`OFF` state |
 | 4 | FOR Variable Expansion | `%%i` / `%i`, tilde modifiers (`%~nxpdf`, `%~atz`, …) |
@@ -100,14 +100,13 @@ go test ./...            # unit + integration
 go test -v ./tests/...   # verbose integration output
 ```
 
-20 integration tests cover: basic echo/set, control flow, FOR loops, I/O redirection, path handling, arithmetic, logical operators, nesting, strings, SHIFT, subroutines, FOR /F, labels, dynamic GOTO, complex math, advanced FOR /F, line continuation, mkdir/rmdir, del/copy/move, FOR /D and FOR /R.
+21 integration tests cover: basic echo/set, control flow, FOR loops, I/O redirection, path handling, arithmetic, logical operators, nesting, strings, SHIFT, subroutines, FOR /F, labels, dynamic GOTO, complex math, advanced FOR /F, line continuation, mkdir/rmdir, del/copy/move, FOR /D and FOR /R, `%~` tilde modifiers on positional parameters.
 
 ## Gaps & Planned Work
 
 | Area | Status |
 |------|--------|
-| `PROMPT` variable codes | Only `$P`, `$G`, `$S` expanded; `$D`, `$T`, `$_`, etc. not yet wired |
-| `%~` in Phase 1 | Modifier syntax for `%~nxf` on `%0`–`%9` not yet implemented |
+| `PROMPT` variable codes | `$N` drive letter only available on Windows; `$M` (remote name) always empty |
 | `COPY` append (`+`) | Concatenating multiple sources into one destination not supported |
 | `DEL /A` attribute filter | Attribute-based file selection skipped |
 | `ASSOC` / `FTYPE` | File association queries not implemented |

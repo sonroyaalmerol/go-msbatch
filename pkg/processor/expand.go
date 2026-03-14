@@ -86,11 +86,77 @@ func Phase1PercentExpand(src string, env *Environment, args []string) string {
 			}
 			i += 2
 		case next == '~':
-			// %~ modifier - not fully implemented, just skip the modifier part
-			// and treat as variable if name follows.
-			i++               // skip %
-			sb.WriteRune('%') // leave for later? No, this is tricky.
-			// For now, let's just treat it as start of a variable name.
+			// %~[modifiers][n] or %~$VARNAME:n — tilde modifier on positional parameter.
+			i += 2 // skip '%' and '~'
+
+			// Collect modifier letters.
+			const modChars = "fFdDpPnNxXsSeEaAtTzZ"
+			var mods strings.Builder
+			for i < len(runes) && strings.ContainsRune(modChars, runes[i]) {
+				mods.WriteRune(runes[i])
+				i++
+			}
+
+			// Optional $VARNAME: path-search modifier.
+			pathVar := ""
+			if i < len(runes) && runes[i] == '$' {
+				i++ // skip '$'
+				var varBuf strings.Builder
+				for i < len(runes) && runes[i] != ':' && runes[i] != 0 && runes[i] != '\n' && runes[i] != '\r' {
+					varBuf.WriteRune(runes[i])
+					i++
+				}
+				if i < len(runes) && runes[i] == ':' {
+					i++ // skip ':'
+					pathVar = varBuf.String()
+				}
+			}
+
+			// Expect a digit 0-9.
+			if i < len(runes) && runes[i] >= '0' && runes[i] <= '9' && env.BatchMode() {
+				idx := int(runes[i] - '0')
+				i++
+				argVal := ""
+				if idx < len(args) {
+					argVal = args[idx]
+				}
+				// Strip surrounding quotes — the base %~ behaviour.
+				if len(argVal) >= 2 && argVal[0] == '"' && argVal[len(argVal)-1] == '"' {
+					argVal = argVal[1 : len(argVal)-1]
+				}
+				if pathVar != "" {
+					// Search for the file in the directories listed in the named variable.
+					if searchPath, ok := env.Get(pathVar); ok {
+						found := false
+						for _, dir := range filepath.SplitList(searchPath) {
+							candidate := filepath.Join(dir, argVal)
+							if _, err := os.Stat(candidate); err == nil {
+								argVal = candidate
+								found = true
+								break
+							}
+						}
+						if !found {
+							argVal = ""
+						}
+					} else {
+						argVal = ""
+					}
+				}
+				if mods.Len() > 0 {
+					argVal = applyForVarModifiers(argVal, mods.String())
+				}
+				sb.WriteString(argVal)
+			} else {
+				// No digit or not batch mode — emit literally.
+				sb.WriteString("%~")
+				sb.WriteString(mods.String())
+				if pathVar != "" {
+					sb.WriteByte('$')
+					sb.WriteString(pathVar)
+					sb.WriteByte(':')
+				}
+			}
 		default:
 			// %NAME% or %VAR:~start,len% or %VAR:old=new% or bare %
 			end := indexRuneFrom(runes, '%', i+1)
@@ -272,62 +338,97 @@ func Phase4ForVarExpand(src string, forVars map[string]string) string {
 	return sb.String()
 }
 
-// applyForVarModifiers applies FOR variable modifiers to val.
-// Supported: d (drive), p (path), n (name), x (ext), f (full path),
-// s (absolute), e (expanded), a (attributes), t (timestamp), z (size).
+// applyForVarModifiers applies FOR/positional-parameter tilde modifiers to val.
+//
+// Path-component modifiers (d, p, n, x) are all extracted from the same
+// resolved value and their results concatenated, matching cmd.exe behaviour
+// where e.g. %~dp0 = drive + directory (not p applied to the output of d).
+//
+// Supported modifiers:
+//
+//	f / s / e  — resolve to absolute path (applied first)
+//	d          — drive letter ("C:" on Windows, "" on Unix)
+//	p          — directory path with trailing separator
+//	n          — filename without extension
+//	x          — extension (including dot)
+//	a          — file attributes string
+//	t          — last-modified timestamp
+//	z          — file size in bytes
 func applyForVarModifiers(val, mods string) string {
-	result := val
-	for _, mod := range strings.ToLower(mods) {
-		switch mod {
-		case 'f', 's', 'e':
-			// Full / short / expanded path — resolve to absolute path.
-			if abs, err := filepath.Abs(result); err == nil {
-				result = abs
-			}
-		case 'd':
-			// Drive letter (e.g. "C:"); on Unix always empty.
-			if len(result) >= 2 && result[1] == ':' {
-				result = result[:2]
-			} else {
-				result = ""
-			}
-		case 'p':
-			// Directory component (with trailing separator).
-			dir := filepath.Dir(result)
-			if dir != "." && !strings.HasSuffix(dir, string(filepath.Separator)) {
-				dir += string(filepath.Separator)
-			}
-			result = dir
-		case 'n':
-			// Filename without extension.
-			base := filepath.Base(result)
-			ext := filepath.Ext(base)
-			result = base[:len(base)-len(ext)]
-		case 'x':
-			// Extension only (including the dot).
-			result = filepath.Ext(filepath.Base(result))
-		case 'a':
-			// File attributes — return a simplified string.
-			if fi, err := os.Stat(result); err == nil {
-				attr := "--a------"
-				if fi.IsDir() {
-					attr = "d---------"
+	lower := strings.ToLower(mods)
+
+	// f / s / e: resolve to absolute path first.
+	if strings.ContainsAny(lower, "fse") {
+		if abs, err := filepath.Abs(val); err == nil {
+			val = abs
+		}
+	}
+
+	hasD := strings.ContainsRune(lower, 'd')
+	hasP := strings.ContainsRune(lower, 'p')
+	hasN := strings.ContainsRune(lower, 'n')
+	hasX := strings.ContainsRune(lower, 'x')
+
+	if hasD || hasP || hasN || hasX {
+		// Separate the drive prefix so p/n/x operate on the path portion only.
+		drive := ""
+		pathPart := val
+		if len(val) >= 2 && val[1] == ':' {
+			drive = val[:2]
+			pathPart = val[2:]
+		}
+
+		var result strings.Builder
+		if hasD {
+			result.WriteString(drive)
+		}
+		if hasP {
+			dir := filepath.Dir(pathPart)
+			switch {
+			case dir == ".":
+				// Relative filename with no directory component → empty.
+			case dir == "/" || dir == string(filepath.Separator):
+				result.WriteString(dir)
+			default:
+				result.WriteString(dir)
+				if !strings.HasSuffix(dir, string(filepath.Separator)) {
+					result.WriteRune(filepath.Separator)
 				}
-				result = attr
+			}
+		}
+		if hasN {
+			base := filepath.Base(val)
+			ext := filepath.Ext(base)
+			result.WriteString(base[:len(base)-len(ext)])
+		}
+		if hasX {
+			result.WriteString(filepath.Ext(filepath.Base(val)))
+		}
+		val = result.String()
+	}
+
+	// Informational modifiers applied to the current value as a path.
+	for _, mod := range lower {
+		switch mod {
+		case 'a':
+			if fi, err := os.Stat(val); err == nil {
+				if fi.IsDir() {
+					val = "d---------"
+				} else {
+					val = "--a------"
+				}
 			}
 		case 't':
-			// Last-modified date/time.
-			if fi, err := os.Stat(result); err == nil {
-				result = fi.ModTime().Format("01/02/2006 03:04 PM")
+			if fi, err := os.Stat(val); err == nil {
+				val = fi.ModTime().Format("01/02/2006 03:04 PM")
 			}
 		case 'z':
-			// File size in bytes.
-			if fi, err := os.Stat(result); err == nil {
-				result = strconv.FormatInt(fi.Size(), 10)
+			if fi, err := os.Stat(val); err == nil {
+				val = strconv.FormatInt(fi.Size(), 10)
 			}
 		}
 	}
-	return result
+	return val
 }
 
 // Phase5DelayedExpand performs phase-5 delayed variable expansion (!VAR!).

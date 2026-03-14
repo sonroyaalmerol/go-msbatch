@@ -140,18 +140,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		if !ok {
 			prompt = "$P$G"
 		}
-
-		expandedPrompt := prompt
-		if strings.Contains(expandedPrompt, "$P") || strings.Contains(expandedPrompt, "$p") {
-			pwd, _ := os.Getwd()
-			expandedPrompt = strings.ReplaceAll(expandedPrompt, "$P", pwd)
-			expandedPrompt = strings.ReplaceAll(expandedPrompt, "$p", pwd)
-		}
-		expandedPrompt = strings.ReplaceAll(expandedPrompt, "$G", ">")
-		expandedPrompt = strings.ReplaceAll(expandedPrompt, "$g", ">")
-		expandedPrompt = strings.ReplaceAll(expandedPrompt, "$S", " ")
-		expandedPrompt = strings.ReplaceAll(expandedPrompt, "$s", " ")
-
+		expandedPrompt := p.ExpandPrompt(prompt)
 		fmt.Fprintf(p.Stdout, "%s%s %s\n", expandedPrompt, expanded.Name, strings.Join(expanded.Args, " "))
 	}
 	name := strings.ToLower(expanded.Name)

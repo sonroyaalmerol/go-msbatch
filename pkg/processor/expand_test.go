@@ -117,6 +117,89 @@ func TestPhase1VarCaseFolded(t *testing.T) {
 	}
 }
 
+// ---- Phase 1: %~ tilde modifiers on positional parameters ------------------
+
+// TestPhase1TildeBasic tests %~0 strips surrounding quotes.
+func TestPhase1TildeBasic(t *testing.T) {
+	env := processor.NewEmptyEnvironment(true)
+	args := []string{`"C:\scripts\deploy.bat"`}
+	got := processor.Phase1PercentExpand("%~0", env, args)
+	if got != `C:\scripts\deploy.bat` {
+		t.Errorf("expected unquoted path, got %q", got)
+	}
+}
+
+// TestPhase1TildeN tests %~n0 (filename without extension).
+func TestPhase1TildeN(t *testing.T) {
+	env := processor.NewEmptyEnvironment(true)
+	args := []string{"/tmp/tilde_test.bat"}
+	got := processor.Phase1PercentExpand("%~n0", env, args)
+	if got != "tilde_test" {
+		t.Errorf("expected 'tilde_test', got %q", got)
+	}
+}
+
+// TestPhase1TildeX tests %~x0 (extension only).
+func TestPhase1TildeX(t *testing.T) {
+	env := processor.NewEmptyEnvironment(true)
+	args := []string{"/tmp/tilde_test.bat"}
+	got := processor.Phase1PercentExpand("%~x0", env, args)
+	if got != ".bat" {
+		t.Errorf("expected '.bat', got %q", got)
+	}
+}
+
+// TestPhase1TildeNX tests %~nx0 (name + extension = full basename).
+func TestPhase1TildeNX(t *testing.T) {
+	env := processor.NewEmptyEnvironment(true)
+	args := []string{"/tmp/tilde_test.bat"}
+	got := processor.Phase1PercentExpand("%~nx0", env, args)
+	if got != "tilde_test.bat" {
+		t.Errorf("expected 'tilde_test.bat', got %q", got)
+	}
+}
+
+// TestPhase1TildeDP tests %~dp0 (directory with trailing separator) — the most
+// common real-world pattern for "directory of this script".
+func TestPhase1TildeDP(t *testing.T) {
+	env := processor.NewEmptyEnvironment(true)
+	args := []string{"/tmp/scripts/deploy.bat"}
+	got := processor.Phase1PercentExpand("%~dp0", env, args)
+	if got != "/tmp/scripts/" {
+		t.Errorf("expected '/tmp/scripts/', got %q", got)
+	}
+}
+
+// TestPhase1TildeF tests %~f0 (absolute path).
+func TestPhase1TildeF(t *testing.T) {
+	env := processor.NewEmptyEnvironment(true)
+	args := []string{"/tmp/tilde_test.bat"}
+	got := processor.Phase1PercentExpand("%~f0", env, args)
+	if got != "/tmp/tilde_test.bat" {
+		t.Errorf("expected '/tmp/tilde_test.bat', got %q", got)
+	}
+}
+
+// TestPhase1TildeNotBatchMode tests %~0 is left unchanged outside batch mode.
+func TestPhase1TildeNotBatchMode(t *testing.T) {
+	env := processor.NewEmptyEnvironment(false)
+	args := []string{"script.bat"}
+	got := processor.Phase1PercentExpand("%~n0", env, args)
+	if got != "%~n0" {
+		t.Errorf("expected literal '%%~n0', got %q", got)
+	}
+}
+
+// TestPhase1TildeOutOfRange tests %~1 when args[1] is absent → empty string.
+func TestPhase1TildeOutOfRange(t *testing.T) {
+	env := processor.NewEmptyEnvironment(true)
+	args := []string{"script.bat"} // only %0, no %1
+	got := processor.Phase1PercentExpand("%~n1", env, args)
+	if got != "" {
+		t.Errorf("expected empty string, got %q", got)
+	}
+}
+
 // ---- Phase 4 (FOR variable expansion) --------------------------------------
 
 // TestPhase4ForVarBasic tests guideline phase 4: %%X in batch → %X after

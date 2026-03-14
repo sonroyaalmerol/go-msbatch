@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/lexer"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
@@ -138,4 +139,85 @@ func (p *Processor) HandleSetBuiltin(name, value string) {
 	if name != "" {
 		p.Env.Set(name, value)
 	}
+}
+
+// ExpandPrompt expands all $X codes in a PROMPT string.
+// Supported codes (case-insensitive):
+//
+//	$$  →  $          $A  →  &        $B  →  |
+//	$C  →  (          $D  →  date     $E  →  ESC (\x1B)
+//	$F  →  )          $G  →  >        $H  →  backspace (\x08)
+//	$L  →  <          $M  →  (empty on non-UNC drives)
+//	$N  →  drive letter  $P  →  drive+path
+//	$Q  →  =          $S  →  (space)  $T  →  time
+//	$V  →  version    $_  →  newline
+func (p *Processor) ExpandPrompt(prompt string) string {
+	now := time.Now()
+	pwd, _ := os.Getwd()
+
+	// Drive letter: on Windows take from cwd; on Unix always empty.
+	drive := ""
+	if len(pwd) >= 2 && pwd[1] == ':' {
+		drive = string(pwd[0])
+	}
+
+	errorlevel, _ := p.Env.Get("ERRORLEVEL")
+
+	var sb strings.Builder
+	runes := []rune(prompt)
+	for i := 0; i < len(runes); i++ {
+		if runes[i] != '$' || i+1 >= len(runes) {
+			sb.WriteRune(runes[i])
+			continue
+		}
+		i++
+		switch runes[i] {
+		case '$':
+			sb.WriteByte('$')
+		case 'A', 'a':
+			sb.WriteByte('&')
+		case 'B', 'b':
+			sb.WriteByte('|')
+		case 'C', 'c':
+			sb.WriteByte('(')
+		case 'D', 'd':
+			// Windows format: "Mon 01/02/2006"
+			sb.WriteString(now.Format("Mon 01/02/2006"))
+		case 'E', 'e':
+			sb.WriteByte('\x1B')
+		case 'F', 'f':
+			sb.WriteByte(')')
+		case 'G', 'g':
+			sb.WriteByte('>')
+		case 'H', 'h':
+			sb.WriteByte('\x08')
+		case 'L', 'l':
+			sb.WriteByte('<')
+		case 'M', 'm':
+			// Remote name for mapped drives — empty on local/Unix drives.
+			sb.WriteString("")
+		case 'N', 'n':
+			sb.WriteString(drive)
+		case 'P', 'p':
+			sb.WriteString(pwd)
+		case 'Q', 'q':
+			sb.WriteByte('=')
+		case 'R', 'r':
+			sb.WriteString(errorlevel)
+		case 'S', 's':
+			sb.WriteByte(' ')
+		case 'T', 't':
+			// Windows format: "15:04:05.00"
+			sb.WriteString(now.Format("15:04:05.00"))
+		case 'V', 'v':
+			sb.WriteString("10.0.19045")
+		case '_':
+			sb.WriteByte('\n')
+		default:
+			// Unknown code — emit literally.
+			sb.WriteByte('$')
+			sb.WriteRune(runes[i])
+		}
+	}
+	return sb.String()
 }
