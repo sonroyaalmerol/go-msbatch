@@ -391,6 +391,203 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		}
 		p.Env.Set("ERRORLEVEL", "0")
 		return nil
+	case "mkdir", "md":
+		for _, arg := range expanded.Args {
+			if strings.HasPrefix(arg, "/") {
+				continue
+			}
+			path := MapPath(arg)
+			if err := os.MkdirAll(path, 0755); err != nil {
+				fmt.Fprintf(p.Stderr, "A subdirectory or file %s already exists.\n", arg)
+				p.Env.Set("ERRORLEVEL", "1")
+				return nil
+			}
+		}
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
+	case "rmdir", "rd":
+		recursive := false
+		var paths []string
+		for _, arg := range expanded.Args {
+			lower := strings.ToLower(arg)
+			if lower == "/s" {
+				recursive = true
+				continue
+			}
+			if lower == "/q" {
+				continue
+			}
+			paths = append(paths, arg)
+		}
+		for _, dirPath := range paths {
+			path := MapPath(dirPath)
+			var err error
+			if recursive {
+				err = os.RemoveAll(path)
+			} else {
+				err = os.Remove(path)
+			}
+			if err != nil {
+				fmt.Fprintf(p.Stderr, "The directory is not empty.\n")
+				p.Env.Set("ERRORLEVEL", "1")
+				return nil
+			}
+		}
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
+	case "del", "erase":
+		recursive := false
+		var patterns []string
+		for _, arg := range expanded.Args {
+			lower := strings.ToLower(arg)
+			if lower == "/q" || lower == "/f" {
+				continue
+			}
+			if lower == "/s" {
+				recursive = true
+				continue
+			}
+			if strings.HasPrefix(lower, "/a") {
+				continue
+			}
+			patterns = append(patterns, arg)
+		}
+		for _, pat := range patterns {
+			mapped := MapPath(pat)
+			if recursive {
+				dir := filepath.Dir(mapped)
+				base := filepath.Base(mapped)
+				filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+					if err != nil || info.IsDir() {
+						return nil
+					}
+					if matched, _ := filepath.Match(base, filepath.Base(path)); matched {
+						os.Remove(path)
+					}
+					return nil
+				})
+			} else {
+				matches, err := filepath.Glob(mapped)
+				if err == nil && len(matches) > 0 {
+					for _, m := range matches {
+						os.Remove(m)
+					}
+				} else {
+					if os.Remove(mapped) != nil {
+						fmt.Fprintf(p.Stderr, "Could Not Find %s\n", pat)
+						p.Env.Set("ERRORLEVEL", "1")
+						return nil
+					}
+				}
+			}
+		}
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
+	case "copy":
+		var args []string
+		for _, arg := range expanded.Args {
+			lower := strings.ToLower(arg)
+			if lower == "/y" || lower == "/-y" || lower == "/b" || lower == "/a" {
+				continue
+			}
+			args = append(args, arg)
+		}
+		if len(args) < 1 {
+			fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")
+			p.Env.Set("ERRORLEVEL", "1")
+			return nil
+		}
+		dst := "."
+		var srcs []string
+		if len(args) >= 2 {
+			dst = MapPath(args[len(args)-1])
+			for _, s := range args[:len(args)-1] {
+				mapped := MapPath(s)
+				if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
+					srcs = append(srcs, matches...)
+				} else {
+					srcs = append(srcs, mapped)
+				}
+			}
+		} else {
+			srcs = []string{MapPath(args[0])}
+			dst, _ = os.Getwd()
+		}
+		count := 0
+		for _, src := range srcs {
+			target := dst
+			if info, err := os.Stat(dst); err == nil && info.IsDir() {
+				target = filepath.Join(dst, filepath.Base(src))
+			}
+			if err := copyFile(src, target); err != nil {
+				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
+				p.Env.Set("ERRORLEVEL", "1")
+				return nil
+			}
+			count++
+		}
+		fmt.Fprintf(p.Stdout, "        %d file(s) copied.\n", count)
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
+	case "move":
+		var args []string
+		for _, arg := range expanded.Args {
+			lower := strings.ToLower(arg)
+			if lower == "/y" || lower == "/-y" {
+				continue
+			}
+			args = append(args, arg)
+		}
+		if len(args) < 2 {
+			fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")
+			p.Env.Set("ERRORLEVEL", "1")
+			return nil
+		}
+		src := MapPath(args[0])
+		dst := MapPath(args[1])
+		if info, err := os.Stat(dst); err == nil && info.IsDir() {
+			dst = filepath.Join(dst, filepath.Base(src))
+		}
+		if err := os.Rename(src, dst); err != nil {
+			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
+			p.Env.Set("ERRORLEVEL", "1")
+			return nil
+		}
+		fmt.Fprintf(p.Stdout, "        1 file(s) moved.\n")
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
+	case "dir":
+		dirPath := "."
+		for _, arg := range expanded.Args {
+			if !strings.HasPrefix(arg, "/") {
+				dirPath = MapPath(arg)
+				break
+			}
+		}
+		entries, err := os.ReadDir(dirPath)
+		if err != nil {
+			fmt.Fprintf(p.Stderr, "File Not Found\n")
+			p.Env.Set("ERRORLEVEL", "1")
+			return nil
+		}
+		abs, _ := filepath.Abs(dirPath)
+		fmt.Fprintf(p.Stdout, " Directory of %s\n\n", abs)
+		for _, e := range entries {
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			t := info.ModTime()
+			if e.IsDir() {
+				fmt.Fprintf(p.Stdout, "%s  %s    <DIR>          %s\n",
+					t.Format("01/02/2006"), t.Format("03:04 PM"), e.Name())
+			} else {
+				fmt.Fprintf(p.Stdout, "%s  %s    %14d %s\n",
+					t.Format("01/02/2006"), t.Format("03:04 PM"), info.Size(), e.Name())
+			}
+		}
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
 	}
 
 	return p.runExternalCommand(expanded)
@@ -713,6 +910,21 @@ func applyForTokens(fullLine string, parts []string, delims string, tokens strin
 		res[startVar] = parts[0]
 	}
 	return res
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
 }
 
 func (p *Processor) captureCommandOutput(cmdLine string) (string, error) {
