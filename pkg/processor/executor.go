@@ -474,49 +474,141 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		p.Env.Set("ERRORLEVEL", "0")
 		return nil
 	case "copy":
-		var args []string
+		var rawArgs []string
 		for _, arg := range expanded.Args {
 			lower := strings.ToLower(arg)
-			if lower == "/y" || lower == "/-y" || lower == "/b" || lower == "/a" {
+			if lower == "/y" || lower == "/-y" || lower == "/b" || lower == "/a" || lower == "/v" {
 				continue
 			}
-			args = append(args, arg)
+			rawArgs = append(rawArgs, arg)
 		}
-		if len(args) < 1 {
+		if len(rawArgs) < 1 {
 			fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")
 			p.Env.Set("ERRORLEVEL", "1")
 			return nil
 		}
-		dst := "."
+
+		// Detect append mode: any arg is "+" or contains "+".
+		hasPlus := false
+		for _, a := range rawArgs {
+			if strings.Contains(a, "+") {
+				hasPlus = true
+				break
+			}
+		}
+
 		var srcs []string
-		if len(args) >= 2 {
-			dst = MapPath(args[len(args)-1])
-			for _, s := range args[:len(args)-1] {
-				mapped := MapPath(s)
-				if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
-					srcs = append(srcs, matches...)
-				} else {
-					srcs = append(srcs, mapped)
+		dst := ""
+
+		if !hasPlus {
+			// Simple copy (original behaviour).
+			if len(rawArgs) >= 2 {
+				dst = MapPath(rawArgs[len(rawArgs)-1])
+				for _, s := range rawArgs[:len(rawArgs)-1] {
+					mapped := MapPath(s)
+					if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
+						srcs = append(srcs, matches...)
+					} else {
+						srcs = append(srcs, mapped)
+					}
 				}
+			} else {
+				srcs = []string{MapPath(rawArgs[0])}
+				dst, _ = os.Getwd()
 			}
 		} else {
-			srcs = []string{MapPath(args[0])}
-			dst, _ = os.Getwd()
-		}
-		count := 0
-		for _, src := range srcs {
-			target := dst
-			if info, err := os.Stat(dst); err == nil && info.IsDir() {
-				target = filepath.Join(dst, filepath.Base(src))
+			// Append mode: "+" separates sources (embedded or standalone).
+			// The destination is the last rawArg when it neither contains "+"
+			// nor immediately follows a "+" token.
+			srcArgs := rawArgs
+			if len(rawArgs) >= 2 {
+				last := rawArgs[len(rawArgs)-1]
+				prev := rawArgs[len(rawArgs)-2]
+				if !strings.Contains(last, "+") && prev != "+" && !strings.HasSuffix(prev, "+") {
+					dst = MapPath(last)
+					srcArgs = rawArgs[:len(rawArgs)-1]
+				}
 			}
-			if err := copyFile(src, target); err != nil {
+			// Expand embedded "+" in each source arg.
+			for _, a := range srcArgs {
+				if a == "+" {
+					continue
+				}
+				for _, part := range strings.Split(a, "+") {
+					part = strings.TrimSpace(part)
+					if part == "" {
+						continue
+					}
+					mapped := MapPath(part)
+					if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
+						srcs = append(srcs, matches...)
+					} else {
+						srcs = append(srcs, mapped)
+					}
+				}
+			}
+			// No explicit destination → use the first source.
+			if dst == "" && len(srcs) > 0 {
+				dst = srcs[0]
+			}
+		}
+
+		if len(srcs) == 0 {
+			fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")
+			p.Env.Set("ERRORLEVEL", "1")
+			return nil
+		}
+
+		// Resolve destination directory.
+		dstTarget := dst
+		if info, err := os.Stat(dst); err == nil && info.IsDir() {
+			dstTarget = filepath.Join(dst, filepath.Base(srcs[0]))
+		}
+
+		if !hasPlus && len(srcs) > 1 {
+			// Multiple glob-expanded sources: copy each file individually.
+			count := 0
+			for _, src := range srcs {
+				target := dstTarget
+				if info, err := os.Stat(dst); err == nil && info.IsDir() {
+					target = filepath.Join(dst, filepath.Base(src))
+				}
+				if err := copyFile(src, target); err != nil {
+					fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
+					p.Env.Set("ERRORLEVEL", "1")
+					return nil
+				}
+				count++
+			}
+			fmt.Fprintf(p.Stdout, "        %d file(s) copied.\n", count)
+		} else if !hasPlus {
+			// Single source copy.
+			if err := copyFile(srcs[0], dstTarget); err != nil {
 				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
 				p.Env.Set("ERRORLEVEL", "1")
 				return nil
 			}
-			count++
+			fmt.Fprintf(p.Stdout, "        1 file(s) copied.\n")
+		} else {
+			// Append: concatenate all sources into dstTarget.
+			// Read everything first so dst == srcs[0] is handled safely.
+			var buf bytes.Buffer
+			for _, src := range srcs {
+				data, err := os.ReadFile(src)
+				if err != nil {
+					fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
+					p.Env.Set("ERRORLEVEL", "1")
+					return nil
+				}
+				buf.Write(data)
+			}
+			if err := os.WriteFile(dstTarget, buf.Bytes(), 0666); err != nil {
+				fmt.Fprintf(p.Stderr, "Access is denied.\n")
+				p.Env.Set("ERRORLEVEL", "1")
+				return nil
+			}
+			fmt.Fprintf(p.Stdout, "        1 file(s) copied.\n")
 		}
-		fmt.Fprintf(p.Stdout, "        %d file(s) copied.\n", count)
 		p.Env.Set("ERRORLEVEL", "0")
 		return nil
 	case "move":

@@ -20,7 +20,7 @@ pkg/lexer/             Batch-specific tokenizer (BatchLexer → 19 token types)
 pkg/parser/            Recursive-descent AST builder
 pkg/processor/         Multi-phase expansion engine + executor
 main.go                CLI entry point (file mode or interactive REPL)
-tests/                 21 integration test pairs (*.bat + *.out)
+tests/                 22 integration test pairs (*.bat + *.out)
 ```
 
 ## Processing Phases
@@ -72,7 +72,7 @@ The interpreter follows `cmd.exe`'s documented 6-phase model exactly:
 | `MKDIR` / `MD` | Create directory tree (`os.MkdirAll`) |
 | `RMDIR` / `RD` | Remove directory; `/S` recursive, `/Q` quiet |
 | `DEL` / `ERASE` | Delete files with glob expansion; `/S` recursive, `/Q /F` flags |
-| `COPY` | Copy files; glob source expansion; `/Y /-Y /B /A` flags |
+| `COPY` | Copy files; glob source expansion; append (`file1+file2 dest`, `file1 + file2`); `/Y /-Y /B /A /V` flags |
 | `MOVE` | Move or rename files; `/Y /-Y` flags |
 | `DIR` | List directory contents in Windows-style format |
 | `TYPE` | Print file contents |
@@ -100,14 +100,13 @@ go test ./...            # unit + integration
 go test -v ./tests/...   # verbose integration output
 ```
 
-21 integration tests cover: basic echo/set, control flow, FOR loops, I/O redirection, path handling, arithmetic, logical operators, nesting, strings, SHIFT, subroutines, FOR /F, labels, dynamic GOTO, complex math, advanced FOR /F, line continuation, mkdir/rmdir, del/copy/move, FOR /D and FOR /R, `%~` tilde modifiers on positional parameters.
+22 integration tests cover: basic echo/set, control flow, FOR loops, I/O redirection, path handling, arithmetic, logical operators, nesting, strings, SHIFT, subroutines, FOR /F, labels, dynamic GOTO, complex math, advanced FOR /F, line continuation, mkdir/rmdir, del/copy/move, FOR /D and FOR /R, `%~` tilde modifiers on positional parameters, COPY append (`+`).
 
 ## Gaps & Planned Work
 
 | Area | Status |
 |------|--------|
 | `PROMPT` variable codes | `$N` drive letter only available on Windows; `$M` (remote name) always empty |
-| `COPY` append (`+`) | Concatenating multiple sources into one destination not supported |
 | `DEL /A` attribute filter | Attribute-based file selection skipped |
 | `ASSOC` / `FTYPE` | File association queries not implemented |
 | `FIND` / `FINDSTR` | Fall through to host; no native implementation |
