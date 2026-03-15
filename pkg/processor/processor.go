@@ -13,29 +13,32 @@ import (
 // Processor applies the CMD.EXE parsing phases to a line of batch source and
 // returns the expanded result ready for execution.
 type Processor struct {
-	Env     *Environment
-	Args    []string // %0..%N positional arguments (batch mode)
-	Echo    bool     // ECHO state (phase 3)
-	ForVars map[string]string
-	Stdout  io.Writer
-	Stdin   io.Reader
-	Stderr  io.Writer
+	Env      *Environment
+	Args     []string // %0..%N positional arguments (batch mode)
+	Echo     bool     // ECHO state (phase 3)
+	ForVars  map[string]string
+	Stdout   io.Writer
+	Stdin    io.Reader
+	Stderr   io.Writer
 	Nodes    []parser.Node
 	PC       int
 	Exited   bool
-	DirStack []string // directory stack for PUSHD/POPD
+	DirStack []string        // directory stack for PUSHD/POPD
+	Executor CommandExecutor // handles non-flow-control command dispatch
 }
 
-// New creates a Processor.
-func New(env *Environment, args []string) *Processor {
+// New creates a Processor. exec handles command dispatch; pass nil when only
+// the parsing and expansion phases are needed (e.g. in tests).
+func New(env *Environment, args []string, exec CommandExecutor) *Processor {
 	return &Processor{
-		Env:     env,
-		Args:    args,
-		Echo:    true,
-		ForVars: make(map[string]string),
-		Stdout:  os.Stdout,
-		Stdin:   os.Stdin,
-		Stderr:  os.Stderr,
+		Env:      env,
+		Args:     args,
+		Echo:     true,
+		ForVars:  make(map[string]string),
+		Stdout:   os.Stdout,
+		Stdin:    os.Stdin,
+		Stderr:   os.Stderr,
+		Executor: exec,
 	}
 }
 
@@ -57,13 +60,6 @@ func (p *Processor) ProcessLine(src string) string {
 	s = Phase5DelayedExpand(s, p.Env)
 
 	return s
-}
-
-// ProcessLineForVar applies phase-4 FOR variable expansion on top of
-// ProcessLine output.  forVars maps single-char variable names to values.
-func (p *Processor) ProcessLineForVar(src string, forVars map[string]string) string {
-	expanded := p.ProcessLine(src)
-	return Phase4ForVarExpand(expanded, forVars)
 }
 
 // ParseExpanded lexes and parses an already-expanded line, returning the AST.
@@ -116,7 +112,7 @@ func (p *Processor) HandleEchoBuiltin(args []string) (output string, stateChange
 		}
 		return "ECHO is off", false
 	}
-	
+
 	first := strings.ToLower(filtered[0])
 	if first == "on" {
 		p.Echo = true
@@ -126,7 +122,7 @@ func (p *Processor) HandleEchoBuiltin(args []string) (output string, stateChange
 		p.Echo = false
 		return "", true
 	}
-	
+
 	// JOIN original args to preserve spaces between words if they were intended
 	// but we must be careful about leading spaces from TokenWhitespace.
 	// Systematic way: join the filtered ones.

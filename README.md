@@ -6,21 +6,47 @@ A cross-platform, systematic implementation of the Windows CMD/Batch interpreter
 
 ```bash
 # Run a batch file
-go run . script.bat [arg1 arg2 ...]
+go run ./cmd/msbatch script.bat [arg1 arg2 ...]
 
 # Interactive REPL
-go run .
+go run ./cmd/msbatch
 ```
 
 ## Architecture
 
 ```
+cmd/msbatch/           Binary entry point (file mode + interactive REPL)
 internal/lex/          Generic cursor-based state-machine lexer framework
 pkg/lexer/             Batch-specific tokenizer (BatchLexer → 19 token types)
 pkg/parser/            Recursive-descent AST builder
-pkg/processor/         Multi-phase expansion engine + executor
-main.go                CLI entry point (file mode or interactive REPL)
+pkg/processor/         Multi-phase expansion engine + flow-control executor
+pkg/executor/          Built-in command registry (Registry) + implementations
 tests/                 22 integration test pairs (*.bat + *.out)
+```
+
+### Library usage
+
+```go
+import (
+    "github.com/sonroyaalmerol/go-msbatch/pkg/executor"
+    "github.com/sonroyaalmerol/go-msbatch/pkg/processor"
+)
+
+// Full CMD.EXE compatibility
+proc := processor.New(env, args, executor.New())
+
+// Custom command set
+reg := executor.NewEmpty()
+reg.HandleFunc("print", func(p *processor.Processor, cmd *parser.SimpleCommand) error {
+    fmt.Fprintln(p.Stdout, strings.Join(cmd.Args, " "))
+    return nil
+})
+proc := processor.New(env, args, reg)
+
+// Extend built-ins with your own commands
+reg := executor.New()
+reg.HandleFunc("mycommand", myHandler)
+proc := processor.New(env, args, reg)
 ```
 
 ## Processing Phases
@@ -56,7 +82,9 @@ The interpreter follows `cmd.exe`'s documented 6-phase model exactly:
 | Labels | `:label` definitions |
 | Comments | `REM`, `::` |
 
-### Built-in Commands
+### Internal Commands
+
+Commands marked † are stubs: the common cases work but edge cases (e.g. setting the system clock, real ASSOC registry writes) are not supported cross-platform.
 
 | Command | Notes |
 |---------|-------|
@@ -74,14 +102,48 @@ The interpreter follows `cmd.exe`'s documented 6-phase model exactly:
 | `DEL` / `ERASE` | Delete files with glob expansion; `/S` recursive, `/Q /F` flags |
 | `COPY` | Copy files; glob source expansion; append (`file1+file2 dest`, `file1 + file2`); `/Y /-Y /B /A /V` flags |
 | `MOVE` | Move or rename files; `/Y /-Y` flags |
+| `REN` / `RENAME` | Rename files; glob source supported |
+| `MKLINK` | Create symlinks (`/D` directory, `/H` hardlink, `/J` junction) |
 | `DIR` | List directory contents in Windows-style format |
 | `TYPE` | Print file contents |
+| `MORE` | Output file or stdin (no interactive paging) † |
+| `START` | Launch program; `/WAIT` blocks until exit |
 | `CLS` | Clear screen (ANSI escape) |
 | `TITLE` | Set terminal title (ANSI escape) |
 | `COLOR` | Set foreground/background colour (ANSI escape) |
 | `VER` | Print Windows version string |
 | `PAUSE` | Wait for a keypress |
 | `EXIT` | `EXIT [/B] [code]` |
+| `BREAK` | No-op (Ctrl+C checking toggle is obsolete) |
+| `DATE` | Display current date; setting system date unsupported † |
+| `TIME` | Display current time; setting system time unsupported † |
+| `PATH` | Display or set the `PATH` environment variable |
+| `PROMPT` | Set the command prompt string |
+| `VERIFY` | Toggle/display write-verify state † |
+| `VOL` | Display volume label placeholder † |
+| `ASSOC` | In-process file extension associations (not persisted to registry) † |
+| `FTYPE` | In-process file type open commands (not persisted to registry) † |
+
+### External Commands — Native Implementations
+
+These are implemented natively in Go and work cross-platform without requiring the host tool to be installed.
+
+| Command | Notes |
+|---------|-------|
+| `FIND` | Search for a string in files or stdin; `/V` `/C` `/N` `/I` flags |
+| `HOSTNAME` | Print the machine hostname |
+| `SORT` | Sort lines from a file or stdin; `/R` reverse |
+| `TIMEOUT` | Sleep for `/T <seconds>`; `/NOBREAK` accepted and ignored |
+| `TREE` | Recursive directory tree with Unicode box-drawing characters |
+| `WHERE` | Locate an executable on `PATH`; `/Q` quiet |
+| `WHOAMI` | Print the current OS username |
+| `XCOPY` | Copy files and directory trees; `/S` recursive, `/E` include empty dirs |
+
+### External Commands — Passthrough
+
+These are registered explicitly so the `Registry` documents them as known commands. On execution they are forwarded to the host OS executable (same as any unregistered command, but listed here for discoverability).
+
+`ATTRIB` `CHCP` `CHOICE` `CLIP` `COMP` `CURL` `DISKPART` `FC` `FINDSTR` `FORFILES` `GETMAC` `GPUPDATE` `IPCONFIG` `NET` `NETSTAT` `NSLOOKUP` `PING` `REG` `ROBOCOPY` `SC` `SCHTASKS` `SETX` `SHUTDOWN` `SSH` `SYSTEMINFO` `TAKEOWN` `TAR` `TASKKILL` `TASKLIST` `TRACERT`
 
 ### SET /A Operators
 
@@ -102,11 +164,12 @@ go test -v ./tests/...   # verbose integration output
 
 22 integration tests cover: basic echo/set, control flow, FOR loops, I/O redirection, path handling, arithmetic, logical operators, nesting, strings, SHIFT, subroutines, FOR /F, labels, dynamic GOTO, complex math, advanced FOR /F, line continuation, mkdir/rmdir, del/copy/move, FOR /D and FOR /R, `%~` tilde modifiers on positional parameters, COPY append (`+`).
 
-## Gaps & Planned Work
+## Gaps
 
 | Area | Status |
 |------|--------|
-| `PROMPT` variable codes | `$N` drive letter only available on Windows; `$M` (remote name) always empty |
+| `DATE` / `TIME` set | Setting system clock is unsupported |
+| `ASSOC` / `FTYPE` persistence | In-process only; does not read or write the Windows registry |
+| `MORE` paging | Outputs all content without interactive paging |
 | `DEL /A` attribute filter | Attribute-based file selection skipped |
-| `ASSOC` / `FTYPE` | File association queries not implemented |
-| `FIND` / `FINDSTR` | Fall through to host; no native implementation |
+| `PROMPT` `$N` / `$M` | Drive letter only available on Windows; remote name always empty |

@@ -1,0 +1,9 @@
+ren ok
+src gone
+symbolic link created for mklink_link_24.txt <<===>> mklink_target_24.txt
+mklink ok
+hello
+world
+2 File(s) copied
+xcopy ok
+xcopy sub ok

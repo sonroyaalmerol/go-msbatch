@@ -10,7 +10,7 @@ import (
 
 func newProc(batchMode bool) *processor.Processor {
 	env := processor.NewEmptyEnvironment(batchMode)
-	return processor.New(env, []string{"test.bat"})
+	return processor.New(env, []string{"test.bat"}, nil)
 }
 
 // TestProcessorProcessLine verifies phases 0, 1, 5 are applied in order.
@@ -41,7 +41,8 @@ func TestProcessorProcessLineCtrlZ(t *testing.T) {
 func TestProcessorProcessLineForVar(t *testing.T) {
 	p := newProc(true)
 	forVars := map[string]string{"i": "alpha"}
-	got := p.ProcessLineForVar("echo %i", forVars)
+	expanded := p.ProcessLine("echo %i")
+	got := processor.Phase4ForVarExpand(expanded, forVars)
 	if got != "echo alpha" {
 		t.Errorf("expected 'echo alpha', got %q", got)
 	}

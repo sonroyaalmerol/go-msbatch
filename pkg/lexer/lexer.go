@@ -51,8 +51,6 @@ func (t TokenType) String() string {
 	return "Unknown"
 }
 
-const wsChars = "\t\v\f\r ,;=\xa0"
-
 func isWS(r rune) bool {
 	return r == ' ' || r == '\t' || r == '\v' || r == '\f' || r == '\xa0'
 }
@@ -706,21 +704,21 @@ func (bl *BatchLexer) lexStringDoubleBody(next lex.StateFn[TokenType, rune]) lex
 	return func(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
 		for {
 			r := l.Next()
-			switch {
-			case r == 0:
+			switch r {
+			case 0:
 				l.Emit(TokenStringDouble)
 				return nil
-			case r == '"':
+			case '"':
 				l.Emit(TokenStringDouble)
 				return next
-			case r == '%':
+			case '%':
 				l.Prev()
 				if l.Width() > 0 {
 					l.Emit(TokenStringDouble)
 				}
 				bl.lexPercent(l)
 				return bl.lexStringDoubleBody(next)
-			case r == '^':
+			case '^':
 				r2 := l.Next()
 				if r2 == 0 {
 					l.Emit(TokenStringDouble)
@@ -735,11 +733,11 @@ func (bl *BatchLexer) lexStringBTBody(next lex.StateFn[TokenType, rune]) lex.Sta
 	return func(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenType, rune] {
 		for {
 			r := l.Next()
-			switch {
-			case r == 0:
+			switch r {
+			case 0:
 				l.Emit(TokenStringBT)
 				return nil
-			case r == '`':
+			case '`':
 				l.Emit(TokenStringBT)
 				return next
 			}

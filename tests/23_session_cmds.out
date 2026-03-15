@@ -1,0 +1,10 @@
+break ok
+PATH=C:\TestPath23
+VERIFY is OFF
+VERIFY is ON
+.test23=TestFile23
+TestFile23=notepad.exe
+date ok
+time ok
+prompt set
+prompt restored

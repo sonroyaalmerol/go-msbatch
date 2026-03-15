@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -39,7 +37,6 @@ func (p *Processor) ExecuteNode(n parser.Node) error {
 	case *parser.SimpleCommand:
 		return p.executeSimpleCommand(node)
 	case *parser.Block:
-		// Blocks execute their own nodes
 		for _, bn := range node.Body {
 			if err := p.ExecuteNode(bn); err != nil {
 				return err
@@ -112,18 +109,24 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		case parser.RedirectOut:
 			f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
 			if err == nil {
-				if r.FD == 1 || r.FD == 0 {
+				switch r.FD {
+				case 0:
+					fallthrough
+				case 1:
 					p.Stdout = f
-				} else if r.FD == 2 {
+				case 2:
 					p.Stderr = f
 				}
 			}
 		case parser.RedirectAppend:
 			f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
 			if err == nil {
-				if r.FD == 1 || r.FD == 0 {
+				switch r.FD {
+				case 0:
+					fallthrough
+				case 1:
 					p.Stdout = f
-				} else if r.FD == 2 {
+				case 2:
 					p.Stderr = f
 				}
 			}
@@ -143,13 +146,15 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		expandedPrompt := p.ExpandPrompt(prompt)
 		fmt.Fprintf(p.Stdout, "%s%s %s\n", expandedPrompt, expanded.Name, strings.Join(expanded.Args, " "))
 	}
+
+	// Flow-control commands are handled directly by the Processor because they
+	// manipulate Processor state (PC, Args, Exited) that an external executor
+	// cannot safely touch.
 	name := strings.ToLower(expanded.Name)
 	switch name {
 	case "goto":
 		label := strings.Join(expanded.Args, "")
-		if strings.HasPrefix(label, ":") {
-			label = label[1:]
-		}
+		label = strings.TrimPrefix(label, ":")
 		if strings.ToLower(label) == "eof" {
 			p.PC = len(p.Nodes)
 			return nil
@@ -187,98 +192,6 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 			return nil
 		}
 		return p.executeSimpleCommand(&parser.SimpleCommand{Name: target, Args: restArgs})
-	case "echo", "echo.":
-		output, stateChanged := p.HandleEchoBuiltin(expanded.Args)
-		if name == "echo." && len(expanded.Args) == 0 {
-			fmt.Fprintln(p.Stdout)
-			p.Env.Set("ERRORLEVEL", "0")
-			return nil
-		}
-		if !stateChanged {
-			fmt.Fprintln(p.Stdout, output)
-		}
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	case "set":
-		if len(expanded.Args) == 0 {
-			for k, v := range p.Env.Snapshot() {
-				fmt.Fprintf(p.Stdout, "%s=%s\n", k, v)
-			}
-			p.Env.Set("ERRORLEVEL", "0")
-			return nil
-		}
-
-		arg := strings.Join(expanded.Args, " ")
-
-		if len(expanded.Args) > 0 && strings.HasPrefix(strings.ToLower(expanded.Args[0]), "/a") {
-			expr := arg[2:]
-			_, err := p.EvalArithmetic(expr)
-			if err != nil {
-				fmt.Fprintf(p.Stderr, "Invalid number.\n")
-				p.Env.Set("ERRORLEVEL", "1073741819")
-			} else {
-				p.Env.Set("ERRORLEVEL", "0")
-			}
-			return nil
-		}
-
-		if len(expanded.Args) > 0 && strings.HasPrefix(strings.ToLower(expanded.Args[0]), "/p") {
-			promptStr := arg[2:]
-			if before, after, ok := strings.Cut(promptStr, "="); ok {
-				fmt.Fprint(p.Stdout, after)
-				var input string
-				fmt.Fscanln(p.Stdin, &input)
-				p.HandleSetBuiltin(strings.TrimSpace(before), input)
-			}
-			p.Env.Set("ERRORLEVEL", "0")
-			return nil
-		}
-
-		if before, after, ok := strings.Cut(arg, "="); ok {
-			p.HandleSetBuiltin(before, after)
-		} else {
-			found := false
-			prefix := strings.ToUpper(arg)
-			for k, v := range p.Env.Snapshot() {
-				if strings.HasPrefix(k, prefix) {
-					fmt.Fprintf(p.Stdout, "%s=%s\n", k, v)
-					found = true
-				}
-			}
-			if !found {
-				fmt.Fprintf(p.Stderr, "Environment variable %s not defined\n", arg)
-				p.Env.Set("ERRORLEVEL", "1")
-				return nil
-			}
-		}
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	case "setlocal":
-		p.Env.Push()
-		return nil
-	case "endlocal":
-		p.Env.Pop()
-		return nil
-	case "shift":
-		if len(p.Args) > 1 {
-			p.Args = append(p.Args[:1], p.Args[2:]...)
-		}
-		return nil
-	case "cd", "chdir":
-		if len(expanded.Args) == 0 {
-			pwd, _ := os.Getwd()
-			fmt.Fprintln(p.Stdout, pwd)
-			p.Env.Set("ERRORLEVEL", "0")
-			return nil
-		}
-		path := MapPath(expanded.Args[0])
-		if err := os.Chdir(path); err != nil {
-			fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
-			p.Env.Set("ERRORLEVEL", "1")
-		} else {
-			p.Env.Set("ERRORLEVEL", "0")
-		}
-		return nil
 	case "exit":
 		code := 0
 		isLocal := false
@@ -298,421 +211,22 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		}
 		p.Exited = true
 		return nil
-	case "type":
-		for _, arg := range expanded.Args {
-			content, err := os.ReadFile(MapPath(arg))
-			if err != nil {
-				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
-				p.Env.Set("ERRORLEVEL", "1")
-				continue
-			}
-			fmt.Fprint(p.Stdout, string(content))
-		}
-		p.Env.Set("ERRORLEVEL", "0")
+	case "setlocal":
+		p.Env.Push()
 		return nil
-	case "cls":
-		fmt.Fprint(p.Stdout, "\033[2J\033[H")
-		p.Env.Set("ERRORLEVEL", "0")
+	case "endlocal":
+		p.Env.Pop()
 		return nil
-	case "title":
-		fmt.Fprintf(p.Stdout, "\033]0;%s\a", strings.Join(expanded.Args, " "))
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	case "ver":
-		fmt.Fprintln(p.Stdout, "Microsoft Windows [Version 10.0.19045.5442]")
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	case "pause":
-		fmt.Fprint(p.Stdout, "Press any key to continue . . . ")
-		io.ReadFull(p.Stdin, make([]byte, 1)) //nolint:errcheck
-		fmt.Fprintln(p.Stdout)
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	case "color":
-		if len(expanded.Args) > 0 {
-			code := expanded.Args[0]
-			if len(code) == 2 {
-				bg := code[0]
-				fg := code[1]
-				ansiColors := map[byte]string{
-					'0': "30", '1': "34", '2': "32", '3': "36",
-					'4': "31", '5': "35", '6': "33", '7': "37",
-					'8': "90", '9': "94", 'a': "92", 'b': "96",
-					'c': "91", 'd': "95", 'e': "93", 'f': "97",
-					'A': "92", 'B': "96", 'C': "91", 'D': "95",
-					'E': "93", 'F': "97",
-				}
-				bgCode := ansiColors[bg]
-				fgCode := ansiColors[fg]
-				if bgCode != "" && fgCode != "" {
-					bgCode = strings.Replace(bgCode, "3", "4", 1)
-					bgCode = strings.Replace(bgCode, "9", "10", 1)
-					fmt.Fprintf(p.Stdout, "\033[%s;%sm", bgCode, fgCode)
-				}
-			}
-		} else {
-			fmt.Fprint(p.Stdout, "\033[0m")
+	case "shift":
+		if len(p.Args) > 1 {
+			p.Args = append(p.Args[:1], p.Args[2:]...)
 		}
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	case "pushd":
-		pwd, _ := os.Getwd()
-		p.DirStack = append(p.DirStack, pwd)
-		if len(expanded.Args) > 0 {
-			path := MapPath(expanded.Args[0])
-			if err := os.Chdir(path); err != nil {
-				fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
-				p.DirStack = p.DirStack[:len(p.DirStack)-1]
-				p.Env.Set("ERRORLEVEL", "1")
-				return nil
-			}
-		}
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	case "popd":
-		if len(p.DirStack) > 0 {
-			dir := p.DirStack[len(p.DirStack)-1]
-			p.DirStack = p.DirStack[:len(p.DirStack)-1]
-			if err := os.Chdir(dir); err != nil {
-				fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
-				p.Env.Set("ERRORLEVEL", "1")
-				return nil
-			}
-		}
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	case "mkdir", "md":
-		for _, arg := range expanded.Args {
-			if strings.HasPrefix(arg, "/") {
-				continue
-			}
-			path := MapPath(arg)
-			if err := os.MkdirAll(path, 0755); err != nil {
-				fmt.Fprintf(p.Stderr, "A subdirectory or file %s already exists.\n", arg)
-				p.Env.Set("ERRORLEVEL", "1")
-				return nil
-			}
-		}
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	case "rmdir", "rd":
-		recursive := false
-		var paths []string
-		for _, arg := range expanded.Args {
-			lower := strings.ToLower(arg)
-			if lower == "/s" {
-				recursive = true
-				continue
-			}
-			if lower == "/q" {
-				continue
-			}
-			paths = append(paths, arg)
-		}
-		for _, dirPath := range paths {
-			path := MapPath(dirPath)
-			var err error
-			if recursive {
-				err = os.RemoveAll(path)
-			} else {
-				err = os.Remove(path)
-			}
-			if err != nil {
-				fmt.Fprintf(p.Stderr, "The directory is not empty.\n")
-				p.Env.Set("ERRORLEVEL", "1")
-				return nil
-			}
-		}
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	case "del", "erase":
-		recursive := false
-		var patterns []string
-		for _, arg := range expanded.Args {
-			lower := strings.ToLower(arg)
-			if lower == "/q" || lower == "/f" {
-				continue
-			}
-			if lower == "/s" {
-				recursive = true
-				continue
-			}
-			if strings.HasPrefix(lower, "/a") {
-				continue
-			}
-			patterns = append(patterns, arg)
-		}
-		for _, pat := range patterns {
-			mapped := MapPath(pat)
-			if recursive {
-				dir := filepath.Dir(mapped)
-				base := filepath.Base(mapped)
-				filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-					if err != nil || info.IsDir() {
-						return nil
-					}
-					if matched, _ := filepath.Match(base, filepath.Base(path)); matched {
-						os.Remove(path)
-					}
-					return nil
-				})
-			} else {
-				matches, err := filepath.Glob(mapped)
-				if err == nil && len(matches) > 0 {
-					for _, m := range matches {
-						os.Remove(m)
-					}
-				} else {
-					if os.Remove(mapped) != nil {
-						fmt.Fprintf(p.Stderr, "Could Not Find %s\n", pat)
-						p.Env.Set("ERRORLEVEL", "1")
-						return nil
-					}
-				}
-			}
-		}
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	case "copy":
-		var rawArgs []string
-		for _, arg := range expanded.Args {
-			lower := strings.ToLower(arg)
-			if lower == "/y" || lower == "/-y" || lower == "/b" || lower == "/a" || lower == "/v" {
-				continue
-			}
-			rawArgs = append(rawArgs, arg)
-		}
-		if len(rawArgs) < 1 {
-			fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")
-			p.Env.Set("ERRORLEVEL", "1")
-			return nil
-		}
-
-		// Detect append mode: any arg is "+" or contains "+".
-		hasPlus := false
-		for _, a := range rawArgs {
-			if strings.Contains(a, "+") {
-				hasPlus = true
-				break
-			}
-		}
-
-		var srcs []string
-		dst := ""
-
-		if !hasPlus {
-			// Simple copy (original behaviour).
-			if len(rawArgs) >= 2 {
-				dst = MapPath(rawArgs[len(rawArgs)-1])
-				for _, s := range rawArgs[:len(rawArgs)-1] {
-					mapped := MapPath(s)
-					if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
-						srcs = append(srcs, matches...)
-					} else {
-						srcs = append(srcs, mapped)
-					}
-				}
-			} else {
-				srcs = []string{MapPath(rawArgs[0])}
-				dst, _ = os.Getwd()
-			}
-		} else {
-			// Append mode: "+" separates sources (embedded or standalone).
-			// The destination is the last rawArg when it neither contains "+"
-			// nor immediately follows a "+" token.
-			srcArgs := rawArgs
-			if len(rawArgs) >= 2 {
-				last := rawArgs[len(rawArgs)-1]
-				prev := rawArgs[len(rawArgs)-2]
-				if !strings.Contains(last, "+") && prev != "+" && !strings.HasSuffix(prev, "+") {
-					dst = MapPath(last)
-					srcArgs = rawArgs[:len(rawArgs)-1]
-				}
-			}
-			// Expand embedded "+" in each source arg.
-			for _, a := range srcArgs {
-				if a == "+" {
-					continue
-				}
-				for _, part := range strings.Split(a, "+") {
-					part = strings.TrimSpace(part)
-					if part == "" {
-						continue
-					}
-					mapped := MapPath(part)
-					if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
-						srcs = append(srcs, matches...)
-					} else {
-						srcs = append(srcs, mapped)
-					}
-				}
-			}
-			// No explicit destination → use the first source.
-			if dst == "" && len(srcs) > 0 {
-				dst = srcs[0]
-			}
-		}
-
-		if len(srcs) == 0 {
-			fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")
-			p.Env.Set("ERRORLEVEL", "1")
-			return nil
-		}
-
-		// Resolve destination directory.
-		dstTarget := dst
-		if info, err := os.Stat(dst); err == nil && info.IsDir() {
-			dstTarget = filepath.Join(dst, filepath.Base(srcs[0]))
-		}
-
-		if !hasPlus && len(srcs) > 1 {
-			// Multiple glob-expanded sources: copy each file individually.
-			count := 0
-			for _, src := range srcs {
-				target := dstTarget
-				if info, err := os.Stat(dst); err == nil && info.IsDir() {
-					target = filepath.Join(dst, filepath.Base(src))
-				}
-				if err := copyFile(src, target); err != nil {
-					fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
-					p.Env.Set("ERRORLEVEL", "1")
-					return nil
-				}
-				count++
-			}
-			fmt.Fprintf(p.Stdout, "        %d file(s) copied.\n", count)
-		} else if !hasPlus {
-			// Single source copy.
-			if err := copyFile(srcs[0], dstTarget); err != nil {
-				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
-				p.Env.Set("ERRORLEVEL", "1")
-				return nil
-			}
-			fmt.Fprintf(p.Stdout, "        1 file(s) copied.\n")
-		} else {
-			// Append: concatenate all sources into dstTarget.
-			// Read everything first so dst == srcs[0] is handled safely.
-			var buf bytes.Buffer
-			for _, src := range srcs {
-				data, err := os.ReadFile(src)
-				if err != nil {
-					fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
-					p.Env.Set("ERRORLEVEL", "1")
-					return nil
-				}
-				buf.Write(data)
-			}
-			if err := os.WriteFile(dstTarget, buf.Bytes(), 0666); err != nil {
-				fmt.Fprintf(p.Stderr, "Access is denied.\n")
-				p.Env.Set("ERRORLEVEL", "1")
-				return nil
-			}
-			fmt.Fprintf(p.Stdout, "        1 file(s) copied.\n")
-		}
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	case "move":
-		var args []string
-		for _, arg := range expanded.Args {
-			lower := strings.ToLower(arg)
-			if lower == "/y" || lower == "/-y" {
-				continue
-			}
-			args = append(args, arg)
-		}
-		if len(args) < 2 {
-			fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")
-			p.Env.Set("ERRORLEVEL", "1")
-			return nil
-		}
-		src := MapPath(args[0])
-		dst := MapPath(args[1])
-		if info, err := os.Stat(dst); err == nil && info.IsDir() {
-			dst = filepath.Join(dst, filepath.Base(src))
-		}
-		if err := os.Rename(src, dst); err != nil {
-			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
-			p.Env.Set("ERRORLEVEL", "1")
-			return nil
-		}
-		fmt.Fprintf(p.Stdout, "        1 file(s) moved.\n")
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	case "dir":
-		dirPath := "."
-		for _, arg := range expanded.Args {
-			if !strings.HasPrefix(arg, "/") {
-				dirPath = MapPath(arg)
-				break
-			}
-		}
-		entries, err := os.ReadDir(dirPath)
-		if err != nil {
-			fmt.Fprintf(p.Stderr, "File Not Found\n")
-			p.Env.Set("ERRORLEVEL", "1")
-			return nil
-		}
-		abs, _ := filepath.Abs(dirPath)
-		fmt.Fprintf(p.Stdout, " Directory of %s\n\n", abs)
-		for _, e := range entries {
-			info, err := e.Info()
-			if err != nil {
-				continue
-			}
-			t := info.ModTime()
-			if e.IsDir() {
-				fmt.Fprintf(p.Stdout, "%s  %s    <DIR>          %s\n",
-					t.Format("01/02/2006"), t.Format("03:04 PM"), e.Name())
-			} else {
-				fmt.Fprintf(p.Stdout, "%s  %s    %14d %s\n",
-					t.Format("01/02/2006"), t.Format("03:04 PM"), info.Size(), e.Name())
-			}
-		}
-		p.Env.Set("ERRORLEVEL", "0")
 		return nil
 	}
 
-	return p.runExternalCommand(expanded)
-}
-
-func (p *Processor) runExternalCommand(n *parser.SimpleCommand) error {
-	cmdName := MapPath(n.Name)
-	var mappedArgs []string
-	for _, arg := range n.Args {
-		mapped := arg
-		if strings.Contains(arg, "\\") || (len(arg) >= 2 && arg[1] == ':') {
-			mapped = MapPath(arg)
-		}
-		// Expand glob patterns (CMD.EXE passes globs to the OS; on Unix the shell
-		// would normally do this, but exec.Command bypasses the shell).
-		if strings.ContainsAny(mapped, "*?[") {
-			if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
-				mappedArgs = append(mappedArgs, matches...)
-				continue
-			}
-		}
-		mappedArgs = append(mappedArgs, mapped)
-	}
-
-	cmd := exec.Command(cmdName, mappedArgs...)
-	cmd.Stdout = p.Stdout
-	cmd.Stderr = p.Stderr
-	cmd.Stdin = p.Stdin
-	cmd.Env = os.Environ()
-	for k, v := range p.Env.Snapshot() {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-	}
-
-	err := cmd.Run()
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			p.Env.Set("ERRORLEVEL", strconv.Itoa(exitErr.ExitCode()))
-		} else {
-			fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command, operable program or batch file.\n", n.Name)
-			p.Env.Set("ERRORLEVEL", "9009")
-		}
-	} else {
-		p.Env.Set("ERRORLEVEL", "0")
+	// Delegate all other commands to the pluggable executor.
+	if p.Executor != nil {
+		return p.Executor.ExecCommand(p, expanded)
 	}
 	return nil
 }
@@ -982,7 +496,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 					return strings.ContainsRune(opts.delims, r)
 				}
 				parts := strings.FieldsFunc(line, f)
-				tokenMap := applyForTokens(line, parts, opts.delims, opts.tokens, n.Variable)
+				tokenMap := applyForTokens(parts, opts.tokens, n.Variable)
 				maps.Copy(p.ForVars, tokenMap)
 				if len(tokenMap) > 0 {
 					if err := p.ExecuteNode(n.Do); err != nil {
@@ -1038,7 +552,7 @@ func parseForFOptions(optStr string) forFOptions {
 	return opts
 }
 
-func applyForTokens(fullLine string, parts []string, delims string, tokens string, startVar string) map[string]string {
+func applyForTokens(parts []string, tokens string, startVar string) map[string]string {
 	res := make(map[string]string)
 	if len(parts) == 0 {
 		return res
@@ -1072,26 +586,11 @@ func applyForTokens(fullLine string, parts []string, delims string, tokens strin
 	return res
 }
 
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
-}
-
 func (p *Processor) captureCommandOutput(cmdLine string) (string, error) {
 	expanded := p.ProcessLine(cmdLine)
 	nodes := ParseExpanded(expanded)
 	var buf bytes.Buffer
-	subProc := New(p.Env, p.Args)
+	subProc := New(p.Env, p.Args, p.Executor)
 	subProc.Stdout = &buf
 	subProc.Stderr = p.Stderr
 	subProc.Echo = false

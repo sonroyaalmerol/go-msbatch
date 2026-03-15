@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sonroyaalmerol/go-msbatch/pkg/executor"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
@@ -32,7 +33,7 @@ func TestIntegration(t *testing.T) {
 
 			env := processor.NewEnvironment(true)
 			var stdout bytes.Buffer
-			proc := processor.New(env, []string{batFile, "A", "B", "C"})
+			proc := processor.New(env, []string{batFile, "A", "B", "C"}, executor.New())
 			proc.Stdout = &stdout
 			proc.Echo = false // Match @echo off behavior for comparison
 

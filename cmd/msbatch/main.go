@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/sonroyaalmerol/go-msbatch/pkg/executor"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
@@ -25,23 +26,19 @@ func runFile(filename string) {
 	}
 
 	env := processor.NewEnvironment(true)
-	proc := processor.New(env, os.Args[1:])
+	proc := processor.New(env, os.Args[1:], executor.New())
 
-	// Phase 0: read-line normalisation (Ctrl-Z -> LF)
-	src := string(content)
-	src = processor.Phase0ReadLine(src)
-
+	src := processor.Phase0ReadLine(string(content))
 	nodes := processor.ParseExpanded(src)
 
-	err = proc.Execute(nodes)
-	if err != nil {
+	if err := proc.Execute(nodes); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
 }
 
 func runInteractive() {
 	env := processor.NewEnvironment(false)
-	proc := processor.New(env, nil)
+	proc := processor.New(env, nil, executor.New())
 	scanner := bufio.NewScanner(os.Stdin)
 
 	fmt.Println("Microsoft Windows [Version 10.0.19045.5442]")
@@ -60,8 +57,7 @@ func runInteractive() {
 		}
 
 		nodes := processor.ParseExpanded(line)
-		err := proc.Execute(nodes)
-		if err != nil {
+		if err := proc.Execute(nodes); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		}
 	}
