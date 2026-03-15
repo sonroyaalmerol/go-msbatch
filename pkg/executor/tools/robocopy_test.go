@@ -221,7 +221,7 @@ func TestRobocopyMaxSize(t *testing.T) {
 	src := t.TempDir()
 	dst := t.TempDir()
 	writeFile(t, src, "small.txt", "hi")         // 2 bytes
-	writeFile(t, src, "big.txt", "hello world!")  // 12 bytes
+	writeFile(t, src, "big.txt", "hello world!") // 12 bytes
 
 	p, _, _ := newProc(nil)
 	Robocopy(p, cmd("robocopy", src, dst, "/max:5"))
@@ -233,8 +233,8 @@ func TestRobocopyMaxSize(t *testing.T) {
 func TestRobocopyMinSize(t *testing.T) {
 	src := t.TempDir()
 	dst := t.TempDir()
-	writeFile(t, src, "small.txt", "hi")          // 2 bytes
-	writeFile(t, src, "big.txt", "hello world!")   // 12 bytes
+	writeFile(t, src, "small.txt", "hi")         // 2 bytes
+	writeFile(t, src, "big.txt", "hello world!") // 12 bytes
 
 	p, _, _ := newProc(nil)
 	Robocopy(p, cmd("robocopy", src, dst, "/min:5"))
@@ -251,7 +251,7 @@ func TestRobocopyMTProducesSameResult(t *testing.T) {
 	dstSingle := t.TempDir()
 	dstMT := t.TempDir()
 
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		name := filepath.Join("dir", strings.Repeat("x", i)+"file.txt")
 		writeFile(t, src, name, "content")
 	}
@@ -296,10 +296,10 @@ func checkDirsEqual(t *testing.T, a, b string) {
 
 func TestRobocopyExitCodeBits(t *testing.T) {
 	tests := []struct {
-		name    string
-		setup   func(src, dst string)
-		args    []string
-		wantEL  string
+		name   string
+		setup  func(src, dst string)
+		args   []string
+		wantEL string
 	}{
 		{
 			name:   "nothing to do",
