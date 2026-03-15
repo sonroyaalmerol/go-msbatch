@@ -1,6 +1,6 @@
 # go-msbatch
 
-A cross-platform, systematic implementation of the Windows CMD/Batch interpreter in Go. The project faithfully mirrors `cmd.exe`'s multi-phase processing model, producing an AST from a recursive-descent parser and executing it with a PC-based engine.
+A cross-platform, systematic implementation of the Windows CMD/Batch interpreter in Go. The project attempts to mirror `cmd.exe`'s multi-phase processing model, producing an AST from a recursive-descent parser and executor.
 
 ## Usage
 
@@ -32,7 +32,7 @@ import (
     "github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
-// Full CMD.EXE compatibility
+// Best effort CMD.EXE compatibility
 proc := processor.New(env, args, executor.New())
 
 // Custom command set
@@ -132,18 +132,19 @@ These are implemented natively in Go and work cross-platform without requiring t
 |---------|-------|
 | `FIND` | Search for a string in files or stdin; `/V` `/C` `/N` `/I` flags |
 | `HOSTNAME` | Print the machine hostname |
+| `ROBOCOPY` | Full implementation: `/S` `/E` `/MIR` `/PURGE` `/MOV` `/MOVE` `/SL` `/CREATE` `/LEV:n` `/R:n` `/W:n` `/XF` `/XD` `/XO` `/XN` `/XC` `/XL` `/XX` `/IS` `/XJ` `/XJD` `/XJF` `/MAX:n` `/MIN:n` `/MAXAGE:n` `/MINAGE:n` `/FFT` `/A+:` `/A-:` `/LOG:` `/LOG+:` `/TEE` `/NFL` `/NDL` `/NJH` `/NJS` `/FP` `/NS` `/NC` `/TS` `/V` — Windows-only flags (`/A` `/M` archive bits, `/COPY:` ACLs) accepted and stubbed |
 | `SORT` | Sort lines from a file or stdin; `/R` reverse |
 | `TIMEOUT` | Sleep for `/T <seconds>`; `/NOBREAK` accepted and ignored |
 | `TREE` | Recursive directory tree with Unicode box-drawing characters |
 | `WHERE` | Locate an executable on `PATH`; `/Q` quiet |
 | `WHOAMI` | Print the current OS username |
-| `XCOPY` | Copy files and directory trees; `/S` recursive, `/E` include empty dirs |
+| `XCOPY` | Full implementation: `/S` `/E` `/H` `/D[:date]` `/U` `/EXCLUDE:` `/B` `/C` `/F` `/L` `/Q` `/V` `/W` `/P` `/Y` `/-Y` `/I` `/R` `/T` `/K` `/A` `/M` — Windows-only flags (ACL `/O` `/X`, archive `/A` `/M`) accepted and stubbed |
 
 ### External Commands — Passthrough
 
 These are registered explicitly so the `Registry` documents them as known commands. On execution they are forwarded to the host OS executable (same as any unregistered command, but listed here for discoverability).
 
-`ATTRIB` `CHCP` `CHOICE` `CLIP` `COMP` `CURL` `DISKPART` `FC` `FINDSTR` `FORFILES` `GETMAC` `GPUPDATE` `IPCONFIG` `NET` `NETSTAT` `NSLOOKUP` `PING` `REG` `ROBOCOPY` `SC` `SCHTASKS` `SETX` `SHUTDOWN` `SSH` `SYSTEMINFO` `TAKEOWN` `TAR` `TASKKILL` `TASKLIST` `TRACERT`
+`ATTRIB` `CHCP` `CHOICE` `CLIP` `COMP` `CURL` `DISKPART` `FC` `FINDSTR` `FORFILES` `GETMAC` `GPUPDATE` `IPCONFIG` `NET` `NETSTAT` `NSLOOKUP` `PING` `REG` `SC` `SCHTASKS` `SETX` `SHUTDOWN` `SSH` `SYSTEMINFO` `TAKEOWN` `TAR` `TASKKILL` `TASKLIST` `TRACERT`
 
 ### SET /A Operators
 
@@ -162,7 +163,7 @@ go test ./...            # unit + integration
 go test -v ./tests/...   # verbose integration output
 ```
 
-22 integration tests cover: basic echo/set, control flow, FOR loops, I/O redirection, path handling, arithmetic, logical operators, nesting, strings, SHIFT, subroutines, FOR /F, labels, dynamic GOTO, complex math, advanced FOR /F, line continuation, mkdir/rmdir, del/copy/move, FOR /D and FOR /R, `%~` tilde modifiers on positional parameters, COPY append (`+`).
+25 integration tests cover: basic echo/set, control flow, FOR loops, I/O redirection, path handling, arithmetic, logical operators, nesting, strings, SHIFT, subroutines, FOR /F, labels, dynamic GOTO, complex math, advanced FOR /F, line continuation, mkdir/rmdir, del/copy/move, FOR /D and FOR /R, `%~` tilde modifiers on positional parameters, COPY append (`+`), session commands (BREAK/PATH/VERIFY/ASSOC/FTYPE/DATE/TIME/PROMPT), file commands (REN/MKLINK/MORE/XCOPY), external tools (SORT/FIND/TREE/WHERE/HOSTNAME/WHOAMI/TIMEOUT).
 
 ## Gaps
 
@@ -173,3 +174,7 @@ go test -v ./tests/...   # verbose integration output
 | `MORE` paging | Outputs all content without interactive paging |
 | `DEL /A` attribute filter | Attribute-based file selection skipped |
 | `PROMPT` `$N` / `$M` | Drive letter only available on Windows; remote name always empty |
+| `XCOPY` / `ROBOCOPY` archive bit | `/A` `/M` flags accepted but have no effect; archive attributes require Windows syscalls |
+| `ROBOCOPY` ACL / EFS | `/COPY:S` `/COPY:O` `/COPY:U` `/SEC` `/EFSRAW` accepted but not applied; ACL APIs are Windows-only |
+| `ROBOCOPY` multithreading | `/MT[:n]` accepted but runs single-threaded |
+| `ROBOCOPY` job files | `/JOB:` `/SAVE:` not implemented |

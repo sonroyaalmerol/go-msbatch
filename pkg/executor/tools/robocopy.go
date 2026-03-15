@@ -1,10 +1,13 @@
 package tools
 
+// robocopy.go: complete native cross-platform Robocopy implementation.
+
 import (
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,38 +15,122 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
-// robocopyStats tracks per-run counters for the summary table.
-type robocopyStats struct {
-	dirs    [6]int // Total, Copied, Skipped, Mismatch, Failed, Extras
-	files   [6]int
-	failed  bool
-}
+// ── file classification ───────────────────────────────────────────────────────
+
+type rcFileClass int
 
 const (
-	statTotal    = 0
-	statCopied   = 1
-	statSkipped  = 2
-	statMismatch = 3
-	statFailed   = 4
-	statExtras   = 5
+	rcNewFile rcFileClass = iota // only in source (no matching destination)
+	rcNewer                      // source is newer than destination
+	rcOlder                      // source is older than destination
+	rcSame                       // identical timestamp + size (within granularity)
+	rcChanged                    // sizes differ (timestamps may also differ)
 )
 
-func Robocopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	// ROBOCOPY <src> <dst> [file...] [options]
-	//
-	// Supported flags:
-	//   /S        copy subdirectories (non-empty)
-	//   /E        copy subdirectories (including empty)
-	//   /MIR      mirror src to dst (implies /E, removes extras from dst)
-	//   /MOV      move files (delete source files after copy)
-	//   /MOVE     move files and dirs (delete source after copy)
-	//   /XF <f>   exclude files matching pattern(s)
-	//   /XD <d>   exclude directories matching pattern(s)
-	//   /NP       no progress (ignored — we never print progress)
-	//   /NFL      no file list (suppress per-file log lines)
-	//   /NDL      no dir list (suppress per-directory log lines)
-	//   /LOG:<f>  write log to file instead of stdout
+func (c rcFileClass) label() string {
+	switch c {
+	case rcNewFile:
+		return "New File"
+	case rcNewer:
+		return "Newer"
+	case rcOlder:
+		return "Older"
+	case rcSame:
+		return "same"
+	case rcChanged:
+		return "Changed"
+	default:
+		return "Unknown"
+	}
+}
 
+// ── stats ─────────────────────────────────────────────────────────────────────
+
+// rcStat stores [Total, Copied, Skipped, Mismatch, Failed, Extras] for one
+// category of item (dirs, files, or bytes).
+type rcStat [6]int64
+
+const (
+	rcTotal    = 0
+	rcCopied   = 1
+	rcSkipped  = 2
+	rcMismatch = 3
+	rcFailed   = 4
+	rcExtras   = 5
+)
+
+type rcStats struct {
+	dirs  rcStat
+	files rcStat
+	bytes rcStat
+}
+
+// ── options ───────────────────────────────────────────────────────────────────
+
+type rcOpts struct {
+	// Source
+	recursive    bool
+	includeEmpty bool
+	archiveOnly  bool // /A  – stub (no archive bit on Linux/macOS)
+	archiveClear bool // /M  – stub
+	maxLevel     int  // /LEV:n; 0 = unlimited
+	maxAgeDays   int
+	maxAgeDate   *time.Time
+	minAgeDays   int
+	minAgeDate   *time.Time
+	fatTimes     bool // /FFT: 2-second time granularity
+
+	// Copy
+	listOnly     bool
+	moveFiles    bool // /MOV
+	moveDirs     bool // /MOVE
+	copySymlinks bool // /SL
+	createOnly   bool // /CREATE: zero-length files + directory structure
+	retries      int
+	retryWait    int // seconds
+
+	// Destination
+	purge   bool   // /PURGE
+	mirror  bool   // /MIR (implies /PURGE + /E)
+	attrAdd string // /A+:flags
+	attrDel string // /A-:flags
+
+	// Include / Exclude
+	excludeOlder   bool
+	excludeChanged bool
+	excludeNewer   bool
+	excludeLonely  bool     // /XL: don't copy files only in source
+	excludeExtra   bool     // /XX: suppress listing / deletion of extra dest items
+	includeSame    bool     // /IS: overwrite even if same
+	excludeJunct   bool     // /XJ
+	excludeJunctD  bool     // /XJD
+	excludeJunctF  bool     // /XJF
+	excludeFiles   []string // /XF
+	excludeDirs    []string // /XD
+	maxSize        int64    // /MAX:n; 0 = disabled
+	minSize        int64    // /MIN:n; 0 = disabled
+
+	// Logging
+	logPath     string
+	logAppend   bool
+	tee         bool
+	showTS      bool
+	fullPath    bool
+	noSize      bool
+	noClass     bool
+	noFileList  bool
+	noDirList   bool
+	noHeader    bool
+	noSummary   bool
+	verbose     bool // /V: also log skipped files
+	reportExtra bool // /X: report all extra files
+
+	filePatterns []string
+}
+
+// ── entry point ───────────────────────────────────────────────────────────────
+
+func Robocopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	if len(cmd.Args) < 2 {
 		fmt.Fprintf(p.Stderr, "ERROR: Invalid number of parameters.\n")
 		p.Env.Set("ERRORLEVEL", "16")
@@ -53,279 +140,689 @@ func Robocopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	src := processor.MapPath(cmd.Args[0])
 	dst := processor.MapPath(cmd.Args[1])
 
-	recursive := false
-	includeEmpty := false
-	mirror := false
-	moveFiles := false
-	moveDirs := false
-	noFileList := false
-	noDirList := false
-	var excludeFiles []string
-	var excludeDirs []string
-	var filePatterns []string
-	logPath := ""
+	opts := rcParseOpts(cmd.Args[2:])
 
-	// parse remaining args (index 2+)
-	args := cmd.Args[2:]
-	for i := 0; i < len(args); i++ {
-		lower := strings.ToLower(args[i])
-		switch {
-		case lower == "/s":
-			recursive = true
-		case lower == "/e":
-			recursive = true
-			includeEmpty = true
-		case lower == "/mir":
-			mirror = true
-			recursive = true
-			includeEmpty = true
-		case lower == "/mov":
-			moveFiles = true
-		case lower == "/move":
-			moveFiles = true
-			moveDirs = true
-		case lower == "/np":
-			// no progress — always the case in non-interactive mode
-		case lower == "/nfl":
-			noFileList = true
-		case lower == "/ndl":
-			noDirList = true
-		case lower == "/xf":
-			for i+1 < len(args) && !strings.HasPrefix(args[i+1], "/") {
-				i++
-				excludeFiles = append(excludeFiles, args[i])
-			}
-		case lower == "/xd":
-			for i+1 < len(args) && !strings.HasPrefix(args[i+1], "/") {
-				i++
-				excludeDirs = append(excludeDirs, args[i])
-			}
-		case strings.HasPrefix(lower, "/log:"):
-			logPath = processor.MapPath(args[i][5:])
-		case strings.HasPrefix(lower, "/"):
-			// ignore unrecognised flags
-		default:
-			filePatterns = append(filePatterns, args[i])
-		}
+	if opts.mirror {
+		opts.purge = true
+		opts.recursive = true
+		opts.includeEmpty = true
 	}
 
-	if len(filePatterns) == 0 {
-		filePatterns = []string{"*.*"}
+	srcInfo, err := os.Stat(src)
+	if err != nil || !srcInfo.IsDir() {
+		fmt.Fprintf(p.Stderr, "ERROR: Source directory %q not found or is not a directory.\n", src)
+		p.Env.Set("ERRORLEVEL", "16")
+		return nil
+	}
+	if filepath.Clean(src) == filepath.Clean(dst) {
+		fmt.Fprintf(p.Stderr, "ERROR: Source and Destination must be different.\n")
+		p.Env.Set("ERRORLEVEL", "16")
+		return nil
 	}
 
-	// Resolve output writer — /LOG: redirects all output to a file.
-	out := io.Writer(p.Stdout)
-	if logPath != "" {
-		lf, err := os.Create(logPath)
-		if err != nil {
-			fmt.Fprintf(p.Stderr, "ERROR: Cannot open log file %s\n", logPath)
-			p.Env.Set("ERRORLEVEL", "16")
-			return nil
-		}
-		defer lf.Close()
-		out = lf
+	out, closeOut := rcSetupOutput(p, opts)
+	if closeOut != nil {
+		defer closeOut()
 	}
 
 	started := time.Now()
-	printHeader(out, src, dst, filePatterns)
+	var stats rcStats
 
-	var stats robocopyStats
-
-	err := robocopyDir(out, src, dst, filePatterns, excludeFiles, excludeDirs,
-		recursive, includeEmpty, mirror, moveFiles, moveDirs, noFileList, noDirList, &stats)
-	if err != nil {
-		stats.failed = true
+	if !opts.noHeader {
+		rcPrintHeader(out, src, dst, opts, started)
 	}
 
-	// In mirror mode, remove extras (files/dirs in dst not in src).
-	if mirror {
-		removeExtras(out, src, dst, noDirList, noFileList, &stats)
+	if !opts.listOnly {
+		os.MkdirAll(dst, 0755)
 	}
 
-	printSummary(out, started, &stats)
+	rcProcessDir(out, src, dst, opts, &stats, 0)
 
-	// Robocopy exit codes:
-	//   0 = no files copied, no mismatch, no failure
-	//   1 = files copied successfully
-	//   2 = extra files or directories found in dst (MIR)
-	//   8 = failures
+	if (opts.purge || opts.mirror) && !opts.listOnly {
+		rcPurgeExtras(out, src, dst, opts, &stats)
+	}
+
+	if !opts.noSummary {
+		rcPrintSummary(out, started, &stats)
+	}
+
+	// Exit code is a bitwise combination of:
+	//   1 = files copied, 2 = extra files, 4 = mismatches, 8 = failures
 	code := 0
-	if stats.failed || stats.files[statFailed] > 0 || stats.dirs[statFailed] > 0 {
-		code = 8
-	} else if stats.files[statExtras] > 0 || stats.dirs[statExtras] > 0 {
-		code = 2
-	} else if stats.files[statCopied] > 0 || stats.dirs[statCopied] > 0 {
-		code = 1
+	if stats.files[rcFailed] > 0 || stats.dirs[rcFailed] > 0 {
+		code |= 8
 	}
-	p.Env.Set("ERRORLEVEL", fmt.Sprintf("%d", code))
+	if stats.files[rcMismatch] > 0 || stats.dirs[rcMismatch] > 0 {
+		code |= 4
+	}
+	if stats.files[rcExtras] > 0 || stats.dirs[rcExtras] > 0 {
+		code |= 2
+	}
+	if stats.files[rcCopied] > 0 || stats.dirs[rcCopied] > 0 {
+		code |= 1
+	}
+
+	p.Env.Set("ERRORLEVEL", strconv.Itoa(code))
 	return nil
 }
 
-func robocopyDir(
-	out io.Writer,
-	src, dst string,
-	filePatterns, excludeFiles, excludeDirs []string,
-	recursive, includeEmpty, mirror, moveFiles, moveDirs, noFileList, noDirList bool,
-	stats *robocopyStats,
-) error {
-	srcInfo, err := os.Stat(src)
-	if err != nil {
-		return fmt.Errorf("source directory not found: %s", src)
-	}
-	if !srcInfo.IsDir() {
-		return fmt.Errorf("source is not a directory: %s", src)
+// ── directory walker ──────────────────────────────────────────────────────────
+
+func rcProcessDir(out io.Writer, src, dst string, opts *rcOpts, stats *rcStats, level int) {
+	if opts.maxLevel > 0 && level >= opts.maxLevel {
+		return
 	}
 
-	if err := os.MkdirAll(dst, 0755); err != nil {
-		return err
-	}
-	stats.dirs[statTotal]++
+	stats.dirs[rcTotal]++
+	stats.dirs[rcCopied]++ // every directory we enter counts as "copied"
 
-	if !noDirList {
-		fmt.Fprintf(out, "\n    %s\\\n", src)
+	if !opts.listOnly {
+		os.MkdirAll(dst, 0755)
+	}
+
+	if !opts.noDirList {
+		dir := src
+		if opts.fullPath {
+			dir, _ = filepath.Abs(src)
+		}
+		fmt.Fprintf(out, "\n\t%s%c\n", dir, os.PathSeparator)
 	}
 
 	entries, err := os.ReadDir(src)
 	if err != nil {
-		return err
+		stats.dirs[rcFailed]++
+		stats.dirs[rcCopied]-- // undo the optimistic count
+		return
 	}
 
 	for _, e := range entries {
 		name := e.Name()
+		srcPath := filepath.Join(src, name)
+		dstPath := filepath.Join(dst, name)
 
-		if e.IsDir() {
-			if !recursive {
+		info, err := os.Lstat(srcPath)
+		if err != nil {
+			continue
+		}
+
+		isSymlink := info.Mode()&os.ModeSymlink != 0
+
+		if e.IsDir() || (isSymlink && isSymlinkToDir(srcPath)) {
+			if !opts.recursive {
 				continue
 			}
-			if isDirExcluded(name, excludeDirs) {
-				stats.dirs[statSkipped]++
+			// Junction / directory symlink exclusion.
+			if isSymlink && (opts.excludeJunct || opts.excludeJunctD) {
+				stats.dirs[rcTotal]++
+				stats.dirs[rcSkipped]++
 				continue
 			}
-			childSrc := filepath.Join(src, name)
-			childDst := filepath.Join(dst, name)
-			if !includeEmpty {
-				if empty, _ := isDirEmpty(childSrc); empty {
-					stats.dirs[statSkipped]++
+			// Pattern exclusion.
+			if rcDirExcluded(name, srcPath, opts.excludeDirs) {
+				stats.dirs[rcTotal]++
+				stats.dirs[rcSkipped]++
+				continue
+			}
+			// Empty directory filter.
+			if !opts.includeEmpty {
+				if empty, _ := isDirEmpty(srcPath); empty {
+					stats.dirs[rcTotal]++
+					stats.dirs[rcSkipped]++
 					continue
 				}
 			}
-			stats.dirs[statCopied]++
-			if err := robocopyDir(out, childSrc, childDst,
-				filePatterns, excludeFiles, excludeDirs,
-				recursive, includeEmpty, mirror, moveFiles, moveDirs, noFileList, noDirList, stats); err != nil {
-				stats.dirs[statFailed]++
-			} else if moveDirs {
-				// remove source dir after copy (only when empty)
-				os.Remove(childSrc)
+			rcProcessDir(out, srcPath, dstPath, opts, stats, level+1)
+			if opts.moveDirs {
+				os.Remove(srcPath) // succeeds only when now empty
 			}
 		} else {
-			if !matchesAnyPattern(name, filePatterns) {
-				stats.files[statSkipped]++
+			if !rcMatchesFilePattern(name, opts.filePatterns) {
 				continue
 			}
-			if isFileExcluded(name, excludeFiles) {
-				stats.files[statSkipped]++
-				continue
-			}
-
-			srcFile := filepath.Join(src, name)
-			dstFile := filepath.Join(dst, name)
-
-			stats.files[statTotal]++
-
-			// Skip if destination is identical (same size + mtime).
-			if filesAreIdentical(srcFile, dstFile) {
-				stats.files[statSkipped]++
-				continue
-			}
-
-			if err := copyFile(srcFile, dstFile); err != nil {
-				stats.files[statFailed]++
-				fmt.Fprintf(out, "  ERROR copying %s: %v\n", srcFile, err)
-				continue
-			}
-			stats.files[statCopied]++
-			if !noFileList {
-				fmt.Fprintf(out, "\t%s\n", name)
-			}
-			if moveFiles {
-				os.Remove(srcFile)
-			}
+			rcProcessFile(out, srcPath, dstPath, name, opts, stats)
 		}
 	}
-	return nil
 }
 
-// removeExtras deletes files and directories in dst that are not present in src.
-func removeExtras(out io.Writer, src, dst string, noDirList, noFileList bool, stats *robocopyStats) {
-	dstEntries, err := os.ReadDir(dst)
+// ── file processor ────────────────────────────────────────────────────────────
+
+func rcProcessFile(out io.Writer, src, dst, name string, opts *rcOpts, stats *rcStats) {
+	srcInfo, err := os.Lstat(src)
+	if err != nil {
+		stats.files[rcFailed]++
+		return
+	}
+
+	isSymlink := srcInfo.Mode()&os.ModeSymlink != 0
+
+	// Symlink / junction file exclusion.
+	if isSymlink && (opts.excludeJunct || opts.excludeJunctF) {
+		stats.files[rcSkipped]++
+		return
+	}
+
+	// Size filters.
+	if opts.maxSize > 0 && srcInfo.Size() > opts.maxSize {
+		stats.files[rcSkipped]++
+		return
+	}
+	if opts.minSize > 0 && srcInfo.Size() < opts.minSize {
+		stats.files[rcSkipped]++
+		return
+	}
+
+	// Age filters.
+	now := time.Now()
+	mtime := srcInfo.ModTime()
+	if opts.maxAgeDays > 0 && mtime.Before(now.AddDate(0, 0, -opts.maxAgeDays)) {
+		stats.files[rcSkipped]++
+		return
+	}
+	if opts.maxAgeDate != nil && mtime.Before(*opts.maxAgeDate) {
+		stats.files[rcSkipped]++
+		return
+	}
+	if opts.minAgeDays > 0 && mtime.After(now.AddDate(0, 0, -opts.minAgeDays)) {
+		stats.files[rcSkipped]++
+		return
+	}
+	if opts.minAgeDate != nil && mtime.After(*opts.minAgeDate) {
+		stats.files[rcSkipped]++
+		return
+	}
+
+	// File name / pattern exclusion.
+	if rcFileExcluded(name, src, opts.excludeFiles) {
+		stats.files[rcSkipped]++
+		return
+	}
+
+	// Classify against destination.
+	dstInfo, dstErr := os.Lstat(dst)
+	var cls rcFileClass
+	switch {
+	case os.IsNotExist(dstErr):
+		cls = rcNewFile
+	case dstErr != nil:
+		stats.files[rcFailed]++
+		return
+	default:
+		cls = rcClassify(srcInfo, dstInfo, opts.fatTimes)
+	}
+
+	stats.files[rcTotal]++
+	stats.bytes[rcTotal] += srcInfo.Size()
+
+	// Apply copy-decision filters.
+	if !rcShouldCopy(cls, opts) {
+		stats.files[rcSkipped]++
+		stats.bytes[rcSkipped] += srcInfo.Size()
+		if opts.verbose {
+			rcLogFileLine(out, cls, srcInfo, name, src, opts)
+		}
+		return
+	}
+
+	rcLogFileLine(out, cls, srcInfo, name, src, opts)
+
+	if opts.listOnly {
+		stats.files[rcCopied]++
+		stats.bytes[rcCopied] += srcInfo.Size()
+		return
+	}
+
+	// Perform the copy, with retries.
+	var copyErr error
+	for attempt := 0; attempt <= opts.retries; attempt++ {
+		if attempt > 0 && opts.retryWait > 0 {
+			time.Sleep(time.Duration(opts.retryWait) * time.Second)
+		}
+		copyErr = rcDoCopy(src, dst, srcInfo, opts)
+		if copyErr == nil {
+			break
+		}
+	}
+
+	if copyErr != nil {
+		stats.files[rcFailed]++
+		stats.bytes[rcFailed] += srcInfo.Size()
+		fmt.Fprintf(out, "\tERROR copying %s: %v\n", name, copyErr)
+		return
+	}
+
+	// Apply /A+: /A-: attribute modifications.
+	if opts.attrAdd != "" || opts.attrDel != "" {
+		rcApplyAttrs(dst, opts.attrAdd, opts.attrDel)
+	}
+
+	stats.files[rcCopied]++
+	stats.bytes[rcCopied] += srcInfo.Size()
+
+	if opts.moveFiles {
+		os.Remove(src)
+	}
+}
+
+func rcDoCopy(src, dst string, srcInfo os.FileInfo, opts *rcOpts) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+	if opts.createOnly {
+		f, err := os.Create(dst)
+		if err != nil {
+			return err
+		}
+		return f.Close()
+	}
+	if srcInfo.Mode()&os.ModeSymlink != 0 && opts.copySymlinks {
+		target, err := os.Readlink(src)
+		if err != nil {
+			return err
+		}
+		os.Remove(dst)
+		return os.Symlink(target, dst)
+	}
+	return copyFile(src, dst)
+}
+
+// ── purge extras ──────────────────────────────────────────────────────────────
+
+// rcPurgeExtras deletes files and directories in dst that have no counterpart
+// in src (the PURGE / MIR behaviour).
+func rcPurgeExtras(out io.Writer, src, dst string, opts *rcOpts, stats *rcStats) {
+	entries, err := os.ReadDir(dst)
 	if err != nil {
 		return
 	}
-	for _, e := range dstEntries {
+	for _, e := range entries {
 		name := e.Name()
 		srcPath := filepath.Join(src, name)
 		dstPath := filepath.Join(dst, name)
-		if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+
+		if _, err := os.Lstat(srcPath); os.IsNotExist(err) {
+			if opts.excludeExtra {
+				continue
+			}
 			if e.IsDir() {
-				stats.dirs[statExtras]++
-				if !noDirList {
-					fmt.Fprintf(out, "  *EXTRA Dir\t%s\\\n", dstPath)
+				stats.dirs[rcExtras]++
+				if !opts.noDirList {
+					fmt.Fprintf(out, "\t*EXTRA Dir \t\t%s%c\n", dstPath, os.PathSeparator)
 				}
 				os.RemoveAll(dstPath)
 			} else {
-				stats.files[statExtras]++
-				if !noFileList {
-					fmt.Fprintf(out, "  *EXTRA File\t%s\n", dstPath)
+				info, _ := os.Lstat(dstPath)
+				sz := int64(0)
+				if info != nil {
+					sz = info.Size()
+				}
+				stats.files[rcExtras]++
+				stats.bytes[rcExtras] += sz
+				if !opts.noFileList {
+					fmt.Fprintf(out, "\t*EXTRA File\t%10d  %s\n", sz, name)
 				}
 				os.Remove(dstPath)
 			}
 		} else if e.IsDir() {
-			removeExtras(out, srcPath, dstPath, noDirList, noFileList, stats)
+			rcPurgeExtras(out, srcPath, dstPath, opts, stats)
 		}
 	}
 }
 
-func printHeader(out io.Writer, src, dst string, patterns []string) {
+// ── classification & filtering ────────────────────────────────────────────────
+
+func rcClassify(src, dst os.FileInfo, fatTimes bool) rcFileClass {
+	threshold := time.Duration(0)
+	if fatTimes {
+		threshold = 2 * time.Second
+	}
+	diff := src.ModTime().Sub(dst.ModTime())
+	if diff > threshold {
+		return rcNewer
+	}
+	if diff < -threshold {
+		return rcOlder
+	}
+	// Timestamps are within granularity.
+	if src.Size() != dst.Size() {
+		return rcChanged
+	}
+	return rcSame
+}
+
+func rcShouldCopy(cls rcFileClass, opts *rcOpts) bool {
+	switch cls {
+	case rcNewFile:
+		// /XL: exclude "lonely" (source-only) files.
+		return !opts.excludeLonely
+	case rcSame:
+		// Default: skip identical files; /IS overrides.
+		return opts.includeSame
+	case rcOlder:
+		return !opts.excludeOlder
+	case rcNewer:
+		return !opts.excludeNewer
+	case rcChanged:
+		return !opts.excludeChanged
+	}
+	return true
+}
+
+// ── output helpers ────────────────────────────────────────────────────────────
+
+func rcLogFileLine(out io.Writer, cls rcFileClass, info os.FileInfo, name, srcPath string, opts *rcOpts) {
+	if opts.noFileList {
+		return
+	}
+	var sb strings.Builder
+	sb.WriteString("\t")
+	if !opts.noClass {
+		sb.WriteString(fmt.Sprintf("%-10s  ", cls.label()))
+	}
+	if opts.showTS {
+		sb.WriteString(fmt.Sprintf("%-20s  ", info.ModTime().Format("2006-01-02 15:04:05")))
+	}
+	if !opts.noSize {
+		sb.WriteString(fmt.Sprintf("%10d  ", info.Size()))
+	}
+	if opts.fullPath {
+		abs, _ := filepath.Abs(srcPath)
+		sb.WriteString(abs)
+	} else {
+		sb.WriteString(name)
+	}
+	fmt.Fprintln(out, sb.String())
+}
+
+func rcSetupOutput(p *processor.Processor, opts *rcOpts) (io.Writer, func()) {
+	if opts.logPath == "" {
+		return p.Stdout, nil
+	}
+	flag := os.O_CREATE | os.O_WRONLY
+	if opts.logAppend {
+		flag |= os.O_APPEND
+	} else {
+		flag |= os.O_TRUNC
+	}
+	lf, err := os.OpenFile(processor.MapPath(opts.logPath), flag, 0644)
+	if err != nil {
+		return p.Stdout, nil
+	}
+	if opts.tee {
+		return io.MultiWriter(lf, p.Stdout), func() { lf.Close() }
+	}
+	return lf, func() { lf.Close() }
+}
+
+func rcPrintHeader(out io.Writer, src, dst string, opts *rcOpts, started time.Time) {
 	line := strings.Repeat("-", 79)
 	fmt.Fprintln(out, line)
 	fmt.Fprintln(out, "   ROBOCOPY     ::     Robust File Copy")
 	fmt.Fprintln(out, line)
-	fmt.Fprintf(out, "   Source : %s\\\n", src)
-	fmt.Fprintf(out, "     Dest : %s\\\n", dst)
-	fmt.Fprintf(out, "    Files : %s\n", strings.Join(patterns, " "))
-	fmt.Fprintln(out, line)
+	fmt.Fprintf(out, "\n  Started : %s\n", started.Format("Mon Jan 02 15:04:05 2006"))
+	fmt.Fprintf(out, "   Source : %s%c\n", src, os.PathSeparator)
+	fmt.Fprintf(out, "     Dest : %s%c\n", dst, os.PathSeparator)
+	fmt.Fprintf(out, "\n    Files : %s\n", strings.Join(opts.filePatterns, " "))
+	fmt.Fprintf(out, "  Options : %s\n", rcBuildOptionsString(opts))
+	fmt.Fprintln(out, "\n"+line)
 }
 
-func printSummary(out io.Writer, started time.Time, stats *robocopyStats) {
-	elapsed := time.Since(started).Truncate(time.Second)
+func rcBuildOptionsString(opts *rcOpts) string {
+	var parts []string
+	if opts.mirror {
+		parts = append(parts, "/MIR")
+	} else {
+		if opts.recursive && opts.includeEmpty {
+			parts = append(parts, "/E")
+		} else if opts.recursive {
+			parts = append(parts, "/S")
+		}
+		if opts.purge {
+			parts = append(parts, "/PURGE")
+		}
+	}
+	if opts.listOnly {
+		parts = append(parts, "/L")
+	}
+	if opts.moveDirs {
+		parts = append(parts, "/MOVE")
+	} else if opts.moveFiles {
+		parts = append(parts, "/MOV")
+	}
+	if opts.excludeOlder {
+		parts = append(parts, "/XO")
+	}
+	if opts.maxLevel > 0 {
+		parts = append(parts, fmt.Sprintf("/LEV:%d", opts.maxLevel))
+	}
+	parts = append(parts, fmt.Sprintf("/R:%d", opts.retries))
+	parts = append(parts, fmt.Sprintf("/W:%d", opts.retryWait))
+	return strings.Join(parts, " ")
+}
+
+func rcPrintSummary(out io.Writer, started time.Time, stats *rcStats) {
+	elapsed := time.Since(started)
 	line := strings.Repeat("-", 79)
-	fmt.Fprintln(out, line)
+
+	fmt.Fprintln(out, "\n"+line)
 	fmt.Fprintf(out, "%20s %8s %8s %8s %8s %8s %8s\n",
 		"", "Total", "Copied", "Skipped", "Mismatch", "FAILED", "Extras")
 	fmt.Fprintf(out, "%20s %8d %8d %8d %8d %8d %8d\n",
-		"Dirs :", stats.dirs[0], stats.dirs[1], stats.dirs[2], stats.dirs[3], stats.dirs[4], stats.dirs[5])
+		"Dirs :",
+		stats.dirs[rcTotal], stats.dirs[rcCopied], stats.dirs[rcSkipped],
+		stats.dirs[rcMismatch], stats.dirs[rcFailed], stats.dirs[rcExtras])
 	fmt.Fprintf(out, "%20s %8d %8d %8d %8d %8d %8d\n",
-		"Files :", stats.files[0], stats.files[1], stats.files[2], stats.files[3], stats.files[4], stats.files[5])
-	fmt.Fprintf(out, "%20s %v\n", "Ended :", started.Add(elapsed).Format("Mon Jan 02 15:04:05 2006"))
+		"Files :",
+		stats.files[rcTotal], stats.files[rcCopied], stats.files[rcSkipped],
+		stats.files[rcMismatch], stats.files[rcFailed], stats.files[rcExtras])
+	fmt.Fprintf(out, "%20s %8d %8d %8d %8d %8d %8d\n",
+		"Bytes :",
+		stats.bytes[rcTotal], stats.bytes[rcCopied], stats.bytes[rcSkipped],
+		stats.bytes[rcMismatch], stats.bytes[rcFailed], stats.bytes[rcExtras])
+
+	if elapsed > 0 && stats.bytes[rcCopied] > 0 {
+		bps := float64(stats.bytes[rcCopied]) / elapsed.Seconds()
+		fmt.Fprintf(out, "\n   Speed : %20.0f Bytes/Sec.\n", bps)
+		fmt.Fprintf(out, "   Speed : %20.3f MegaBytes/min.\n", bps*60/1024/1024)
+	}
+	fmt.Fprintf(out, "\n   Ended : %s\n", time.Now().Format("Mon Jan 02 15:04:05 2006"))
 	fmt.Fprintln(out, line)
 }
 
-// filesAreIdentical returns true when dst exists and has the same size and
-// modification time as src (same heuristic real robocopy uses by default).
-func filesAreIdentical(src, dst string) bool {
-	si, err := os.Stat(src)
-	if err != nil {
-		return false
+// ── argument parser ───────────────────────────────────────────────────────────
+
+func rcParseOpts(args []string) *rcOpts {
+	opts := &rcOpts{
+		retries:      0,
+		retryWait:    30,
+		filePatterns: []string{"*.*"},
 	}
-	di, err := os.Stat(dst)
-	if err != nil {
-		return false
+
+	var extraPatterns []string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		lower := strings.ToLower(arg)
+
+		// /XF and /XD consume subsequent non-flag arguments.
+		if lower == "/xf" {
+			for i+1 < len(args) && !strings.HasPrefix(args[i+1], "/") {
+				i++
+				opts.excludeFiles = append(opts.excludeFiles, args[i])
+			}
+			continue
+		}
+		if lower == "/xd" {
+			for i+1 < len(args) && !strings.HasPrefix(args[i+1], "/") {
+				i++
+				opts.excludeDirs = append(opts.excludeDirs, args[i])
+			}
+			continue
+		}
+
+		if !strings.HasPrefix(arg, "/") {
+			extraPatterns = append(extraPatterns, arg)
+			continue
+		}
+
+		switch {
+		case lower == "/s":
+			opts.recursive = true
+		case lower == "/e":
+			opts.recursive = true
+			opts.includeEmpty = true
+		case lower == "/a":
+			opts.archiveOnly = true // stub
+		case lower == "/m":
+			opts.archiveClear = true // stub
+		case strings.HasPrefix(lower, "/lev:"):
+			if n, err := strconv.Atoi(arg[5:]); err == nil {
+				opts.maxLevel = n
+			}
+		case strings.HasPrefix(lower, "/maxage:"):
+			rcParseAge(arg[8:], &opts.maxAgeDays, &opts.maxAgeDate)
+		case strings.HasPrefix(lower, "/minage:"):
+			rcParseAge(arg[8:], &opts.minAgeDays, &opts.minAgeDate)
+		case lower == "/fft":
+			opts.fatTimes = true
+		case lower == "/l":
+			opts.listOnly = true
+		case lower == "/mov":
+			opts.moveFiles = true
+		case lower == "/move":
+			opts.moveFiles = true
+			opts.moveDirs = true
+		case lower == "/sj":
+			// copy junctions as junctions — stub, junctions treated as dirs
+		case lower == "/sl":
+			opts.copySymlinks = true
+		case lower == "/create":
+			opts.createOnly = true
+		case strings.HasPrefix(lower, "/r:"):
+			if n, err := strconv.Atoi(arg[3:]); err == nil {
+				opts.retries = n
+			}
+		case strings.HasPrefix(lower, "/w:"):
+			if n, err := strconv.Atoi(arg[3:]); err == nil {
+				opts.retryWait = n
+			}
+		case lower == "/purge":
+			opts.purge = true
+		case lower == "/mir":
+			opts.mirror = true
+		case strings.HasPrefix(lower, "/a+:"):
+			opts.attrAdd = strings.ToUpper(arg[4:])
+		case strings.HasPrefix(lower, "/a-:"):
+			opts.attrDel = strings.ToUpper(arg[4:])
+		case lower == "/xo":
+			opts.excludeOlder = true
+		case lower == "/xc":
+			opts.excludeChanged = true
+		case lower == "/xn":
+			opts.excludeNewer = true
+		case lower == "/xl":
+			opts.excludeLonely = true
+		case lower == "/xx":
+			opts.excludeExtra = true
+		case lower == "/is":
+			opts.includeSame = true
+		case lower == "/it":
+			opts.includeSame = true // treat as /IS
+		case lower == "/xj":
+			opts.excludeJunct = true
+		case lower == "/xjd":
+			opts.excludeJunctD = true
+		case lower == "/xjf":
+			opts.excludeJunctF = true
+		case strings.HasPrefix(lower, "/max:"):
+			if n, err := strconv.ParseInt(arg[5:], 10, 64); err == nil {
+				opts.maxSize = n
+			}
+		case strings.HasPrefix(lower, "/min:"):
+			if n, err := strconv.ParseInt(arg[5:], 10, 64); err == nil {
+				opts.minSize = n
+			}
+		case strings.HasPrefix(lower, "/log+:"):
+			opts.logPath = processor.MapPath(arg[6:])
+			opts.logAppend = true
+		case strings.HasPrefix(lower, "/log:"):
+			opts.logPath = processor.MapPath(arg[5:])
+		case lower == "/tee":
+			opts.tee = true
+		case lower == "/np":
+			// no progress — we never print progress anyway
+		case lower == "/ts":
+			opts.showTS = true
+		case lower == "/fp":
+			opts.fullPath = true
+		case lower == "/ns":
+			opts.noSize = true
+		case lower == "/nc":
+			opts.noClass = true
+		case lower == "/nfl":
+			opts.noFileList = true
+		case lower == "/ndl":
+			opts.noDirList = true
+		case lower == "/njh":
+			opts.noHeader = true
+		case lower == "/njs":
+			opts.noSummary = true
+		case lower == "/v":
+			opts.verbose = true
+		case lower == "/x":
+			opts.reportExtra = true
+		// All remaining flags: accepted, not functionally implemented.
+		case lower == "/b", lower == "/efsraw", lower == "/compress",
+			lower == "/j", lower == "/nooffload", lower == "/reg",
+			lower == "/tbd", lower == "/sec", lower == "/secfix",
+			lower == "/dst", lower == "/fat", lower == "/copyall",
+			lower == "/nocopy", lower == "/nodcopy", lower == "/im",
+			lower == "/pf", lower == "/256", lower == "/unicode",
+			lower == "/bytes", lower == "/debug", lower == "/eta",
+			lower == "/timfix", lower == "/z", lower == "/zb",
+			lower == "/nosd", lower == "/nodd", lower == "/quit", lower == "/if":
+			// stub
+		default:
+			if strings.HasPrefix(lower, "/copy:") || strings.HasPrefix(lower, "/dcopy:") ||
+				strings.HasPrefix(lower, "/ia:") || strings.HasPrefix(lower, "/xa:") ||
+				strings.HasPrefix(lower, "/ipg:") || strings.HasPrefix(lower, "/mt") ||
+				strings.HasPrefix(lower, "/mon:") || strings.HasPrefix(lower, "/mot:") ||
+				strings.HasPrefix(lower, "/rh:") || strings.HasPrefix(lower, "/job:") ||
+				strings.HasPrefix(lower, "/save:") || strings.HasPrefix(lower, "/lfsm") ||
+				strings.HasPrefix(lower, "/maxlad:") || strings.HasPrefix(lower, "/minlad:") ||
+				strings.HasPrefix(lower, "/sd:") || strings.HasPrefix(lower, "/dd:") ||
+				strings.HasPrefix(lower, "/unilog") {
+				// stub
+			}
+			// unknown /flag: silently ignored
+		}
 	}
-	return si.Size() == di.Size() && si.ModTime().Equal(di.ModTime())
+
+	if len(extraPatterns) > 0 {
+		opts.filePatterns = extraPatterns
+	}
+	return opts
 }
 
-func matchesAnyPattern(name string, patterns []string) bool {
+func rcParseAge(s string, days *int, date **time.Time) {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return
+	}
+	if n < 1900 {
+		*days = n
+	} else {
+		t, err := time.Parse("20060102", s)
+		if err == nil {
+			*date = &t
+		}
+	}
+}
+
+// ── misc helpers ──────────────────────────────────────────────────────────────
+
+// rcMatchesFilePattern reports whether name matches any of the given
+// glob patterns (case-insensitive).
+func rcMatchesFilePattern(name string, patterns []string) bool {
 	for _, pat := range patterns {
 		if matched, _ := filepath.Match(strings.ToLower(pat), strings.ToLower(name)); matched {
 			return true
@@ -334,28 +831,60 @@ func matchesAnyPattern(name string, patterns []string) bool {
 	return false
 }
 
-func isFileExcluded(name string, excludeFiles []string) bool {
-	for _, pat := range excludeFiles {
-		if matched, _ := filepath.Match(strings.ToLower(pat), strings.ToLower(name)); matched {
+// rcFileExcluded reports whether name (or its path) matches any /XF pattern.
+func rcFileExcluded(name, path string, patterns []string) bool {
+	nameLower := strings.ToLower(name)
+	pathLower := strings.ToLower(path)
+	for _, pat := range patterns {
+		patLower := strings.ToLower(pat)
+		if matched, _ := filepath.Match(patLower, nameLower); matched {
+			return true
+		}
+		// Also allow full-path substring matching for path-style patterns.
+		if strings.Contains("/", pat) || strings.Contains("\\", pat) {
+			if strings.Contains(pathLower, patLower) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// rcDirExcluded reports whether name (or its path) matches any /XD pattern.
+func rcDirExcluded(name, path string, patterns []string) bool {
+	nameLower := strings.ToLower(name)
+	pathLower := strings.ToLower(path)
+	for _, pat := range patterns {
+		patLower := strings.ToLower(pat)
+		if matched, _ := filepath.Match(patLower, nameLower); matched {
+			return true
+		}
+		if strings.Contains(pathLower, patLower) {
 			return true
 		}
 	}
 	return false
 }
 
-func isDirExcluded(name string, excludeDirs []string) bool {
-	for _, pat := range excludeDirs {
-		if matched, _ := filepath.Match(strings.ToLower(pat), strings.ToLower(name)); matched {
-			return true
-		}
-	}
-	return false
-}
-
-func isDirEmpty(path string) (bool, error) {
-	entries, err := os.ReadDir(path)
+// rcApplyAttrs applies /A+: and /A-: attribute changes to dst.
+// On Linux only R (read-only) is supported; other attribute letters are stubs.
+func rcApplyAttrs(path, add, del string) {
+	info, err := os.Stat(path)
 	if err != nil {
-		return false, err
+		return
 	}
-	return len(entries) == 0, nil
+	mode := info.Mode()
+	if strings.ContainsAny(add, "Rr") {
+		mode &^= 0222 // clear write bits → read-only
+	}
+	if strings.ContainsAny(del, "Rr") {
+		mode |= 0200 // set owner-write bit → writable
+	}
+	os.Chmod(path, mode)
+}
+
+// isSymlinkToDir returns true if path is a symlink that resolves to a directory.
+func isSymlinkToDir(path string) bool {
+	target, err := os.Stat(path) // follows symlink
+	return err == nil && target.IsDir()
 }

@@ -8,6 +8,15 @@ import (
 	"os"
 )
 
+// isDirEmpty reports whether the directory at path contains no entries.
+func isDirEmpty(path string) (bool, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return false, err
+	}
+	return len(entries) == 0, nil
+}
+
 // copyFile copies a single file from src to dst, creating dst if it does not exist.
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
