@@ -26,7 +26,6 @@ const (
 	TokenStringEscape
 	TokenNumber
 	TokenOperator
-	TokenOperatorWord
 	TokenRedirect
 	TokenWhitespace
 	TokenNewline
@@ -41,7 +40,7 @@ func (t TokenType) String() string {
 		TokenNameVariable: "Name.Variable", TokenStringDouble: "String.Double",
 		TokenStringSingle: "String.Single", TokenStringBT: "String.Backtick",
 		TokenStringEscape: "String.Escape", TokenNumber: "Number",
-		TokenOperator: "Operator", TokenOperatorWord: "Operator.Word",
+		TokenOperator: "Operator",
 		TokenRedirect: "Redirect", TokenWhitespace: "Whitespace",
 		TokenNewline: "Newline", TokenWord: "Word",
 	}
@@ -65,24 +64,6 @@ func isPunct(r rune) bool {
 
 func isKeywordEnd(r rune) bool {
 	return r == 0 || isNL(r) || isWS(r) || isPunct(r) || r == '/'
-}
-
-var builtinCommands = map[string]bool{
-	"assoc": true, "break": true, "cd": true, "chdir": true,
-	"cls": true, "color": true, "copy": true, "date": true,
-	"del": true, "dir": true, "dpath": true, "echo": true,
-	"endlocal": true, "erase": true, "exit": true, "ftype": true,
-	"keys": true, "md": true, "mkdir": true, "mklink": true,
-	"move": true, "path": true, "pause": true, "popd": true,
-	"prompt": true, "pushd": true, "rd": true, "ren": true,
-	"rename": true, "rmdir": true, "setlocal": true, "shift": true,
-	"start": true, "time": true, "title": true, "type": true,
-	"ver": true, "verify": true, "vol": true,
-}
-
-var opWords = map[string]bool{
-	"equ": true, "geq": true, "gtr": true,
-	"leq": true, "lss": true, "neq": true,
 }
 
 type BatchLexer struct {
@@ -232,18 +213,10 @@ func (bl *BatchLexer) stateWord(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenT
 		return bl.stateFollow
 	}
 
-	if opWords[lower] {
-		l.Emit(TokenOperatorWord)
-		return bl.stateFollow
-	}
-
 	switch lower {
 	case "rem":
 		l.Emit(TokenKeyword)
 		return bl.stateRem
-	case "echo":
-		l.Emit(TokenKeyword)
-		return bl.stateFollow
 	case "set":
 		l.Emit(TokenKeyword)
 		return bl.stateSet
@@ -269,11 +242,7 @@ func (bl *BatchLexer) stateWord(l lex.Lexer[TokenType, rune]) lex.StateFn[TokenT
 		l.Emit(TokenKeyword)
 		return bl.stateRoot
 	default:
-		if builtinCommands[lower] {
-			l.Emit(TokenKeyword)
-		} else {
-			l.Emit(TokenWord)
-		}
+		l.Emit(TokenWord)
 		return bl.stateFollow
 	}
 }

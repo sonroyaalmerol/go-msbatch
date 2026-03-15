@@ -40,8 +40,8 @@ func hasToken(tokens []struct {
 
 func TestEchoCommand(t *testing.T) {
 	tokens := collectTokens("echo Hello World\n")
-	if !hasToken(tokens, TokenKeyword, "echo") {
-		t.Error("expected Keyword 'echo'")
+	if !hasToken(tokens, TokenWord, "echo") {
+		t.Error("expected Word 'echo'")
 	}
 }
 
@@ -235,11 +235,13 @@ func TestCompoundBlock(t *testing.T) {
 }
 
 func TestBuiltinCommands(t *testing.T) {
+	// Non-structural commands are emitted as TokenWord; the parser treats them
+	// identically to TokenKeyword so the distinction was removed from the lexer.
 	cmds := []string{"dir", "cd", "cls", "copy", "del", "mkdir", "move", "type", "exit"}
 	for _, cmd := range cmds {
 		tokens := collectTokens(cmd + "\n")
-		if !hasToken(tokens, TokenKeyword, cmd) {
-			t.Errorf("expected Keyword %q", cmd)
+		if !hasToken(tokens, TokenWord, cmd) {
+			t.Errorf("expected Word %q", cmd)
 		}
 	}
 }
