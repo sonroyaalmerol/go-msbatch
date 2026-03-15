@@ -1,23 +1,19 @@
 package parser
 
 import (
-	"github.com/sonroyaalmerol/go-msbatch/internal/lex"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/lexer"
 )
 
-// item is a convenience alias.
-type item = lex.Item[lexer.TokenType, rune]
-
 // Parser converts a BatchLexer token stream into an AST.
 type Parser struct {
-	tokens        []item
+	tokens        []lexer.Item
 	pos           int
 	compoundDepth int
 }
 
 // New drains all tokens from src into a Parser.
 func New(src *lexer.BatchLexer) *Parser {
-	var tokens []item
+	var tokens []lexer.Item
 	for {
 		t := src.NextItem()
 		if t.Type == lexer.TokenEOF || (t.Type == 0 && len(t.Value) == 0) {
@@ -53,14 +49,14 @@ func (p *Parser) parseCommand() Node {
 
 // ---- token stream helpers ------------------------------------------------
 
-func (p *Parser) peek() item {
+func (p *Parser) peek() lexer.Item {
 	if p.pos >= len(p.tokens) {
-		return item{Type: lexer.TokenEOF}
+		return lexer.Item{Type: lexer.TokenEOF}
 	}
 	return p.tokens[p.pos]
 }
 
-func (p *Parser) consume() item {
+func (p *Parser) consume() lexer.Item {
 	t := p.peek()
 	if p.pos < len(p.tokens) {
 		p.pos++
@@ -69,7 +65,7 @@ func (p *Parser) consume() item {
 }
 
 // val returns the rune slice of a token as a string.
-func val(t item) string {
+func val(t lexer.Item) string {
 	return string(t.Value)
 }
 
