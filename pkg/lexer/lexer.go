@@ -1,5 +1,3 @@
-// Package lexer implements a lexer for Windows Batch (.bat/.cmd) files,
-// faithfully mirroring the Pygments BatchLexer, using github.com/zalgonoise/lex.
 package lexer
 
 import (
