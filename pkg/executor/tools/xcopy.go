@@ -447,7 +447,10 @@ func parseXcopyArgs(args []string) (*xcopyOpts, string, string, error) {
 			lower == "/sparse", lower == "/-sparse":
 			// accepted but not functionally implemented
 		default:
-			if !strings.HasPrefix(arg, "/") {
+			// Unix absolute paths start with "/" but are not flags; only skip
+			// genuine short Windows-style flags (no further "/" in the body).
+			isFlag := strings.HasPrefix(arg, "/") && !strings.ContainsRune(arg[1:], '/')
+			if !isFlag {
 				positional = append(positional, arg)
 			}
 		}
@@ -467,11 +470,13 @@ func parseXcopyArgs(args []string) (*xcopyOpts, string, string, error) {
 // ---- prompts ----
 
 func xcopyPromptFileOrDir(p *processor.Processor, dst string) string {
+	if p.Stdin == nil {
+		// Non-interactive: treat the destination as a file when the source is
+		// a single file and the destination path doesn't end with a separator.
+		return "F"
+	}
 	fmt.Fprintf(p.Stdout,
 		"Does %s specify a file name\nor directory name on the target\n(F = file, D = directory)? ", dst)
-	if p.Stdin == nil {
-		return "D"
-	}
 	line, _ := bufio.NewReader(p.Stdin).ReadString('\n')
 	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line)), "F") {
 		return "F"

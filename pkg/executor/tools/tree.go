@@ -14,7 +14,11 @@ import (
 func Tree(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	root := "."
 	for _, arg := range cmd.Args {
-		if !strings.HasPrefix(arg, "/") {
+		// Only treat as a flag if it looks like a short Windows-style flag
+		// (starts with "/" but has no further "/" in the body).  Unix absolute
+		// paths like /tmp/foo also start with "/" and must be treated as paths.
+		isFlag := strings.HasPrefix(arg, "/") && !strings.ContainsRune(arg[1:], '/')
+		if !isFlag {
 			root = processor.MapPath(arg)
 			break
 		}

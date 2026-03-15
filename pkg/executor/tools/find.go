@@ -37,7 +37,9 @@ func Find(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		case "/v":
 			invertMatch = true
 		default:
-			if strings.HasPrefix(arg, "/") {
+			// Only skip short Windows-style flags like /Y; don't skip Unix
+			// absolute paths like /tmp/foo.txt which also start with '/'.
+			if strings.HasPrefix(arg, "/") && !strings.ContainsRune(arg[1:], '/') {
 				continue
 			}
 			if searchStr == "" {
@@ -95,6 +97,10 @@ func Find(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 
 	if len(files) == 0 {
+		if p.Stdin == nil {
+			p.Env.Set("ERRORLEVEL", "1")
+			return nil
+		}
 		scan(p.Stdin, "")
 	} else {
 		for _, pat := range files {

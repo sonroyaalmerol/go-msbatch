@@ -15,13 +15,18 @@ import (
 func Sort(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// SORT [/R] [/+n] [file]
 	reverse := false
-	var reader io.Reader = p.Stdin
+	var reader io.Reader
+	if p.Stdin != nil {
+		reader = p.Stdin
+	} else {
+		reader = strings.NewReader("")
+	}
 	for _, arg := range cmd.Args {
 		lower := strings.ToLower(arg)
 		if lower == "/r" {
 			reverse = true
-		} else if strings.HasPrefix(lower, "/") {
-			// ignore other flags (/+n column sort, etc.)
+		} else if strings.HasPrefix(lower, "/") && !strings.ContainsRune(lower[1:], '/') {
+			// ignore short Windows-style flags (/+n column sort, etc.)
 		} else {
 			f, err := os.Open(processor.MapPath(arg))
 			if err != nil {

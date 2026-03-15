@@ -252,7 +252,7 @@ func Robocopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	if stats.files[rcExtras] > 0 || stats.dirs[rcExtras] > 0 {
 		code |= 2
 	}
-	if stats.files[rcCopied] > 0 || stats.dirs[rcCopied] > 0 {
+	if stats.files[rcCopied] > 0 {
 		code |= 1
 	}
 
@@ -950,7 +950,10 @@ func rcDirExcluded(name, path string, patterns []string) bool {
 		if matched, _ := filepath.Match(patLower, nameLower); matched {
 			return true
 		}
-		if strings.Contains(pathLower, patLower) {
+		// Only do path-substring matching when the pattern itself contains a
+		// separator, to avoid false positives from patterns like "excluded"
+		// matching a path component named "included".
+		if strings.ContainsAny(pat, "/\\") && strings.Contains(pathLower, patLower) {
 			return true
 		}
 	}
