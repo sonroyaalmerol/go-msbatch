@@ -1,8 +1,6 @@
 package parser
 
 import (
-	"strings"
-
 	"github.com/sonroyaalmerol/go-msbatch/internal/lex"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/lexer"
 )
@@ -96,19 +94,3 @@ func isPipeOrAmpVal(v string) bool {
 	return false
 }
 
-func isCommandStart(s string) bool {
-	// Standard CMD keywords that start a command.
-	// We must be careful not to match them if they are just prefixes of other words.
-	// But our lexer already emits them as separate words usually.
-	lower := strings.ToLower(strings.TrimSpace(s))
-	switch lower {
-	case "if", "for", "rem", "goto", "call", "set", "echo", "exit", "setlocal", "endlocal", "shift", "do", "in", "else":
-		return true
-	}
-	if strings.HasPrefix(lower, ":") {
-		return true
-	}
-	// logical operators and redirections are structural, not 'command names'
-	// but they delimit commands.
-	return false
-}

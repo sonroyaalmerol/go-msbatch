@@ -279,10 +279,6 @@ func (p *Parser) collectStoken() string {
 			return sb.String()
 
 		case lexer.TokenText, lexer.TokenWord, lexer.TokenNameVariable, lexer.TokenStringEscape, lexer.TokenNumber:
-			s := val(t)
-			if isCommandStart(s) {
-				return sb.String()
-			}
 			sb.WriteString(val(p.consume()))
 			return sb.String()
 
