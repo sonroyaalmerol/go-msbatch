@@ -4,21 +4,124 @@ go-msbatch runs on Linux, macOS, and Windows. This page documents where behaviou
 
 ## Path Mapping
 
-Windows drive paths are transparently remapped on Unix hosts:
+Windows drive letters are transparently remapped to Unix mount points. Backslashes are converted to forward slashes and `filepath.Clean` is applied afterwards.
 
-| Windows path | Unix equivalent |
-|--------------|----------------|
-| `C:\foo\bar` | `/mnt/c/foo/bar` |
-| `D:\data` | `/mnt/d/data` |
-| `\foo` (rooted, no drive) | `/foo` |
+### Lookup order (first non-empty value wins)
 
-Backslashes in paths are converted to forward slashes. `filepath.Clean` is applied afterwards.
+For each drive letter the interpreter consults three sources in order:
+
+1. **`MSBATCH_DRIVE_<LETTER>`** — per-drive override (letter must be uppercase in the var name).
+2. **`MSBATCH_DRIVE_ROOT`** — common prefix applied to all unmapped drives.
+3. Built-in default **`/mnt/<letter>`** (WSL2 convention).
+
+### Examples
+
+```sh
+# All defaults (WSL2-style)
+# C:\foo\bar  →  /mnt/c/foo/bar
+# D:\data     →  /mnt/d/data
+
+# Shift all drives under /drives/
+export MSBATCH_DRIVE_ROOT=/drives/
+# C:\foo\bar  →  /drives/c/foo/bar
+# D:\data     →  /drives/d/data
+
+# Pin individual drives, let others fall through to MSBATCH_DRIVE_ROOT
+export MSBATCH_DRIVE_C=/windows
+export MSBATCH_DRIVE_D=/media/data
+export MSBATCH_DRIVE_ROOT=/mnt/
+# C:\foo\bar  →  /windows/foo/bar
+# D:\data     →  /media/data/data
+# E:\tmp      →  /mnt/e/tmp   (fallback to MSBATCH_DRIVE_ROOT)
+```
+
+All variables are read from the **host** environment (not from inside the batch script).
+
+### UNC paths
+
+UNC paths (`\\server\share\path`) are mapped through a separate set of variables with the same three-level lookup as drive letters:
+
+| Variable | Scope | Example value |
+|----------|-------|---------------|
+| `MSBATCH_UNC_<SERVER>_<SHARE>` | Exact server + share | `MSBATCH_UNC_MYSERVER_DOCS=/home/user/docs` |
+| `MSBATCH_UNC_<SERVER>` | All shares on a server | `MSBATCH_UNC_MYSERVER=/mnt/myserver` |
+| `MSBATCH_UNC_ROOT` | All UNC paths | `MSBATCH_UNC_ROOT=/mnt/unc` |
+
+Server and share names are normalised to uppercase and non-alphanumeric characters are collapsed to `_` when forming the variable name:
+
+```sh
+# \\build-srv\releases\v1.0  →  MSBATCH_UNC_BUILD_SRV_RELEASES
+export MSBATCH_UNC_BUILD_SRV_RELEASES=/opt/releases
+
+# \\nas\media  →  MSBATCH_UNC_NAS_MEDIA
+export MSBATCH_UNC_NAS_MEDIA=/mnt/nas/media
+
+# \\nas\*  (all shares on nas fall back to per-server var)
+export MSBATCH_UNC_NAS=/mnt/nas
+# \\nas\photos  →  /mnt/nas/photos
+# \\nas\media   →  /mnt/nas/media (overridden above if both are set)
+
+# Everything else falls back to MSBATCH_UNC_ROOT
+export MSBATCH_UNC_ROOT=/mnt/unc
+# \\other-server\share\file.txt  →  /mnt/unc/other-server/share/file.txt
+```
+
+When **no UNC variable matches**, the path is passed through unchanged (with backslashes converted to forward slashes) so the OS can handle or reject it.
 
 **Caveats:**
 
-- UNC paths (`\\server\share\path`) are not remapped and will likely fail on Unix.
-- Drive-relative paths (`C:foo` — a path relative to the current directory on drive C) are treated as absolute (`/mnt/c/foo`), which is incorrect in general.
+- Drive-relative paths (`C:foo` — relative to the current directory on drive C) are treated as absolute, which is incorrect in general.
 - The mapping only applies when `MapPath()` is called. Arguments that look like bare filenames are not mapped.
+
+## Running .exe Files (Wine)
+
+On non-Windows hosts, invoking a `.exe` binary (e.g. `program.exe` or `C:\Tools\app.exe`) requires [Wine](https://www.winehq.org/).  go-msbatch does **not** manage Wine configuration; it only dispatches the call through whatever Wine command you provide.
+
+### Configuration
+
+Set the `MSBATCH_WINE_CMD` host environment variable to the Wine executable (and any extra flags) you want prepended to every `.exe` invocation:
+
+```sh
+# Minimal — use whatever "wine" is on PATH
+export MSBATCH_WINE_CMD=wine
+
+# Explicit 64-bit binary
+export MSBATCH_WINE_CMD=wine64
+
+# Custom prefix/bottle (extra flags go here, before the .exe path)
+export MSBATCH_WINE_CMD="wine --bottle /home/user/.wine-bottles/myapp"
+```
+
+When `MSBATCH_WINE_CMD` is **not** set (the default), any `.exe` invocation fails immediately with:
+
+```
+cannot execute 'program.exe': Wine is not configured (set MSBATCH_WINE_CMD, e.g. MSBATCH_WINE_CMD=wine)
+```
+
+`ERRORLEVEL` is set to `9009` in that case, matching the standard "not recognised" exit code.
+
+### How it works
+
+The variable is split on whitespace.  The first token becomes the executable; any remaining tokens are inserted between the wine binary and the `.exe` path.  The `.exe` path is run through `MapPath` (drive-letter remapping) so Wine receives a valid Unix path to the binary:
+
+```
+MSBATCH_WINE_CMD="wine64 --some-flag"
+C:\Tools\app.exe C:\data\file.txt
+→  wine64 --some-flag /mnt/c/Tools/app.exe C:\data\file.txt
+                      ^^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^^^^
+                      mapped (Wine needs    NOT mapped — the
+                      a Unix path to load   Windows binary handles
+                      the binary)           this via Windows APIs
+```
+
+Arguments are intentionally **not** converted to Unix paths.  The Windows program running inside Wine resolves paths through Windows API calls, which Wine intercepts and translates internally.  Passing Unix paths as arguments would break any program that uses those strings as Windows paths.
+
+### Caveats
+
+- Wine is never invoked for `.bat` / `.cmd` files — those are always run in-process.
+- Glob patterns in arguments (e.g. `*.txt`) are **not** expanded for Wine commands — expansion is left to the Windows program or Wine's own shell layer.
+- Exit codes from Wine are forwarded to `ERRORLEVEL` as-is.
+- `WINEPREFIX` and other Wine environment variables must be configured separately in the host environment; go-msbatch does not set them.
 
 ## ANSI Escape Sequences
 

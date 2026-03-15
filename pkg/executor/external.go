@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -12,20 +13,83 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
+// winePrefix returns the Wine command tokens from the MSBATCH_WINE_CMD
+// environment variable, or nil if Wine support is disabled.
+//
+// MSBATCH_WINE_CMD is a space-separated command that is prepended to any
+// .exe invocation, e.g.:
+//
+//	MSBATCH_WINE_CMD=wine
+//	MSBATCH_WINE_CMD=wine64
+//	MSBATCH_WINE_CMD=wine --bottle /path/to/prefix
+//
+// When unset (or empty), .exe files cannot be run and will produce an error.
+func winePrefix() []string {
+	v := os.Getenv("MSBATCH_WINE_CMD")
+	if v == "" {
+		return nil
+	}
+	return strings.Fields(v)
+}
+
 // runExternal is the default fallback executor. If the command resolves to a
 // .bat or .cmd file it is run in-process by a child Processor (sharing the
 // parent's environment and I/O). Otherwise the command is forwarded to the
 // host OS via os/exec.
+//
+// On non-Windows systems, commands whose resolved name ends in .exe are
+// dispatched through Wine when MSBATCH_WINE_CMD is set; without it they fail
+// immediately with a descriptive error.
+//
+// Argument handling differs between Wine and native dispatch:
+//   - Native: Windows-style paths in arguments are converted via MapPath and
+//     glob patterns are expanded against the Unix filesystem.
+//   - Wine: arguments are passed through unchanged. The Windows binary running
+//     inside Wine resolves paths through its own Windows API calls, which Wine
+//     intercepts. Converting them to Unix paths beforehand would break the
+//     program's path handling.
 func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	cmdName := processor.MapPath(cmd.Name)
 
-	// Resolve and expand glob patterns in arguments first.
+	// Determine early whether this will be a Wine dispatch so that argument
+	// handling can be chosen correctly before we build the args slice.
+	isWine := runtime.GOOS != "windows" && strings.HasSuffix(strings.ToLower(cmdName), ".exe")
+
+	// If the command resolves to a batch file, run it in-process.
+	// (Batch files are never Wine candidates.)
+	if batPath, ok := resolveBatchFile(cmdName); ok {
+		// For batch files, map and glob-expand args as normal.
+		var batArgs []string
+		for _, arg := range cmd.Args {
+			mapped := mapArg(arg)
+			if strings.ContainsAny(mapped, "*?[") {
+				if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
+					batArgs = append(batArgs, matches...)
+					continue
+				}
+			}
+			batArgs = append(batArgs, mapped)
+		}
+		return runBatchFile(p, batPath, batArgs)
+	}
+
+	if isWine {
+		wine := winePrefix()
+		if len(wine) == 0 {
+			fmt.Fprintf(p.Stderr, "cannot execute '%s': Wine is not configured (set MSBATCH_WINE_CMD, e.g. MSBATCH_WINE_CMD=wine)\n", cmd.Name)
+			p.Env.Set("ERRORLEVEL", "9009")
+			return nil
+		}
+		// Pass arguments to the Windows binary verbatim — no MapPath, no glob
+		// expansion. Wine translates Windows paths internally.
+		wineArgs := append(append(wine[1:], cmdName), cmd.Args...)
+		return runOSCommand(p, wine[0], wineArgs, cmd.Name)
+	}
+
+	// Native Unix command — map paths and expand globs in arguments.
 	var args []string
 	for _, arg := range cmd.Args {
-		mapped := arg
-		if strings.Contains(arg, "\\") || (len(arg) >= 2 && arg[1] == ':') {
-			mapped = processor.MapPath(arg)
-		}
+		mapped := mapArg(arg)
 		if strings.ContainsAny(mapped, "*?[") {
 			if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
 				args = append(args, matches...)
@@ -34,14 +98,21 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 		args = append(args, mapped)
 	}
+	return runOSCommand(p, cmdName, args, cmd.Name)
+}
 
-	// If the command resolves to a batch file, run it in-process.
-	if batPath, ok := resolveBatchFile(cmdName); ok {
-		return runBatchFile(p, batPath, args)
+// mapArg applies MapPath to an argument only when it looks like a Windows path.
+func mapArg(arg string) string {
+	if strings.Contains(arg, "\\") || (len(arg) >= 2 && arg[1] == ':') {
+		return processor.MapPath(arg)
 	}
+	return arg
+}
 
-	// Fall back to the host OS.
-	c := exec.Command(cmdName, args...)
+// runOSCommand executes name with args via the host OS and updates ERRORLEVEL.
+// displayName is used in error messages (the original un-mapped command name).
+func runOSCommand(p *processor.Processor, name string, args []string, displayName string) error {
+	c := exec.Command(name, args...)
 	c.Stdout = p.Stdout
 	c.Stderr = p.Stderr
 	c.Stdin = p.Stdin
@@ -54,7 +125,7 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			p.Env.Set("ERRORLEVEL", strconv.Itoa(exitErr.ExitCode()))
 		} else {
-			fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command, operable program or batch file.\n", cmd.Name)
+			fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command, operable program or batch file.\n", displayName)
 			p.Env.Set("ERRORLEVEL", "9009")
 		}
 	} else {
