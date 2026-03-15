@@ -125,7 +125,7 @@ func cmdTitle(p *processor.Processor, cmd *parser.SimpleCommand) error {
 }
 
 func cmdVer(p *processor.Processor, _ *parser.SimpleCommand) error {
-	fmt.Fprintln(p.Stdout, "Microsoft Windows [Version 10.0.19045.5442]")
+	fmt.Fprintln(p.Stdout, VersionString())
 	p.Env.Set("ERRORLEVEL", "0")
 	return nil
 }

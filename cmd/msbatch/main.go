@@ -41,8 +41,7 @@ func runInteractive() {
 	proc := processor.New(env, nil, executor.New())
 	scanner := bufio.NewScanner(os.Stdin)
 
-	fmt.Println("Microsoft Windows [Version 10.0.19045.5442]")
-	fmt.Println("(c) Microsoft Corporation. All rights reserved. (Go MS-Batch Implementation)")
+	fmt.Println(executor.VersionString())
 	fmt.Println()
 
 	for {

@@ -168,11 +168,22 @@ Creating symlinks on Windows may require elevated privileges or Developer Mode.
 
 ## VER output
 
-`VER` always prints a hard-coded Windows version string regardless of the actual host OS:
+`VER` prints the string controlled by the `MSBATCH_VERSION` host environment variable.  When unset, the default is derived from the host OS at runtime:
 
+| Host OS | Source | Example output |
+|---------|--------|----------------|
+| Linux / macOS | `uname -s` + `uname -r` | `Linux [Version 6.19.5-3-cachyos]` |
+| Windows | `cmd /c ver` | `Microsoft Windows [Version 10.0.19045]` |
+| *(exec fails)* | `runtime.GOOS` | `linux` |
+
+Override it before launching the interpreter:
+
+```sh
+export MSBATCH_VERSION="MyApp Runner [Version 2.1.0]"
+msbatch myscript.bat
 ```
-Microsoft Windows [Version 10.0.19045.5442]
-```
+
+The same string is also printed as the interactive session banner when no script file is provided.
 
 ## VOL output
 
