@@ -75,12 +75,6 @@ func (s *rcStats) addFiles(field int, delta int64) {
 	s.mu.Unlock()
 }
 
-func (s *rcStats) addBytes(field int, delta int64) {
-	s.mu.Lock()
-	s.bytes[field] += delta
-	s.mu.Unlock()
-}
-
 // addFilesAndBytes updates a files field and its corresponding bytes field in
 // one lock acquisition, keeping the two categories consistent.
 func (s *rcStats) addFilesAndBytes(field int, count, byteCount int64) {
