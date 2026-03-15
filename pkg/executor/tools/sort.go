@@ -12,8 +12,24 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
+const sortHelp = `Sorts input and writes results to the screen or a file.
+
+SORT [/R] [[path]filename]
+
+  /R          Reverses the sort order (Z to A, then 9 to 0).
+  filename    Specifies the file to be sorted. If not specified,
+              standard input is sorted.
+`
+
 func Sort(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// SORT [/R] [/+n] [file]
+	for _, a := range cmd.Args {
+		if a == "/?" {
+			fmt.Fprint(p.Stdout, sortHelp)
+			p.Env.Set("ERRORLEVEL", "0")
+			return nil
+		}
+	}
 	reverse := false
 	var reader io.Reader
 	if p.Stdin != nil {

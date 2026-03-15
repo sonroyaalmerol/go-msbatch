@@ -8,7 +8,19 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
-func Whoami(p *processor.Processor, _ *parser.SimpleCommand) error {
+const whoamiHelp = `Displays the current user name.
+
+WHOAMI
+`
+
+func Whoami(p *processor.Processor, cmd *parser.SimpleCommand) error {
+	for _, a := range cmd.Args {
+		if a == "/?" {
+			fmt.Fprint(p.Stdout, whoamiHelp)
+			p.Env.Set("ERRORLEVEL", "0")
+			return nil
+		}
+	}
 	u, err := user.Current()
 	if err != nil {
 		fmt.Fprintf(p.Stderr, "Could not determine current user.\n")

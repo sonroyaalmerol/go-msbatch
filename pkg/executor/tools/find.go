@@ -12,8 +12,29 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
+const findHelp = `Searches for a text string in a file or files.
+
+FIND [/V] [/C] [/N] [/I] "string" [[path]filename[ ...]]
+
+  /V        Displays all lines NOT containing the specified string.
+  /C        Displays only the count of lines containing the string.
+  /N        Displays line numbers with the displayed lines.
+  /I        Ignores the case of characters when searching for the string.
+  "string"  Specifies the text string to find.
+  filename  Specifies a file or files to search.
+
+If a filename is not specified, FIND searches text piped from another command.
+`
+
 func Find(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// FIND [/V] [/C] [/N] [/I] "string" [file...]
+	for _, a := range cmd.Args {
+		if a == "/?" {
+			fmt.Fprint(p.Stdout, findHelp)
+			p.Env.Set("ERRORLEVEL", "0")
+			return nil
+		}
+	}
 	if len(cmd.Args) == 0 {
 		fmt.Fprintf(p.Stderr, "Required parameter missing\n")
 		p.Env.Set("ERRORLEVEL", "2")

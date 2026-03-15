@@ -46,8 +46,50 @@ type xcopyOpts struct {
 	overwriteAll bool
 }
 
+const xcopyHelp = `Copies files and directory trees.
+
+XCOPY source [destination] [/A | /M] [/D[:date]] [/P] [/S [/E]] [/V] [/W]
+             [/C] [/I] [/Q] [/F] [/L] [/H] [/R] [/T] [/U]
+             [/K] [/B] [/Y | /-Y] [/EXCLUDE:file1[+file2]...]
+
+  source       Specifies the file(s) to copy.
+  destination  Specifies the location and/or name of new files.
+
+  /A           Copies files with the archive attribute set (stub).
+  /M           Copies files with archive attribute; clears attribute (stub).
+  /D[:m-d-y]   Copies files changed on or after the specified date.
+               If no date is given, copies only if source is newer than dest.
+  /P           Prompts you before creating each destination file.
+  /S           Copies directories and subdirectories except empty ones.
+  /E           Copies directories and subdirectories, including empty ones.
+  /V           Verifies the size of each new file.
+  /W           Prompts you to press a key before copying.
+  /C           Continues copying even if errors occur.
+  /I           If destination does not exist, assume it is a directory.
+  /Q           Does not display file names while copying.
+  /F           Displays full source and destination file names while copying.
+  /L           Displays files that would be copied (list only; no copy).
+  /H           Copies hidden and system files also.
+  /R           Overwrites read-only files.
+  /T           Creates directory structure, but does not copy files.
+  /U           Copies only files that already exist in destination.
+  /K           Copies attributes; default XCOPY resets read-only attributes.
+  /B           Copies the Symbolic Link itself (stub).
+  /Y           Suppresses prompting to confirm overwriting an existing file.
+  /-Y          Causes prompting to confirm overwriting an existing file.
+  /EXCLUDE:file1[+file2]...
+               Specifies a list of files containing strings to exclude.
+`
+
 // Xcopy implements the XCOPY command.
 func Xcopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
+	for _, a := range cmd.Args {
+		if a == "/?" {
+			fmt.Fprint(p.Stdout, xcopyHelp)
+			p.Env.Set("ERRORLEVEL", "0")
+			return nil
+		}
+	}
 	if len(cmd.Args) == 0 {
 		fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")
 		p.Env.Set("ERRORLEVEL", "4")

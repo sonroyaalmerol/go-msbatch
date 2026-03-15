@@ -11,7 +11,21 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
+const treeHelp = `Graphically displays the folder structure of a path.
+
+TREE [path]
+
+  path  Specifies the directory to display. Defaults to current directory.
+`
+
 func Tree(p *processor.Processor, cmd *parser.SimpleCommand) error {
+	for _, a := range cmd.Args {
+		if a == "/?" {
+			fmt.Fprint(p.Stdout, treeHelp)
+			p.Env.Set("ERRORLEVEL", "0")
+			return nil
+		}
+	}
 	root := "."
 	for _, arg := range cmd.Args {
 		// Only treat as a flag if it looks like a short Windows-style flag

@@ -10,8 +10,24 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
+const timeoutHelp = `Pauses command processing for the specified number of seconds.
+
+TIMEOUT /T seconds [/NOBREAK]
+
+  /T seconds  Specifies the number of seconds to wait (0–99999).
+              Use -1 to wait indefinitely.
+  /NOBREAK    Ignore key presses; wait the full duration.
+`
+
 func Timeout(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// TIMEOUT /T <seconds> [/NOBREAK]
+	for _, a := range cmd.Args {
+		if a == "/?" {
+			fmt.Fprint(p.Stdout, timeoutHelp)
+			p.Env.Set("ERRORLEVEL", "0")
+			return nil
+		}
+	}
 	seconds := 0
 	args := cmd.Args
 	for i, arg := range args {

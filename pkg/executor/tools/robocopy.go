@@ -171,7 +171,81 @@ type rcOpts struct {
 
 // ── entry point ───────────────────────────────────────────────────────────────
 
+const robocopyHelp = `Robust file copy utility.
+
+ROBOCOPY source destination [file [file]...] [options]
+
+  source       Source directory path.
+  destination  Destination directory path.
+  file         File(s) to copy (default: *.*).
+
+Copy options:
+  /S           Copies subdirectories; excludes empty ones.
+  /E           Copies subdirectories, including empty ones.
+  /LEV:n       Only copies the top n levels of the source tree.
+  /MOV         Moves files (deletes from source after copying).
+  /MOVE        Moves files and directories.
+  /A           Copies only files with the Archive attribute (stub).
+  /M           Copies only Archive files; clears the attribute (stub).
+  /CREATE      Creates a directory tree and zero-length files only.
+  /SL          Copies symbolic links instead of targets.
+  /FFT         Assumes FAT file times (2-second granularity).
+  /MIR         Mirrors a directory tree (equivalent to /E /PURGE).
+  /PURGE       Deletes destination files/directories that no longer exist in source.
+
+Filter options:
+  /XO          Excludes older files (source older than destination).
+  /XC          Excludes changed files.
+  /XN          Excludes newer files.
+  /XL          Excludes lonely files (only in source).
+  /XX          Excludes extra files (only in destination).
+  /IS          Includes same files (overwrite even if identical).
+  /XF file...  Excludes files matching given names/wildcards.
+  /XD dir...   Excludes directories matching given names.
+  /XJ          Excludes junction points.
+  /MAX:n       Excludes files larger than n bytes.
+  /MIN:n       Excludes files smaller than n bytes.
+  /MAXAGE:n    Excludes files older than n days or date (YYYYMMDD).
+  /MINAGE:n    Excludes files newer than n days or date (YYYYMMDD).
+
+Performance options:
+  /MT[:n]      Multi-threaded copy with n threads (default 8, max 128).
+  /R:n         Number of retries on failed copies (default 0).
+  /W:n         Wait time in seconds between retries (default 30).
+
+Logging options:
+  /L           List only; does not copy, timestamp, or delete any files.
+  /V           Produces verbose output, showing skipped files.
+  /TS          Includes source file timestamps in the output.
+  /FP          Includes the full pathname of files in the output.
+  /NS          No size; file sizes are not logged.
+  /NC          No class; file classes are not logged.
+  /NFL         No file list; file names are not logged.
+  /NDL         No directory list; directory names are not logged.
+  /NP          No progress; percentage copied is not displayed.
+  /NJH         No job header.
+  /NJS         No job summary.
+  /LOG:file    Writes status output to the log file (overwrites).
+  /LOG+:file   Writes status output to the log file (appends).
+  /TEE         Writes status output to the console window, and to the log file.
+
+Exit codes (bitwise OR):
+  0   No files were copied. No files were mismatched. No failures.
+  1   All files were copied successfully.
+  2   Extra files or directories were detected. No files were copied.
+  4   Some mismatched files or directories were detected.
+  8   Some files or directories could not be copied.
+  16  Fatal error; invalid parameters or access denied.
+`
+
 func Robocopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
+	for _, a := range cmd.Args {
+		if a == "/?" {
+			fmt.Fprint(p.Stdout, robocopyHelp)
+			p.Env.Set("ERRORLEVEL", "0")
+			return nil
+		}
+	}
 	if len(cmd.Args) < 2 {
 		fmt.Fprintf(p.Stderr, "ERROR: Invalid number of parameters.\n")
 		p.Env.Set("ERRORLEVEL", "16")

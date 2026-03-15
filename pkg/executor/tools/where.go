@@ -9,8 +9,23 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
+const whereHelp = `Displays the location of files matching a search pattern.
+
+WHERE [/Q] name
+
+  /Q    Quiet mode; does not display file locations or error messages.
+  name  Specifies the name of the file to find.
+`
+
 func Where(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// WHERE [/Q] <name>
+	for _, a := range cmd.Args {
+		if a == "/?" {
+			fmt.Fprint(p.Stdout, whereHelp)
+			p.Env.Set("ERRORLEVEL", "0")
+			return nil
+		}
+	}
 	if len(cmd.Args) == 0 {
 		fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")
 		p.Env.Set("ERRORLEVEL", "1")

@@ -8,7 +8,19 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
-func Hostname(p *processor.Processor, _ *parser.SimpleCommand) error {
+const hostnameHelp = `Displays the name of the current host.
+
+HOSTNAME
+`
+
+func Hostname(p *processor.Processor, cmd *parser.SimpleCommand) error {
+	for _, a := range cmd.Args {
+		if a == "/?" {
+			fmt.Fprint(p.Stdout, hostnameHelp)
+			p.Env.Set("ERRORLEVEL", "0")
+			return nil
+		}
+	}
 	h, err := os.Hostname()
 	if err != nil {
 		fmt.Fprintf(p.Stderr, "Could not determine hostname.\n")
