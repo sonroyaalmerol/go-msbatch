@@ -1,5 +1,7 @@
 # go-msbatch
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/sonroyaalmerol/go-msbatch.svg)](https://pkg.go.dev/github.com/sonroyaalmerol/go-msbatch)
+
 A cross-platform Windows CMD/Batch interpreter written in Go. Mirrors `cmd.exe`'s multi-phase processing model with a recursive-descent parser and executor.
 
 ## Installation
