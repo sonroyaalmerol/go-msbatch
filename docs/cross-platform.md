@@ -162,10 +162,6 @@ Windows file attributes (archive, hidden, system, read-only) are not natively ac
 
 Creating symlinks on Windows may require elevated privileges or Developer Mode.
 
-## ROBOCOPY multithreading
-
-`/MT[:n]` is accepted but the copy always runs single-threaded.
-
 ## VER output
 
 `VER` prints the string controlled by the `MSBATCH_VERSION` host environment variable.  When unset, the default is derived from the host OS at runtime:

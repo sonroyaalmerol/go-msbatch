@@ -50,6 +50,17 @@ ROBOCOPY source destination [file [file ...]] [flags]
 | `/IA:flags` | Accepted, no effect | Include only files with attributes |
 | `/XA:flags` | Accepted, no effect | Exclude files with attributes |
 
+## Multithreading
+
+| Flag | Status | Meaning |
+|------|--------|---------|
+| `/MT` | Implemented | Use 8 threads (default when no count given) |
+| `/MT:n` | Implemented | Use `n` threads (1–128) |
+
+`/MT` parallelises **file copies within each directory** using a goroutine pool capped at `n` workers. Directory recursion itself is always serial (one directory at a time), matching the real Robocopy behaviour.
+
+The output writer and statistics counters are internally protected with locks when `/MT` is active, so the summary and log file remain consistent regardless of thread count.
+
 ## Retry flags
 
 | Flag | Status | Meaning |
@@ -89,7 +100,7 @@ The following flags are parsed and accepted without error but have no effect:
 
 `/B` `/COMPRESS` `/J` `/Z` `/ZB` `/SEC` `/SECFIX` `/DST` `/COPYALL` `/NOCOPY`
 `/NODCOPY` `/IM` `/PF` `/256` `/UNICODE` `/BYTES` `/DEBUG` `/ETA` `/TIMFIX`
-`/NOSD` `/NODD` `/QUIT` `/IF` `/COPY:` `/DCOPY:` `/IPG:` `/MT[:n]`
+`/NOSD` `/NODD` `/QUIT` `/IF` `/COPY:` `/DCOPY:` `/IPG:`
 `/MON:` `/MOT:` `/RH:` `/JOB:` `/SAVE:` `/LFSM` `/MAXLAD:` `/MINLAD:`
 `/SD:` `/DD:` `/UNILOG` `/UNILOG+:`
 
@@ -140,7 +151,7 @@ Use `/NJH /NJS` to suppress header and summary for cleaner scripted output.
 ## Caveats
 
 - **`/A` and `/M`** (archive attribute) require Windows-specific attribute APIs; they are accepted but have no effect on Unix.
-- **`/MT[:n]`** (multithreading) is accepted but ROBOCOPY always runs single-threaded.
+- **`/MT[:n]`** parallelises file copies within each directory. The thread count applies per-directory; overall parallelism can therefore exceed `n` when directories are deeply nested and multiple levels are active simultaneously.
 - **`/JOB:` and `/SAVE:`** (job files) are not implemented.
 - **ACL/security copy flags** (`/SEC`, `/SECFIX`, `/COPY:O`, `/COPY:S`, `/SECFIX`, `/EFSRAW`) are accepted but ACL operations require Windows APIs.
 - **Junction detection** (`/XJ`, `/XJD`, `/XJF`): on Unix a "junction" is approximated by any symlink pointing to a directory.

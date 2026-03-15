@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
@@ -59,10 +60,55 @@ const (
 	rcExtras   = 5
 )
 
+// rcStats is shared across goroutines when /MT is active; all mutations must
+// hold mu.
 type rcStats struct {
+	mu    sync.Mutex
 	dirs  rcStat
 	files rcStat
 	bytes rcStat
+}
+
+func (s *rcStats) addFiles(field int, delta int64) {
+	s.mu.Lock()
+	s.files[field] += delta
+	s.mu.Unlock()
+}
+
+func (s *rcStats) addBytes(field int, delta int64) {
+	s.mu.Lock()
+	s.bytes[field] += delta
+	s.mu.Unlock()
+}
+
+// addFilesAndBytes updates a files field and its corresponding bytes field in
+// one lock acquisition, keeping the two categories consistent.
+func (s *rcStats) addFilesAndBytes(field int, count, byteCount int64) {
+	s.mu.Lock()
+	s.files[field] += count
+	s.bytes[field] += byteCount
+	s.mu.Unlock()
+}
+
+func (s *rcStats) addDirs(field int, delta int64) {
+	s.mu.Lock()
+	s.dirs[field] += delta
+	s.mu.Unlock()
+}
+
+// ── thread-safe writer ────────────────────────────────────────────────────────
+
+// lockedWriter serialises concurrent writes so that log lines from parallel
+// goroutines don't interleave.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (lw *lockedWriter) Write(p []byte) (int, error) {
+	lw.mu.Lock()
+	defer lw.mu.Unlock()
+	return lw.w.Write(p)
 }
 
 // ── options ───────────────────────────────────────────────────────────────────
@@ -88,6 +134,7 @@ type rcOpts struct {
 	createOnly   bool // /CREATE: zero-length files + directory structure
 	retries      int
 	retryWait    int // seconds
+	threads      int // /MT[:n]; 0 = single-threaded
 
 	// Destination
 	purge   bool   // /PURGE
@@ -160,9 +207,16 @@ func Robocopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		return nil
 	}
 
-	out, closeOut := rcSetupOutput(p, opts)
+	rawOut, closeOut := rcSetupOutput(p, opts)
 	if closeOut != nil {
 		defer closeOut()
+	}
+
+	// Wrap in a lockedWriter when multi-threading so that log lines from
+	// concurrent goroutines don't interleave.
+	var out io.Writer = rawOut
+	if opts.threads > 1 {
+		out = &lockedWriter{w: rawOut}
 	}
 
 	started := time.Now()
@@ -208,13 +262,18 @@ func Robocopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 
 // ── directory walker ──────────────────────────────────────────────────────────
 
+// rcFileWork holds the parameters for a single deferred file-copy task.
+type rcFileWork struct {
+	src, dst, name string
+}
+
 func rcProcessDir(out io.Writer, src, dst string, opts *rcOpts, stats *rcStats, level int) {
 	if opts.maxLevel > 0 && level >= opts.maxLevel {
 		return
 	}
 
-	stats.dirs[rcTotal]++
-	stats.dirs[rcCopied]++ // every directory we enter counts as "copied"
+	stats.addDirs(rcTotal, 1)
+	stats.addDirs(rcCopied, 1) // every directory we enter counts as "copied"
 
 	if !opts.listOnly {
 		os.MkdirAll(dst, 0755)
@@ -230,10 +289,15 @@ func rcProcessDir(out io.Writer, src, dst string, opts *rcOpts, stats *rcStats, 
 
 	entries, err := os.ReadDir(src)
 	if err != nil {
-		stats.dirs[rcFailed]++
-		stats.dirs[rcCopied]-- // undo the optimistic count
+		stats.addDirs(rcFailed, 1)
+		stats.addDirs(rcCopied, -1) // undo the optimistic count
 		return
 	}
+
+	// Separate entries into files and subdirectories so that file copies can
+	// be parallelised while directory recursion stays serial.
+	var files []rcFileWork
+	var subdirs []struct{ src, dst string }
 
 	for _, e := range entries {
 		name := e.Name()
@@ -251,35 +315,57 @@ func rcProcessDir(out io.Writer, src, dst string, opts *rcOpts, stats *rcStats, 
 			if !opts.recursive {
 				continue
 			}
-			// Junction / directory symlink exclusion.
 			if isSymlink && (opts.excludeJunct || opts.excludeJunctD) {
-				stats.dirs[rcTotal]++
-				stats.dirs[rcSkipped]++
+				stats.addDirs(rcTotal, 1)
+				stats.addDirs(rcSkipped, 1)
 				continue
 			}
-			// Pattern exclusion.
 			if rcDirExcluded(name, srcPath, opts.excludeDirs) {
-				stats.dirs[rcTotal]++
-				stats.dirs[rcSkipped]++
+				stats.addDirs(rcTotal, 1)
+				stats.addDirs(rcSkipped, 1)
 				continue
 			}
-			// Empty directory filter.
 			if !opts.includeEmpty {
 				if empty, _ := isDirEmpty(srcPath); empty {
-					stats.dirs[rcTotal]++
-					stats.dirs[rcSkipped]++
+					stats.addDirs(rcTotal, 1)
+					stats.addDirs(rcSkipped, 1)
 					continue
 				}
 			}
-			rcProcessDir(out, srcPath, dstPath, opts, stats, level+1)
-			if opts.moveDirs {
-				os.Remove(srcPath) // succeeds only when now empty
-			}
+			subdirs = append(subdirs, struct{ src, dst string }{srcPath, dstPath})
 		} else {
 			if !rcMatchesFilePattern(name, opts.filePatterns) {
 				continue
 			}
-			rcProcessFile(out, srcPath, dstPath, name, opts, stats)
+			files = append(files, rcFileWork{srcPath, dstPath, name})
+		}
+	}
+
+	// ── process files ────────────────────────────────────────────────────────
+	if opts.threads > 1 {
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, opts.threads)
+		for _, f := range files {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(fw rcFileWork) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				rcProcessFile(out, fw.src, fw.dst, fw.name, opts, stats)
+			}(f)
+		}
+		wg.Wait()
+	} else {
+		for _, f := range files {
+			rcProcessFile(out, f.src, f.dst, f.name, opts, stats)
+		}
+	}
+
+	// ── recurse into subdirectories (always serial) ──────────────────────────
+	for _, d := range subdirs {
+		rcProcessDir(out, d.src, d.dst, opts, stats, level+1)
+		if opts.moveDirs {
+			os.Remove(d.src) // succeeds only when now empty
 		}
 	}
 }
@@ -289,7 +375,7 @@ func rcProcessDir(out io.Writer, src, dst string, opts *rcOpts, stats *rcStats, 
 func rcProcessFile(out io.Writer, src, dst, name string, opts *rcOpts, stats *rcStats) {
 	srcInfo, err := os.Lstat(src)
 	if err != nil {
-		stats.files[rcFailed]++
+		stats.addFiles(rcFailed, 1)
 		return
 	}
 
@@ -297,17 +383,17 @@ func rcProcessFile(out io.Writer, src, dst, name string, opts *rcOpts, stats *rc
 
 	// Symlink / junction file exclusion.
 	if isSymlink && (opts.excludeJunct || opts.excludeJunctF) {
-		stats.files[rcSkipped]++
+		stats.addFiles(rcSkipped, 1)
 		return
 	}
 
 	// Size filters.
 	if opts.maxSize > 0 && srcInfo.Size() > opts.maxSize {
-		stats.files[rcSkipped]++
+		stats.addFiles(rcSkipped, 1)
 		return
 	}
 	if opts.minSize > 0 && srcInfo.Size() < opts.minSize {
-		stats.files[rcSkipped]++
+		stats.addFiles(rcSkipped, 1)
 		return
 	}
 
@@ -315,25 +401,25 @@ func rcProcessFile(out io.Writer, src, dst, name string, opts *rcOpts, stats *rc
 	now := time.Now()
 	mtime := srcInfo.ModTime()
 	if opts.maxAgeDays > 0 && mtime.Before(now.AddDate(0, 0, -opts.maxAgeDays)) {
-		stats.files[rcSkipped]++
+		stats.addFiles(rcSkipped, 1)
 		return
 	}
 	if opts.maxAgeDate != nil && mtime.Before(*opts.maxAgeDate) {
-		stats.files[rcSkipped]++
+		stats.addFiles(rcSkipped, 1)
 		return
 	}
 	if opts.minAgeDays > 0 && mtime.After(now.AddDate(0, 0, -opts.minAgeDays)) {
-		stats.files[rcSkipped]++
+		stats.addFiles(rcSkipped, 1)
 		return
 	}
 	if opts.minAgeDate != nil && mtime.After(*opts.minAgeDate) {
-		stats.files[rcSkipped]++
+		stats.addFiles(rcSkipped, 1)
 		return
 	}
 
 	// File name / pattern exclusion.
 	if rcFileExcluded(name, src, opts.excludeFiles) {
-		stats.files[rcSkipped]++
+		stats.addFiles(rcSkipped, 1)
 		return
 	}
 
@@ -344,19 +430,17 @@ func rcProcessFile(out io.Writer, src, dst, name string, opts *rcOpts, stats *rc
 	case os.IsNotExist(dstErr):
 		cls = rcNewFile
 	case dstErr != nil:
-		stats.files[rcFailed]++
+		stats.addFiles(rcFailed, 1)
 		return
 	default:
 		cls = rcClassify(srcInfo, dstInfo, opts.fatTimes)
 	}
 
-	stats.files[rcTotal]++
-	stats.bytes[rcTotal] += srcInfo.Size()
+	stats.addFilesAndBytes(rcTotal, 1, srcInfo.Size())
 
 	// Apply copy-decision filters.
 	if !rcShouldCopy(cls, opts) {
-		stats.files[rcSkipped]++
-		stats.bytes[rcSkipped] += srcInfo.Size()
+		stats.addFilesAndBytes(rcSkipped, 1, srcInfo.Size())
 		if opts.verbose {
 			rcLogFileLine(out, cls, srcInfo, name, src, opts)
 		}
@@ -366,8 +450,7 @@ func rcProcessFile(out io.Writer, src, dst, name string, opts *rcOpts, stats *rc
 	rcLogFileLine(out, cls, srcInfo, name, src, opts)
 
 	if opts.listOnly {
-		stats.files[rcCopied]++
-		stats.bytes[rcCopied] += srcInfo.Size()
+		stats.addFilesAndBytes(rcCopied, 1, srcInfo.Size())
 		return
 	}
 
@@ -384,8 +467,7 @@ func rcProcessFile(out io.Writer, src, dst, name string, opts *rcOpts, stats *rc
 	}
 
 	if copyErr != nil {
-		stats.files[rcFailed]++
-		stats.bytes[rcFailed] += srcInfo.Size()
+		stats.addFilesAndBytes(rcFailed, 1, srcInfo.Size())
 		fmt.Fprintf(out, "\tERROR copying %s: %v\n", name, copyErr)
 		return
 	}
@@ -395,8 +477,7 @@ func rcProcessFile(out io.Writer, src, dst, name string, opts *rcOpts, stats *rc
 		rcApplyAttrs(dst, opts.attrAdd, opts.attrDel)
 	}
 
-	stats.files[rcCopied]++
-	stats.bytes[rcCopied] += srcInfo.Size()
+	stats.addFilesAndBytes(rcCopied, 1, srcInfo.Size())
 
 	if opts.moveFiles {
 		os.Remove(src)
@@ -444,7 +525,7 @@ func rcPurgeExtras(out io.Writer, src, dst string, opts *rcOpts, stats *rcStats)
 				continue
 			}
 			if e.IsDir() {
-				stats.dirs[rcExtras]++
+				stats.addDirs(rcExtras, 1)
 				if !opts.noDirList {
 					fmt.Fprintf(out, "\t*EXTRA Dir \t\t%s%c\n", dstPath, os.PathSeparator)
 				}
@@ -455,8 +536,7 @@ func rcPurgeExtras(out io.Writer, src, dst string, opts *rcOpts, stats *rcStats)
 				if info != nil {
 					sz = info.Size()
 				}
-				stats.files[rcExtras]++
-				stats.bytes[rcExtras] += sz
+				stats.addFilesAndBytes(rcExtras, 1, sz)
 				if !opts.noFileList {
 					fmt.Fprintf(out, "\t*EXTRA File\t%10d  %s\n", sz, name)
 				}
@@ -594,6 +674,9 @@ func rcBuildOptionsString(opts *rcOpts) string {
 	if opts.maxLevel > 0 {
 		parts = append(parts, fmt.Sprintf("/LEV:%d", opts.maxLevel))
 	}
+	if opts.threads > 1 {
+		parts = append(parts, fmt.Sprintf("/MT:%d", opts.threads))
+	}
 	parts = append(parts, fmt.Sprintf("/R:%d", opts.retries))
 	parts = append(parts, fmt.Sprintf("/W:%d", opts.retryWait))
 	return strings.Join(parts, " ")
@@ -705,6 +788,14 @@ func rcParseOpts(args []string) *rcOpts {
 			if n, err := strconv.Atoi(arg[3:]); err == nil {
 				opts.retryWait = n
 			}
+		case lower == "/mt":
+			opts.threads = 8 // default thread count, matching real robocopy
+		case strings.HasPrefix(lower, "/mt:"):
+			if n, err := strconv.Atoi(arg[4:]); err == nil && n >= 1 && n <= 128 {
+				opts.threads = n
+			} else {
+				opts.threads = 8
+			}
 		case lower == "/purge":
 			opts.purge = true
 		case lower == "/mir":
@@ -784,7 +875,7 @@ func rcParseOpts(args []string) *rcOpts {
 		default:
 			if strings.HasPrefix(lower, "/copy:") || strings.HasPrefix(lower, "/dcopy:") ||
 				strings.HasPrefix(lower, "/ia:") || strings.HasPrefix(lower, "/xa:") ||
-				strings.HasPrefix(lower, "/ipg:") || strings.HasPrefix(lower, "/mt") ||
+				strings.HasPrefix(lower, "/ipg:") ||
 				strings.HasPrefix(lower, "/mon:") || strings.HasPrefix(lower, "/mot:") ||
 				strings.HasPrefix(lower, "/rh:") || strings.HasPrefix(lower, "/job:") ||
 				strings.HasPrefix(lower, "/save:") || strings.HasPrefix(lower, "/lfsm") ||
