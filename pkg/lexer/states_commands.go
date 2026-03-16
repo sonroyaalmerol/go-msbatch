@@ -175,7 +175,7 @@ func (bl *BatchLexer) stateFor() stateFn {
 		bl.skipWS()
 	}
 
-	bl.lexKeyword("in")
+	bl.lexKeyword(KwIn)
 	bl.skipWS()
 	if bl.check(func(r rune) bool { return r == '(' }) {
 		bl.next()
@@ -216,24 +216,24 @@ func (bl *BatchLexer) stateIf() stateFn {
 		}
 	}
 
-	if bl.tryKeyword("not") {
+	if bl.tryKeyword(KwNot) {
 		bl.emit(TokenKeyword)
 		bl.skipWS()
 	}
 
-	if bl.tryKeyword("exist") {
-		bl.emit(TokenKeyword)
-		bl.skipWS()
-		return bl.stateFollow
-	}
-
-	if bl.tryKeyword("defined") {
+	if bl.tryKeyword(KwExist) {
 		bl.emit(TokenKeyword)
 		bl.skipWS()
 		return bl.stateFollow
 	}
 
-	if bl.tryKeyword("errorlevel") {
+	if bl.tryKeyword(KwDefined) {
+		bl.emit(TokenKeyword)
+		bl.skipWS()
+		return bl.stateFollow
+	}
+
+	if bl.tryKeyword(KwErrorlevel) {
 		bl.emit(TokenKeyword)
 		bl.skipWS()
 		return bl.stateFollow

@@ -109,31 +109,31 @@ func (bl *BatchLexer) stateWord() stateFn {
 	}
 
 	switch lower {
-	case "rem":
+	case KwRem:
 		bl.emit(TokenKeyword)
 		return bl.stateRem
-	case "set":
+	case KwSet:
 		bl.emit(TokenKeyword)
 		return bl.stateSet
-	case "for":
+	case KwFor:
 		bl.emit(TokenKeyword)
 		return bl.stateFor
-	case "if":
+	case KwIf:
 		bl.emit(TokenKeyword)
 		return bl.stateIf
-	case "else":
+	case KwElse:
 		bl.emit(TokenKeyword)
 		return bl.stateRoot
-	case "goto":
+	case KwGoto:
 		bl.emit(TokenKeyword)
 		return bl.stateGoto
-	case "call":
+	case KwCall:
 		bl.emit(TokenKeyword)
 		return bl.stateCall
-	case "do":
+	case KwDo:
 		bl.emit(TokenKeyword)
 		return bl.stateRoot
-	case "in":
+	case KwIn:
 		bl.emit(TokenKeyword)
 		return bl.stateRoot
 	default:
