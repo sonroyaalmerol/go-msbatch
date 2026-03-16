@@ -157,6 +157,23 @@ func Analyze(content string) Analysis {
 					})
 				}
 			}
+		} else if strings.HasPrefix(lower, "for ") {
+			// Find the variable like %%I
+			rest := trimmed[4:]
+			idx := strings.Index(rest, "%%")
+			if idx >= 0 && idx+2 < len(rest) {
+				char := rest[idx+2]
+				if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') {
+					indent := len(line) - len(strings.TrimLeft(line, " \t"))
+					varCol := indent + 4 + idx
+					a.Vars = append(a.Vars, VarDef{
+						Name:  "%" + strings.ToUpper(string(char)),
+						Value: "",
+						Line:  i,
+						Col:   varCol,
+					})
+				}
+			}
 		}
 
 		// %VARIABLE% usages on this line.
@@ -309,6 +326,8 @@ func WordAtPosition(line string, col int) string {
 	for end < len(line) && isWordChar(rune(line[end])) {
 		end++
 	}
+	// For loop variables like %%I we want the Word to be just `%I` or we need to extract it properly.
+	// But `WordAtPosition` currently doesn't include `%`. Let's update `isWordChar` to include `%`.
 	return line[start:end]
 }
 
@@ -336,7 +355,8 @@ func CompletionContextAt(lineBefore string) CompletionContext {
 
 	// Inside a %variable% reference: an odd number of '%' signs means the
 	// last '%' is an opening delimiter that has not yet been closed.
-	if strings.Count(lineBefore, "%")%2 == 1 {
+	// We also consider %%I style for loop variables. If the string ends with %%, it's open.
+	if strings.Count(lineBefore, "%")%2 == 1 || strings.HasSuffix(lineBefore, "%%") {
 		return CompleteVariable
 	}
 
@@ -346,6 +366,16 @@ func CompletionContextAt(lineBefore string) CompletionContext {
 	}
 	if strings.HasPrefix(lower, "call :") || lower == "call :" {
 		return CompleteLabel
+	}
+
+	// If we are on a SET command definition: "set VAR"
+	if strings.HasPrefix(lower, "set ") && !strings.Contains(lower[4:], "=") {
+		return CompleteVariable
+	}
+
+	// If we are on a FOR loop variable definition: "for %%I"
+	if strings.HasPrefix(lower, "for ") && strings.Contains(lower, "%%") && !strings.Contains(lower, " in ") {
+		return CompleteVariable
 	}
 
 	// If we are on the first word (no space yet) → command completion.
@@ -379,13 +409,29 @@ func appendVarRefs(refs []VarRef, line string, lineIdx int) []VarRef {
 		if pct < 0 {
 			break
 		}
+		
+		// Check for %%I style FOR loop variables
+		if pct+2 < len(rest) && rest[pct+1] == '%' {
+			char := rest[pct+2]
+			if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') {
+				refs = append(refs, VarRef{
+					Name: "%" + strings.ToUpper(string(char)),
+					Line: lineIdx,
+					Col:  offset + pct, // col of first %
+				})
+				offset += pct + 3
+				rest = rest[pct+3:]
+				continue
+			}
+		}
+
 		after := rest[pct+1:]
 		end := strings.Index(after, "%")
 		if end < 0 {
 			break
 		}
 		name := after[:end]
-		// Skip empty (%%→escaped %), positional args (%0–%9), and FOR vars (%%I)
+		// Skip empty (%%→escaped %) and positional args (%0–%9)
 		if name != "" && (name[0] < '0' || name[0] > '9') {
 			refs = append(refs, VarRef{
 				Name: strings.ToUpper(name),
@@ -418,30 +464,54 @@ func DefinitionAt(workspace map[string]*Document, uri string, line, col int) (Lo
 		lineBefore = src[:col]
 	}
 
-	// Prefer variable context when cursor is inside %...%
-	if CompletionContextAt(lineBefore) == CompleteVariable {
-		word := strings.ToUpper(WordAtPosition(src, col))
+	// Helper to search workspace for a variable definition
+	findVarDef := func(word string) (Loc, bool) {
+		// word is just the text, e.g. "MYVAR" or "I"
+		wordWithPercent := "%" + word
+		
+		getEndCol := func(v VarDef) int {
+			if strings.HasPrefix(v.Name, "%") {
+				// FOR loop var, length in source is 3 ("%%I")
+				return v.Col + len(v.Name) + 1
+			}
+			return v.Col + len(v.Name)
+		}
 
 		// Search current document first
 		for _, v := range a.Vars {
-			if v.Name == word {
-				return Loc{URI: uri, Line: v.Line, Col: 0, EndCol: len(lineAt(content, v.Line))}, true
+			if v.Name == word || v.Name == wordWithPercent {
+				return Loc{URI: uri, Line: v.Line, Col: v.Col, EndCol: getEndCol(v)}, true
 			}
 		}
-
 		// Fallback to searching other documents in workspace
 		for otherUri, otherDoc := range workspace {
 			if otherUri == uri {
 				continue
 			}
 			for _, v := range otherDoc.Analysis.Vars {
-				if v.Name == word {
-					return Loc{URI: otherUri, Line: v.Line, Col: 0, EndCol: len(lineAt(otherDoc.Content, v.Line))}, true
+				if v.Name == word || v.Name == wordWithPercent {
+					return Loc{URI: otherUri, Line: v.Line, Col: v.Col, EndCol: getEndCol(v)}, true
 				}
 			}
 		}
-
 		return Loc{}, false
+	}
+
+	// Prefer variable context when cursor is inside %...%
+	if CompletionContextAt(lineBefore) == CompleteVariable {
+		word := strings.ToUpper(WordAtPosition(src, col))
+		return findVarDef(word)
+	}
+
+	// Check if cursor is on a variable definition in a SET command
+	lowerSrc := strings.ToLower(strings.TrimSpace(src))
+	if strings.HasPrefix(lowerSrc, "set ") {
+		word := strings.ToUpper(WordAtPosition(src, col))
+		for _, v := range a.Vars {
+			if v.Name == word && v.Line == line {
+				return findVarDef(word)
+			}
+		}
 	}
 
 	// Check if cursor is on a CALL <file>
@@ -491,30 +561,66 @@ func ReferencesAt(workspace map[string]*Document, uri string, line, col int, inc
 		lineBefore = src[:col]
 	}
 
-	// Variable references (Workspace-wide)
+	// Check if we are on a variable usage or definition
+	word := strings.ToUpper(WordAtPosition(src, col))
+	wordWithPercent := "%" + word
+	isVar := false
+	
 	if CompletionContextAt(lineBefore) == CompleteVariable {
-		name := strings.ToUpper(WordAtPosition(src, col))
-		if name == "" {
+		isVar = true
+	} else if strings.HasPrefix(strings.ToLower(strings.TrimSpace(src)), "set ") {
+		// Check if it's the variable being defined
+		for _, v := range a.Vars {
+			if (v.Name == word || v.Name == wordWithPercent) && v.Line == line {
+				isVar = true
+				break
+			}
+		}
+	} else if strings.HasPrefix(strings.ToLower(strings.TrimSpace(src)), "for ") {
+		for _, v := range a.Vars {
+			if (v.Name == word || v.Name == wordWithPercent) && v.Line == line {
+				isVar = true
+				break
+			}
+		}
+	}
+
+	// Variable references (Workspace-wide)
+	if isVar {
+		if word == "" {
 			return nil
 		}
 		var locs []Loc
+		seenLocs := make(map[string]bool)
+		
+		addLoc := func(l Loc) {
+			key := fmt.Sprintf("%s:%d:%d", l.URI, l.Line, l.Col)
+			if !seenLocs[key] {
+				seenLocs[key] = true
+				locs = append(locs, l)
+			}
+		}
+
 		for wUri, wDoc := range workspace {
 			for _, ref := range wDoc.Analysis.VarRefs {
-				if ref.Name == name {
-					locs = append(locs, Loc{URI: wUri, Line: ref.Line, Col: ref.Col, EndCol: ref.Col + len(ref.Name)})
+				if ref.Name == word || ref.Name == wordWithPercent {
+					addLoc(Loc{URI: wUri, Line: ref.Line, Col: ref.Col, EndCol: ref.Col + len(ref.Name)})
 				}
 			}
 			if includeDecl {
 				for _, v := range wDoc.Analysis.Vars {
-					if v.Name == name {
-						locs = append(locs, Loc{URI: wUri, Line: v.Line, Col: 0, EndCol: len(lineAt(wDoc.Content, v.Line))})
+					if v.Name == word || v.Name == wordWithPercent {
+						endCol := v.Col + len(v.Name)
+						if strings.HasPrefix(v.Name, "%") {
+							endCol++
+						}
+						addLoc(Loc{URI: wUri, Line: v.Line, Col: v.Col, EndCol: endCol})
 					}
 				}
 			}
 		}
 		return locs
 	}
-
 	// Label references (Local to document)
 	name := strings.ToLower(WordAtPosition(src, col))
 	if name == "" {
