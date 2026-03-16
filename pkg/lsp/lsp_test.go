@@ -3,6 +3,8 @@ package lsp
 import (
 	"strings"
 	"testing"
+
+	"github.com/sonroyaalmerol/go-msbatch/pkg/executor"
 )
 
 // ── Analyze ───────────────────────────────────────────────────────────────────
@@ -306,23 +308,23 @@ func TestCommandHelpKnown(t *testing.T) {
 		"timeout", "where", "hostname", "whoami",
 	}
 	for _, name := range known {
-		if CommandHelp(name) == "" {
+		if executor.CommandHelp(name) == "" {
 			t.Errorf("CommandHelp(%q) returned empty string", name)
 		}
 	}
 }
 
 func TestCommandHelpCaseInsensitive(t *testing.T) {
-	lower := CommandHelp("echo")
-	upper := CommandHelp("ECHO")
-	mixed := CommandHelp("Echo")
+	lower := executor.CommandHelp("echo")
+	upper := executor.CommandHelp("ECHO")
+	mixed := executor.CommandHelp("Echo")
 	if lower == "" || lower != upper || lower != mixed {
 		t.Errorf("CommandHelp should be case-insensitive: lower=%q upper=%q mixed=%q", lower, upper, mixed)
 	}
 }
 
 func TestCommandHelpUnknown(t *testing.T) {
-	if h := CommandHelp("notacommand"); h != "" {
+	if h := executor.CommandHelp("notacommand"); h != "" {
 		t.Errorf("expected empty string for unknown command, got %q", h)
 	}
 }

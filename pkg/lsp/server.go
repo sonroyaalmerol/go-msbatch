@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/sonroyaalmerol/go-msbatch/pkg/executor"
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 	"github.com/tliron/glsp/server"
@@ -325,7 +326,7 @@ func (s *Server) hover(_ *glsp.Context, params *protocol.HoverParams) (*protocol
 		return nil, nil
 	}
 
-	help := CommandHelp(word)
+	help := executor.CommandHelp(word)
 	if help == "" {
 		return nil, nil
 	}
@@ -358,7 +359,7 @@ func (s *Server) completion(_ *glsp.Context, params *protocol.CompletionParams) 
 		for _, name := range allCommands {
 			if strings.HasPrefix(name, prefix) {
 				kind := protocol.CompletionItemKindKeyword
-				help := CommandHelp(name)
+				help := executor.CommandHelp(name)
 				item := protocol.CompletionItem{
 					Label: name,
 					Kind:  &kind,

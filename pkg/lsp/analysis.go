@@ -164,7 +164,9 @@ func Analyze(content string) Analysis {
 				char := rest[idx+2]
 				if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') {
 					indent := len(line) - len(strings.TrimLeft(line, " \t"))
-					varCol := indent + 4 + idx
+					// +2 skips the %% sigil so Col points to the letter, consistent
+					// with how %FOO% vars store Col at the first letter after %.
+					varCol := indent + 4 + idx + 2
 					a.Vars = append(a.Vars, VarDef{
 						Name:  "%" + strings.ToUpper(string(char)),
 						Value: "",
@@ -416,7 +418,7 @@ func appendVarRefs(refs []VarRef, line string, lineIdx int) []VarRef {
 				refs = append(refs, VarRef{
 					Name: "%" + strings.ToUpper(string(char)),
 					Line: lineIdx,
-					Col:  offset + pct, // col of first %
+					Col:  offset + pct + 2, // skip %% sigil; Col points to the letter
 				})
 				offset += pct + 3
 				rest = rest[pct+3:]
@@ -467,19 +469,23 @@ func DefinitionAt(workspace map[string]*Document, uri string, line, col int) (Lo
 	findVarDef := func(word string) (Loc, bool) {
 		// word is just the text, e.g. "MYVAR" or "I"
 		wordWithPercent := "%" + word
-		
-		getEndCol := func(v VarDef) int {
+
+		// varLoc converts a VarDef to a Loc whose Col/EndCol span the identifier
+		// letter(s) only — no sigil prefix:
+		//   %%I  → Col points to 'I', EndCol = Col+1  (Name="%I", but Col already at letter)
+		//   %FOO% → Col points to 'F', EndCol = Col+len("FOO")
+		varLoc := func(v VarDef, docURI string) Loc {
 			if strings.HasPrefix(v.Name, "%") {
-				// FOR loop var, length in source is 3 ("%%I")
-				return v.Col + len(v.Name) + 1
+				// FOR loop var: Col already points to the letter; identifier is 1 char.
+				return Loc{URI: docURI, Line: v.Line, Col: v.Col, EndCol: v.Col + 1}
 			}
-			return v.Col + len(v.Name)
+			return Loc{URI: docURI, Line: v.Line, Col: v.Col, EndCol: v.Col + len(v.Name)}
 		}
 
 		// Search current document first
 		for _, v := range a.Vars {
 			if v.Name == word || v.Name == wordWithPercent {
-				return Loc{URI: uri, Line: v.Line, Col: v.Col, EndCol: getEndCol(v)}, true
+				return varLoc(v, uri), true
 			}
 		}
 		// Fallback to searching other documents in workspace
@@ -489,7 +495,7 @@ func DefinitionAt(workspace map[string]*Document, uri string, line, col int) (Lo
 			}
 			for _, v := range otherDoc.Analysis.Vars {
 				if v.Name == word || v.Name == wordWithPercent {
-					return Loc{URI: otherUri, Line: v.Line, Col: v.Col, EndCol: getEndCol(v)}, true
+					return varLoc(v, otherUri), true
 				}
 			}
 		}
@@ -538,7 +544,8 @@ func DefinitionAt(workspace map[string]*Document, uri string, line, col int) (Lo
 	}
 	for _, lbl := range a.Labels {
 		if lbl.Name == word {
-			return Loc{URI: uri, Line: lbl.Line, Col: 0, EndCol: len(lineAt(content, lbl.Line))}, true
+			// lbl.Col already points to the first letter of the name (after ':').
+			return Loc{URI: uri, Line: lbl.Line, Col: lbl.Col, EndCol: lbl.Col + len(lbl.Name)}, true
 		}
 	}
 	return Loc{}, false
@@ -650,7 +657,9 @@ func ReferencesAt(workspace map[string]*Document, uri string, line, col int, inc
 	if includeDecl {
 		for _, lbl := range a.Labels {
 			if lbl.Name == name {
-				locs = append(locs, Loc{URI: uri, Line: lbl.Line, Col: 0, EndCol: len(lineAt(content, lbl.Line))})
+				// lbl.Col points to the first letter (after ':'), matching where
+				// references require the cursor to be placed.
+				locs = append(locs, Loc{URI: uri, Line: lbl.Line, Col: lbl.Col, EndCol: lbl.Col + len(lbl.Name)})
 			}
 		}
 	}
@@ -907,14 +916,16 @@ func SemanticTokens(content string) []SemToken {
 
 		// Variable refs (collected by Analyze, indexed by line above).
 		for _, ref := range varRefsByLine[i] {
-			tokenLen := len(ref.Name)
+			col, tokenLen := ref.Col, len(ref.Name)
 			if strings.HasPrefix(ref.Name, "%") {
-				// %%X style FOR-loop variable: source token is %%X (3 chars).
-				tokenLen = len(ref.Name) + 1
+				// %%X style FOR-loop variable: ref.Col points to the letter (X),
+				// but the full source token is %%X (3 chars starting 2 before).
+				col -= 2
+				tokenLen = 3
 			}
 			tokens = append(tokens, SemToken{
 				Line:      i,
-				Col:       ref.Col,
+				Col:       col,
 				Len:       tokenLen,
 				TokenType: semVariable,
 			})
