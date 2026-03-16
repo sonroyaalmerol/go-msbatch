@@ -1004,6 +1004,66 @@ func TestCodeActionsAtCallMissing(t *testing.T) {
 	}
 }
 
+// ── Feature 6: Extended Diagnostics ──────────────────────────────────────────
+
+func TestDiagnosticsUnusedLabel(t *testing.T) {
+	src := ":unused\necho hi\n"
+	diags := Diagnostics(src)
+	var found bool
+	for _, d := range diags {
+		if d.Sev == SevHint && strings.Contains(d.Message, "unused") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected SevHint diagnostic for unused label, got %v", diags)
+	}
+}
+
+func TestDiagnosticsUsedLabel(t *testing.T) {
+	src := ":start\ngoto start\n"
+	diags := Diagnostics(src)
+	for _, d := range diags {
+		if d.Sev == SevHint && strings.Contains(d.Message, "start") {
+			t.Errorf("unexpected unused-label hint for referenced label: %v", d)
+		}
+	}
+}
+
+func TestDiagnosticsUnusedVar(t *testing.T) {
+	src := "set FOO=bar\necho hello\n"
+	diags := Diagnostics(src)
+	var found bool
+	for _, d := range diags {
+		if d.Sev == SevHint && strings.Contains(d.Message, "FOO") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected SevHint for unused variable FOO, got %v", diags)
+	}
+}
+
+func TestDiagnosticsUsedVar(t *testing.T) {
+	src := "set FOO=bar\necho %FOO%\n"
+	diags := Diagnostics(src)
+	for _, d := range diags {
+		if d.Sev == SevHint && strings.Contains(d.Message, "FOO") {
+			t.Errorf("unexpected unused-var hint for used variable: %v", d)
+		}
+	}
+}
+
+func TestDiagnosticsAllClean(t *testing.T) {
+	src := ":start\nset FOO=bar\necho %FOO%\ngoto start\n"
+	diags := Diagnostics(src)
+	if len(diags) != 0 {
+		t.Errorf("expected 0 diagnostics for clean script, got %d: %v", len(diags), diags)
+	}
+}
+
 func TestSemanticTokensEncoding(t *testing.T) {
 	// Two tokens on different lines: keyword on line 0, variable on line 1
 	src := "echo hi\necho %VAR%\n"

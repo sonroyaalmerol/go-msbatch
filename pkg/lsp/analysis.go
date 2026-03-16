@@ -163,6 +163,43 @@ func Diagnostics(content string) []Diag {
 		}
 	}
 
+	// Unused labels: defined but never referenced by any GOTO or CALL.
+	refCounts := make(map[string]int, len(a.Labels))
+	for _, ref := range a.GotoRefs {
+		refCounts[ref.Name]++
+	}
+	for _, ref := range a.CallRefs {
+		refCounts[ref.Name]++
+	}
+	for _, lbl := range a.Labels {
+		if refCounts[lbl.Name] == 0 {
+			diags = append(diags, Diag{
+				Line:    lbl.Line,
+				Col:     lbl.Col,
+				EndCol:  lbl.Col + len(lbl.Name),
+				Message: "Unused label: " + lbl.Name,
+				Sev:     SevHint,
+			})
+		}
+	}
+
+	// Variables defined but never used: SET VAR=... but %VAR% never appears.
+	varUsed := make(map[string]bool)
+	for _, ref := range a.VarRefs {
+		varUsed[ref.Name] = true
+	}
+	for _, v := range a.Vars {
+		if !varUsed[v.Name] {
+			diags = append(diags, Diag{
+				Line:    v.Line,
+				Col:     v.Col,
+				EndCol:  v.Col + len(v.Name),
+				Message: "Variable defined but never used: " + v.Name,
+				Sev:     SevHint,
+			})
+		}
+	}
+
 	return diags
 }
 
