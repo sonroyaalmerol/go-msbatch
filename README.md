@@ -12,6 +12,14 @@ Download the latest binary for your platform from the [releases page](https://gi
 go install github.com/sonroyaalmerol/go-msbatch/cmd/msbatch@latest
 ```
 
+### LSP server
+
+```bash
+go install github.com/sonroyaalmerol/go-msbatch/cmd/msbatch-lsp@latest
+```
+
+See [docs/lsp.md](docs/lsp.md) for editor setup and a full feature list.
+
 ## Usage
 
 ```bash
@@ -60,6 +68,7 @@ Full documentation lives in [`docs/`](docs/index.md).
 
 - [Architecture & Processing Phases](docs/architecture.md)
 - [Cross-Platform Behaviour](docs/cross-platform.md)
+- [Language Server (msbatch-lsp)](docs/lsp.md)
 - [Variables & Expansion](docs/language/variables.md)
 - [Arithmetic — SET /A](docs/language/arithmetic.md)
 - [Control Flow — IF, GOTO, CALL, EXIT, SHIFT](docs/language/control-flow.md)

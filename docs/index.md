@@ -6,6 +6,7 @@ A cross-platform Windows CMD/Batch interpreter written in Go.
 
 - [Architecture & Processing Phases](architecture.md)
 - [Cross-Platform Behaviour](cross-platform.md)
+- [Language Server (msbatch-lsp)](lsp.md)
 
 ## Language Features
 
