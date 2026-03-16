@@ -33,16 +33,16 @@ builds:
     binary: msbatch-lsp
     env:
       - CGO_ENABLED=0
+    # Windows is excluded: tliron/kutil v0.3.11 calls termenv methods that only
+    # exist as package-level functions in termenv v0.15+, causing a build failure
+    # when cross-compiling for Windows. Windows users can build from source or
+    # use WSL until the upstream dependency is fixed.
     goos:
       - linux
       - darwin
-      - windows
     goarch:
       - amd64
       - arm64
-    ignore:
-      - goos: windows
-        goarch: arm64
     ldflags:
       - -s -w
 
