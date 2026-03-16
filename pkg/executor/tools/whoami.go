@@ -3,6 +3,7 @@ package tools
 import (
 	"fmt"
 	"os/user"
+	"slices"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
@@ -14,12 +15,10 @@ WHOAMI
 `
 
 func Whoami(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	for _, a := range cmd.Args {
-		if a == "/?" {
-			fmt.Fprint(p.Stdout, whoamiHelp)
-			p.Env.Set("ERRORLEVEL", "0")
-			return nil
-		}
+	if slices.Contains(cmd.Args, "/?") {
+		fmt.Fprint(p.Stdout, whoamiHelp)
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
 	}
 	u, err := user.Current()
 	if err != nil {

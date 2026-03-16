@@ -1,23 +1,41 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/chzyer/readline"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/executor"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
 func main() {
-	if len(os.Args) > 1 {
-		runFile(os.Args[1])
+	args := os.Args[1:]
+	if len(args) == 0 {
+		runInteractive()
 		return
 	}
-	runInteractive()
+	switch strings.ToUpper(args[0]) {
+	case "/C":
+		// Run command string then exit.
+		if len(args) > 1 {
+			runCommand(strings.Join(args[1:], " "))
+		}
+	case "/K":
+		// Run command string then drop into interactive mode.
+		if len(args) > 1 {
+			runCommand(strings.Join(args[1:], " "))
+		}
+		runInteractive()
+	default:
+		runFile(args[0])
+	}
 }
 
+// runFile executes a batch script file.
 func runFile(filename string) {
 	content, err := os.ReadFile(filename)
 	if err != nil {
@@ -36,25 +54,185 @@ func runFile(filename string) {
 	}
 }
 
-func runInteractive() {
+// runCommand executes a single command string and exits.
+func runCommand(cmdStr string) {
 	env := processor.NewEnvironment(false)
 	proc := processor.New(env, nil, executor.New())
-	scanner := bufio.NewScanner(os.Stdin)
+	nodes := processor.ParseExpanded(cmdStr)
+	if err := proc.Execute(nodes); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	}
+}
 
-	fmt.Println(executor.VersionString())
-	fmt.Println()
+// shellCompleter implements readline.AutoCompleter.
+// First word → complete registered command names.
+// Subsequent words → complete file/directory paths.
+type shellCompleter struct {
+	commands []string
+}
+
+func newShellCompleter(reg *executor.Registry) *shellCompleter {
+	return &shellCompleter{commands: reg.Names()}
+}
+
+func (c *shellCompleter) Do(line []rune, pos int) ([][]rune, int) {
+	lineStr := string(line[:pos])
+	endsSpace := strings.HasSuffix(lineStr, " ") || strings.HasSuffix(lineStr, "\t")
+	words := strings.Fields(lineStr)
+	isCmd := len(words) == 0 || (len(words) == 1 && !endsSpace)
+
+	prefix := ""
+	if !endsSpace && len(words) > 0 {
+		prefix = words[len(words)-1]
+	}
+
+	if isCmd {
+		lower := strings.ToLower(prefix)
+		var matches [][]rune
+		for _, name := range c.commands {
+			if strings.HasPrefix(name, lower) {
+				matches = append(matches, []rune(name[len(lower):]))
+			}
+		}
+		return matches, len([]rune(prefix))
+	}
+
+	return pathComplete(prefix)
+}
+
+func pathComplete(prefix string) ([][]rune, int) {
+	var dir, base string
+	if prefix == "" || strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, string(os.PathSeparator)) {
+		dir = prefix
+		if dir == "" {
+			dir = "."
+		}
+		base = ""
+	} else {
+		dir = filepath.Dir(prefix)
+		base = filepath.Base(prefix)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, 0
+	}
+
+	baseLower := strings.ToLower(base)
+	var matches [][]rune
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(strings.ToLower(name), baseLower) {
+			suffix := name[len(base):]
+			if e.IsDir() {
+				suffix += "/"
+			}
+			matches = append(matches, []rune(suffix))
+		}
+	}
+	return matches, len([]rune(base))
+}
+
+func runInteractive() {
+	env := processor.NewEnvironment(false)
+	reg := executor.New()
+	proc := processor.New(env, nil, reg)
+	proc.Echo = false // readline already shows typed input; suppress batch-style echo
+
+	// Default CMD-style prompt: "path> "
+	if _, ok := proc.Env.Get("PROMPT"); !ok {
+		proc.Env.Set("PROMPT", "$P$G ")
+	}
+
+	histFile := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		histFile = filepath.Join(home, ".msbatch_history")
+	}
+
+	rl, err := readline.NewEx(&readline.Config{
+		HistoryFile:       histFile,
+		AutoComplete:      newShellCompleter(reg),
+		InterruptPrompt:   "^C",
+		EOFPrompt:         "exit",
+		HistorySearchFold: true,
+	})
+	if err != nil {
+		// Not a TTY or readline unavailable — fall back to plain scanner.
+		runInteractiveFallback(proc)
+		return
+	}
+	defer rl.Close()
+
+	// Wire the processor I/O through readline so that output doesn't
+	// corrupt the prompt line when subprocesses write to the terminal.
+	proc.Stdout = rl.Stdout()
+	proc.Stderr = rl.Stdout() // keep stderr on the same managed writer
+	proc.Stdin = os.Stdin
+
+	fmt.Fprintln(rl.Stdout(), executor.VersionString())
+	fmt.Fprintln(rl.Stdout())
 
 	for {
-		pwd, _ := os.Getwd()
-		fmt.Printf("%s> ", pwd)
-		if !scanner.Scan() {
+		promptStr, _ := proc.Env.Get("PROMPT")
+		rl.SetPrompt(proc.ExpandPrompt(promptStr))
+
+		line, err := rl.Readline()
+		if err == readline.ErrInterrupt {
+			// Ctrl+C — cancel current input, show a new prompt.
+			continue
+		}
+		if err != nil {
+			// Ctrl+D / EOF.
+			fmt.Fprintln(rl.Stdout())
 			break
 		}
-		line := scanner.Text()
+
+		// Handle CMD-style ^ line continuation.
+		// A trailing ^ (optionally followed by spaces) causes the shell to
+		// show "More? " and append the next line before parsing.
+		for {
+			trimmed := strings.TrimRight(line, " \t")
+			if !strings.HasSuffix(trimmed, "^") {
+				break
+			}
+			rl.SetPrompt("More? ")
+			cont, err := rl.Readline()
+			if err != nil {
+				break
+			}
+			line = trimmed[:len(trimmed)-1] + cont
+		}
+
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
 
+		nodes := processor.ParseExpanded(line)
+		if err := proc.Execute(nodes); err != nil {
+			fmt.Fprintf(rl.Stdout(), "Error: %v\n", err)
+		}
+	}
+}
+
+// runInteractiveFallback is the non-TTY / no-readline fallback.
+func runInteractiveFallback(proc *processor.Processor) {
+	proc.Echo = false
+	fmt.Println(executor.VersionString())
+	fmt.Println()
+
+	buf := make([]byte, 4096)
+	for {
+		promptStr, _ := proc.Env.Get("PROMPT")
+		fmt.Print(proc.ExpandPrompt(promptStr))
+
+		n, err := os.Stdin.Read(buf)
+		if n == 0 || err == io.EOF {
+			break
+		}
+		line := strings.TrimRight(string(buf[:n]), "\r\n")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
 		nodes := processor.ParseExpanded(line)
 		if err := proc.Execute(nodes); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)

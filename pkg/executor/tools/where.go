@@ -3,6 +3,7 @@ package tools
 import (
 	"fmt"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
@@ -19,12 +20,10 @@ WHERE [/Q] name
 
 func Where(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// WHERE [/Q] <name>
-	for _, a := range cmd.Args {
-		if a == "/?" {
-			fmt.Fprint(p.Stdout, whereHelp)
-			p.Env.Set("ERRORLEVEL", "0")
-			return nil
-		}
+	if slices.Contains(cmd.Args, "/?") {
+		fmt.Fprint(p.Stdout, whereHelp)
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
 	}
 	if len(cmd.Args) == 0 {
 		fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")

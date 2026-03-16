@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
@@ -28,12 +29,10 @@ If a filename is not specified, FIND searches text piped from another command.
 
 func Find(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// FIND [/V] [/C] [/N] [/I] "string" [file...]
-	for _, a := range cmd.Args {
-		if a == "/?" {
-			fmt.Fprint(p.Stdout, findHelp)
-			p.Env.Set("ERRORLEVEL", "0")
-			return nil
-		}
+	if slices.Contains(cmd.Args, "/?") {
+		fmt.Fprint(p.Stdout, findHelp)
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
 	}
 	if len(cmd.Args) == 0 {
 		fmt.Fprintf(p.Stderr, "Required parameter missing\n")

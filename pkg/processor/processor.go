@@ -20,11 +20,12 @@ type Processor struct {
 	Stdout   io.Writer
 	Stdin    io.Reader
 	Stderr   io.Writer
-	Nodes    []parser.Node
-	PC       int
-	Exited   bool
-	DirStack []string        // directory stack for PUSHD/POPD
-	Executor CommandExecutor // handles non-flow-control command dispatch
+	Nodes     []parser.Node
+	PC        int
+	Exited    bool
+	CallDepth int             // incremented inside CALL :label frames
+	DirStack  []string        // directory stack for PUSHD/POPD
+	Executor  CommandExecutor // handles non-flow-control command dispatch
 }
 
 // New creates a Processor. exec handles command dispatch; pass nil when only

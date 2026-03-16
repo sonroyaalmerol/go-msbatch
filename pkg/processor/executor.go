@@ -175,10 +175,12 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 				p.Args = oldArgs
 				return err
 			}
+			p.CallDepth++
 			for p.PC < len(p.Nodes) && !p.Exited {
 				node := p.Nodes[p.PC]
 				p.PC++
 				if err := p.ExecuteNode(node); err != nil {
+					p.CallDepth--
 					if err.Error() == "EXIT_LOCAL" {
 						p.PC = oldPC
 						p.Args = oldArgs
@@ -187,6 +189,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 					return err
 				}
 			}
+			p.CallDepth--
 			p.PC = oldPC
 			p.Args = oldArgs
 			return nil
@@ -207,9 +210,15 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		}
 		p.Env.Set("ERRORLEVEL", strconv.Itoa(code))
 		if isLocal {
-			return fmt.Errorf("EXIT_LOCAL")
+			// EXIT /B — unwind the current CALL :label frame if one exists.
+			// The CALL handler catches EXIT_LOCAL and restores its context.
+			// If we are NOT inside a CALL (p.CallDepth == 0), fall through to
+			// os.Exit so it behaves identically to plain EXIT at the top level.
+			if p.CallDepth > 0 {
+				return fmt.Errorf("EXIT_LOCAL")
+			}
 		}
-		p.Exited = true
+		os.Exit(code)
 		return nil
 	case "setlocal":
 		p.Env.Push()

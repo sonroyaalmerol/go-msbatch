@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,12 +22,10 @@ TIMEOUT /T seconds [/NOBREAK]
 
 func Timeout(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// TIMEOUT /T <seconds> [/NOBREAK]
-	for _, a := range cmd.Args {
-		if a == "/?" {
-			fmt.Fprint(p.Stdout, timeoutHelp)
-			p.Env.Set("ERRORLEVEL", "0")
-			return nil
-		}
+	if slices.Contains(cmd.Args, "/?") {
+		fmt.Fprint(p.Stdout, timeoutHelp)
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
 	}
 	seconds := 0
 	args := cmd.Args

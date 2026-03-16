@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -239,12 +240,10 @@ Exit codes (bitwise OR):
 `
 
 func Robocopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	for _, a := range cmd.Args {
-		if a == "/?" {
-			fmt.Fprint(p.Stdout, robocopyHelp)
-			p.Env.Set("ERRORLEVEL", "0")
-			return nil
-		}
+	if slices.Contains(cmd.Args, "/?") {
+		fmt.Fprint(p.Stdout, robocopyHelp)
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
 	}
 	if len(cmd.Args) < 2 {
 		fmt.Fprintf(p.Stderr, "ERROR: Invalid number of parameters.\n")

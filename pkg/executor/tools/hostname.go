@@ -3,6 +3,7 @@ package tools
 import (
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
@@ -14,12 +15,10 @@ HOSTNAME
 `
 
 func Hostname(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	for _, a := range cmd.Args {
-		if a == "/?" {
-			fmt.Fprint(p.Stdout, hostnameHelp)
-			p.Env.Set("ERRORLEVEL", "0")
-			return nil
-		}
+	if slices.Contains(cmd.Args, "/?") {
+		fmt.Fprint(p.Stdout, hostnameHelp)
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
 	}
 	h, err := os.Hostname()
 	if err != nil {

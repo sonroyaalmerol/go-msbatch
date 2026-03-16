@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -23,12 +24,10 @@ SORT [/R] [[path]filename]
 
 func Sort(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// SORT [/R] [/+n] [file]
-	for _, a := range cmd.Args {
-		if a == "/?" {
-			fmt.Fprint(p.Stdout, sortHelp)
-			p.Env.Set("ERRORLEVEL", "0")
-			return nil
-		}
+	if slices.Contains(cmd.Args, "/?") {
+		fmt.Fprint(p.Stdout, sortHelp)
+		p.Env.Set("ERRORLEVEL", "0")
+		return nil
 	}
 	reverse := false
 	var reader io.Reader

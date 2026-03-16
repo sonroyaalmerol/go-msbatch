@@ -28,6 +28,7 @@
 package executor
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/executor/tools"
@@ -80,6 +81,16 @@ func (r *Registry) SetFallback(h processor.CommandExecutor) {
 	r.fallback = h
 }
 
+// Names returns a sorted list of all registered command names.
+func (r *Registry) Names() []string {
+	names := make([]string, 0, len(r.handlers))
+	for name := range r.handlers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // ExecCommand looks up cmd.Name and calls the registered handler.
 // Falls through to the fallback executor when the name is not registered.
 func (r *Registry) ExecCommand(p *processor.Processor, cmd *parser.SimpleCommand) error {
@@ -130,6 +141,7 @@ func registerBuiltins(r *Registry) {
 	r.HandleFunc("rename", cmdRen)
 	r.HandleFunc("more", cmdMore)
 	r.HandleFunc("start", cmdStart)
+	// "exit" is handled directly by the processor's flow-control layer.
 
 	// ---- external commands with native cross-platform implementations ----
 	r.HandleFunc("hostname", tools.Hostname)
