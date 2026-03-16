@@ -55,6 +55,7 @@ func (s *Server) Run() error {
 		TextDocumentReferences:     s.references,
 		TextDocumentPrepareRename:  s.prepareRename,
 		TextDocumentRename:         s.rename,
+		TextDocumentCodeLens:       s.codeLens,
 	}
 	srv := server.NewServer(&handler, serverName, false)
 	return srv.RunStdio()
@@ -137,6 +138,7 @@ func (s *Server) initialize(_ *glsp.Context, _ *protocol.InitializeParams) (any,
 			DefinitionProvider:     true,
 			ReferencesProvider:     true,
 			RenameProvider:         &protocol.RenameOptions{PrepareProvider: ptr(true)},
+			CodeLensProvider:       &protocol.CodeLensOptions{},
 		},
 		ServerInfo: &protocol.InitializeResultServerInfo{
 			Name:    serverName,
@@ -348,6 +350,36 @@ func (s *Server) references(_ *glsp.Context, params *protocol.ReferenceParams) (
 		}
 	}
 	return locs, nil
+}
+
+func (s *Server) codeLens(_ *glsp.Context, params *protocol.CodeLensParams) ([]protocol.CodeLens, error) {
+	content, ok := s.load(string(params.TextDocument.URI))
+	if !ok {
+		return nil, nil
+	}
+	lenses := CodeLenses(content)
+	if len(lenses) == 0 {
+		return nil, nil
+	}
+	result := make([]protocol.CodeLens, len(lenses))
+	for i, l := range lenses {
+		var title string
+		switch l.RefCount {
+		case 0:
+			title = "0 references"
+		case 1:
+			title = "1 reference"
+		default:
+			title = fmt.Sprintf("%d references", l.RefCount)
+		}
+		result[i] = protocol.CodeLens{
+			Range: lineRange(uint32(l.Line)),
+			Command: &protocol.Command{
+				Title: title,
+			},
+		}
+	}
+	return result, nil
 }
 
 func (s *Server) prepareRename(_ *glsp.Context, params *protocol.PrepareRenameParams) (any, error) {

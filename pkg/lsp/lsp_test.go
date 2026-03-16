@@ -757,3 +757,56 @@ func TestPrepareRenameAtUnknown(t *testing.T) {
 		t.Error("expected ok=false for non-symbol")
 	}
 }
+
+// ── Feature 2: Code Lens ──────────────────────────────────────────────────────
+
+func TestCodeLensesNoLabels(t *testing.T) {
+	src := "echo hello\ngoto missing\n"
+	lenses := CodeLenses(src)
+	if len(lenses) != 0 {
+		t.Errorf("expected 0 lenses, got %d", len(lenses))
+	}
+}
+
+func TestCodeLensesWithRefs(t *testing.T) {
+	src := ":loop\ngoto loop\ngoto loop\n"
+	lenses := CodeLenses(src)
+	if len(lenses) != 1 {
+		t.Fatalf("expected 1 lens, got %d", len(lenses))
+	}
+	if lenses[0].LabelName != "loop" {
+		t.Errorf("expected label=loop, got %q", lenses[0].LabelName)
+	}
+	if lenses[0].RefCount != 2 {
+		t.Errorf("expected RefCount=2, got %d", lenses[0].RefCount)
+	}
+}
+
+func TestCodeLensesMultipleLabels(t *testing.T) {
+	src := ":a\ngoto a\n:b\ncall :b\ngoto b\n"
+	lenses := CodeLenses(src)
+	if len(lenses) != 2 {
+		t.Fatalf("expected 2 lenses, got %d", len(lenses))
+	}
+	counts := map[string]int{}
+	for _, l := range lenses {
+		counts[l.LabelName] = l.RefCount
+	}
+	if counts["a"] != 1 {
+		t.Errorf("expected a=1, got %d", counts["a"])
+	}
+	if counts["b"] != 2 {
+		t.Errorf("expected b=2, got %d", counts["b"])
+	}
+}
+
+func TestCodeLensesUnusedLabel(t *testing.T) {
+	src := ":unused\necho hi\n"
+	lenses := CodeLenses(src)
+	if len(lenses) != 1 {
+		t.Fatalf("expected 1 lens, got %d", len(lenses))
+	}
+	if lenses[0].RefCount != 0 {
+		t.Errorf("expected RefCount=0 for unused label, got %d", lenses[0].RefCount)
+	}
+}

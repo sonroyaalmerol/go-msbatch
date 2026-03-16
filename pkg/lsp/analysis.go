@@ -395,6 +395,37 @@ func ReferencesAt(content string, line, col int, includeDecl bool) []Loc {
 	return locs
 }
 
+// ── Code Lens ─────────────────────────────────────────────────────────────────
+
+// CodeLensData holds data for a single code lens annotation on a label definition.
+type CodeLensData struct {
+	Line      int    // line of the :label definition
+	LabelName string
+	RefCount  int // total GOTO + CALL refs
+}
+
+// CodeLenses returns one CodeLensData per label in the document.
+func CodeLenses(content string) []CodeLensData {
+	a := Analyze(content)
+	// count refs per label name
+	refCounts := make(map[string]int, len(a.Labels))
+	for _, ref := range a.GotoRefs {
+		refCounts[ref.Name]++
+	}
+	for _, ref := range a.CallRefs {
+		refCounts[ref.Name]++
+	}
+	lenses := make([]CodeLensData, 0, len(a.Labels))
+	for _, lbl := range a.Labels {
+		lenses = append(lenses, CodeLensData{
+			Line:      lbl.Line,
+			LabelName: lbl.Name,
+			RefCount:  refCounts[lbl.Name],
+		})
+	}
+	return lenses
+}
+
 // ── Rename ────────────────────────────────────────────────────────────────────
 
 // TextEdit represents a single text replacement in the document.
