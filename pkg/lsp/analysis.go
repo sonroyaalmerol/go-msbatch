@@ -40,6 +40,8 @@ type VarRef struct {
 	Line      int  // 0-based
 	Col       int  // 0-based start column of the name (the char after the opening sigil)
 	IsDelayed bool // true when this is a !VAR! delayed-expansion reference
+	ExprLen   int  // length of the full expression between sigils when a :modifier is present
+	           // (e.g. len("STR:~0,5") for %STR:~0,5%); 0 means same as len(Name)
 }
 
 // Loc is a compact source range returned by DefinitionAt / ReferencesAt.
@@ -384,13 +386,20 @@ func Diagnostics(content string) []Diag {
 
 	// Variables used but never defined.
 	for _, ref := range a.VarRefs {
+		// exprEndCol returns the end column covering the full expression (including any :modifier).
+		exprEndCol := func(startCol int) int {
+			if ref.ExprLen > 0 {
+				return startCol + ref.ExprLen
+			}
+			return startCol + len(ref.Name)
+		}
 		if ref.IsDelayed {
 			// !VAR! delayed-expansion reference.
 			if !a.DelayedExpansionEnabled {
 				diags = append(diags, Diag{
 					Line:    ref.Line,
 					Col:     ref.Col - 1, // include the leading '!'
-					EndCol:  ref.Col + len(ref.Name) + 1,
+					EndCol:  exprEndCol(ref.Col) + 1,
 					Message: "Delayed expansion used but SETLOCAL ENABLEDELAYEDEXPANSION not found",
 					Sev:     SevWarning,
 				})
@@ -398,7 +407,7 @@ func Diagnostics(content string) []Diag {
 				diags = append(diags, Diag{
 					Line:    ref.Line,
 					Col:     ref.Col - 1,
-					EndCol:  ref.Col + len(ref.Name) + 1,
+					EndCol:  exprEndCol(ref.Col) + 1,
 					Message: "Variable not defined in this file: " + ref.Name,
 					Sev:     SevHint,
 				})
@@ -422,14 +431,14 @@ func Diagnostics(content string) []Diag {
 				})
 			}
 		} else {
-			// SET-style %VAR%: hint if not defined anywhere in this file.
+			// SET-style %VAR% (possibly with :modifier): hint if not defined anywhere in this file.
 			// Suppressed for built-in CMD vars and when the script makes external
 			// CALL file.bat references (those scripts can set any variable).
 			if !setDefined[ref.Name] && !cmdBuiltinVars[ref.Name] && !hasFileCalls {
 				diags = append(diags, Diag{
 					Line:    ref.Line,
 					Col:     ref.Col,
-					EndCol:  ref.Col + len(ref.Name),
+					EndCol:  exprEndCol(ref.Col),
 					Message: "Variable not defined in this file: " + ref.Name,
 					Sev:     SevHint,
 				})
@@ -761,15 +770,27 @@ func appendVarRefs(refs []VarRef, line string, lineIdx int) []VarRef {
 			break
 		}
 		name := after[:end]
+		advance := pct + 1 + end + 1 // past closing %
 		// Skip empty (%%→escaped %) and positional args (%0–%9)
 		if name != "" && (name[0] < '0' || name[0] > '9') {
-			refs = append(refs, VarRef{
-				Name: strings.ToUpper(name),
-				Line: lineIdx,
-				Col:  offset + pct + 1, // col of first char of name (after %)
-			})
+			// Skip tilde-modifier positional-param patterns like %~n0, %~$PATH:1
+			// that got captured because a later % on the line closed the token.
+			if name[0] != '~' {
+				// Strip :modifier suffix — %VAR:~start,len% / %VAR:old=new% → base name before ':'
+				baseName := name
+				var exprLen int
+				if i := strings.IndexByte(name, ':'); i > 0 {
+					baseName = name[:i]
+					exprLen = len(name)
+				}
+				refs = append(refs, VarRef{
+					Name:    strings.ToUpper(baseName),
+					Line:    lineIdx,
+					Col:     offset + pct + 1, // col of first char of name (after %)
+					ExprLen: exprLen,
+				})
+			}
 		}
-		advance := pct + 1 + end + 1 // past closing %
 		offset += advance
 		rest = rest[advance:]
 	}
@@ -788,16 +809,24 @@ func appendVarRefs(refs []VarRef, line string, lineIdx int) []VarRef {
 			break
 		}
 		name := after[:end]
-		// Skip empty !!→escaped ! ; name must be a valid identifier
+		advance := bang + 1 + end + 1 // past closing !
+		// Skip empty !!→escaped !
 		if name != "" {
+			// Strip :modifier suffix — !VAR:~start,len! / !VAR:old=new!
+			baseName := name
+			var exprLen int
+			if i := strings.IndexByte(name, ':'); i > 0 {
+				baseName = name[:i]
+				exprLen = len(name)
+			}
 			refs = append(refs, VarRef{
-				Name:      strings.ToUpper(name),
+				Name:      strings.ToUpper(baseName),
 				Line:      lineIdx,
 				Col:       offset + bang + 1, // col of first char of name (after !)
 				IsDelayed: true,
+				ExprLen:   exprLen,
 			})
 		}
-		advance := bang + 1 + end + 1 // past closing !
 		offset += advance
 		rest = rest[advance:]
 	}
@@ -1343,11 +1372,16 @@ func SemanticTokens(content string) []SemToken {
 
 		// Variable refs (collected by Analyze, indexed by line above).
 		for _, ref := range varRefsByLine[i] {
-			col, tokenLen := ref.Col, len(ref.Name)
+			// exprLen: length of the full expression between sigils (e.g. "STR:~0,5" = 8)
+			exprLen := len(ref.Name)
+			if ref.ExprLen > 0 {
+				exprLen = ref.ExprLen
+			}
+			col, tokenLen := ref.Col, exprLen
 			if ref.IsDelayed {
-				// !NAME! — ref.Col points to first char of name; token is !NAME! (name+2 chars).
+				// !NAME[modifier]! — ref.Col points to first char of name; token is !expr! (exprLen+2 chars).
 				col -= 1
-				tokenLen = len(ref.Name) + 2
+				tokenLen = exprLen + 2
 			} else if strings.HasPrefix(ref.Name, "%") {
 				// %%X style FOR-loop variable: ref.Col points to the letter (X),
 				// but the full source token is %%X (3 chars starting 2 before).

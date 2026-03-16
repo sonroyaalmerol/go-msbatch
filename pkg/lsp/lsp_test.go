@@ -1770,6 +1770,93 @@ func TestSemanticTokensDelayedVar(t *testing.T) {
 	}
 }
 
+// ── Variable modifier tests (%VAR:~start,len%, %VAR:old=new%) ─────────────────
+
+func TestAnalyzeVarRefSubstring(t *testing.T) {
+	// %STR:~0,5% should be recorded as a ref to "STR", not "STR:~0,5".
+	a := Analyze("set STR=HelloWorld\necho %STR:~0,5%\n")
+	for _, ref := range a.VarRefs {
+		if ref.Name == "STR:~0,5" {
+			t.Error("VarRef.Name should be 'STR', not 'STR:~0,5'")
+		}
+	}
+	var found bool
+	for _, ref := range a.VarRefs {
+		if ref.Name == "STR" {
+			found = true
+			if ref.ExprLen != len("STR:~0,5") {
+				t.Errorf("ExprLen: expected %d, got %d", len("STR:~0,5"), ref.ExprLen)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected VarRef with Name='STR'")
+	}
+}
+
+func TestAnalyzeVarRefReplace(t *testing.T) {
+	// %REPLACE:FOX=CAT% should be recorded as a ref to "REPLACE".
+	a := Analyze("set REPLACE=The quick brown fox\necho %REPLACE:fox=cat%\n")
+	for _, ref := range a.VarRefs {
+		if len(ref.Name) > 0 && ref.Name[0] != '%' && strings.Contains(ref.Name, ":") {
+			t.Errorf("VarRef.Name should not contain colon: %q", ref.Name)
+		}
+	}
+	var found bool
+	for _, ref := range a.VarRefs {
+		if ref.Name == "REPLACE" && ref.ExprLen > 0 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected VarRef with Name='REPLACE' and ExprLen>0")
+	}
+}
+
+func TestDiagnosticsNoFalsePositiveSubstring(t *testing.T) {
+	// %STR:~0,5% should not produce a "not defined" diagnostic when STR is defined.
+	src := "set STR=HelloWorld\necho %STR:~0,5%\necho %STR:~-5%\necho %STR:~2,3%\n"
+	diags := Diagnostics(src)
+	for _, d := range diags {
+		if strings.Contains(d.Message, "not defined") {
+			t.Errorf("unexpected 'not defined' diagnostic: %v", d)
+		}
+	}
+}
+
+func TestDiagnosticsNoFalsePositiveReplace(t *testing.T) {
+	// %REPLACE:fox=cat% / %REPLACE: =_% should not produce "not defined" diagnostics.
+	src := "set REPLACE=The quick brown fox\necho %REPLACE:fox=cat%\necho %REPLACE: =_%\necho %REPLACE:*quick =%\n"
+	diags := Diagnostics(src)
+	for _, d := range diags {
+		if strings.Contains(d.Message, "not defined") {
+			t.Errorf("unexpected 'not defined' diagnostic: %v", d)
+		}
+	}
+}
+
+func TestVarRefModifierCountsAsUsed(t *testing.T) {
+	// %STR:~0,5% should suppress "defined but never used" for STR.
+	src := "set STR=HelloWorld\necho %STR:~0,5%\n"
+	diags := Diagnostics(src)
+	for _, d := range diags {
+		if strings.Contains(d.Message, "STR") && strings.Contains(d.Message, "never used") {
+			t.Errorf("unexpected 'never used' hint for var used via modifier: %v", d)
+		}
+	}
+}
+
+func TestTildePositionalNotCapturedAsFalseVar(t *testing.T) {
+	// %~n0 %~x0 on same line used to create a bogus VarRef for "~n0 path=".
+	src := "echo name=%~n0 path=%~dp0\n"
+	a := Analyze(src)
+	for _, ref := range a.VarRefs {
+		if strings.HasPrefix(ref.Name, "~") {
+			t.Errorf("tilde-modifier positional param should not be a VarRef, got Name=%q", ref.Name)
+		}
+	}
+}
+
 // ── Scoping framework tests ───────────────────────────────────────────────────
 
 // TestReferencesForVarDoesNotCrossFiles verifies that ReferencesAt for a FOR
