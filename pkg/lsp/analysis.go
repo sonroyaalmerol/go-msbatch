@@ -6,7 +6,6 @@ import (
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/executor"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/lexer"
-	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
 )
 
 // LabelDef is a :label definition found in the document.
@@ -728,21 +727,17 @@ type FoldRange struct {
 // Each label section (from :label to just before the next :label or end of file)
 // becomes a fold if it has more than 1 line.
 func FoldingRanges(content string) []FoldRange {
+	a := Analyze(content)
+	if len(a.Labels) == 0 {
+		return nil
+	}
+
 	lines := strings.Split(content, "\n")
 	total := len(lines)
 
-	// Find label definition lines
-	var labelLines []int
-	for i, raw := range lines {
-		line := strings.TrimRight(raw, "\r")
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, ":") && !strings.HasPrefix(trimmed, "::") {
-			labelLines = append(labelLines, i)
-		}
-	}
-
-	if len(labelLines) == 0 {
-		return nil
+	labelLines := make([]int, len(a.Labels))
+	for i, lbl := range a.Labels {
+		labelLines[i] = lbl.Line
 	}
 
 	var folds []FoldRange
@@ -816,6 +811,12 @@ var batchKeywords = func() map[string]bool {
 func SemanticTokens(content string) []SemToken {
 	a := Analyze(content)
 	lines := strings.Split(content, "\n")
+
+	// Index VarRefs by line for O(1) per-line lookup.
+	varRefsByLine := make(map[int][]VarRef, len(a.VarRefs))
+	for _, ref := range a.VarRefs {
+		varRefsByLine[ref.Line] = append(varRefsByLine[ref.Line], ref)
+	}
 
 	// Build lookup sets for goto/call refs by (line,col)
 	type lineCol struct{ line, col int }
@@ -904,31 +905,19 @@ func SemanticTokens(content string) []SemToken {
 			}
 		}
 
-		// Scan for %VAR% occurrences
-		rest := line
-		offset := 0
-		for {
-			pct := strings.Index(rest, "%")
-			if pct < 0 {
-				break
+		// Variable refs (collected by Analyze, indexed by line above).
+		for _, ref := range varRefsByLine[i] {
+			tokenLen := len(ref.Name)
+			if strings.HasPrefix(ref.Name, "%") {
+				// %%X style FOR-loop variable: source token is %%X (3 chars).
+				tokenLen = len(ref.Name) + 1
 			}
-			after := rest[pct+1:]
-			end := strings.Index(after, "%")
-			if end < 0 {
-				break
-			}
-			name := after[:end]
-			if name != "" && (name[0] < '0' || name[0] > '9') {
-				tokens = append(tokens, SemToken{
-					Line:      i,
-					Col:       offset + pct + 1,
-					Len:       len(name),
-					TokenType: semVariable,
-				})
-			}
-			advance := pct + 1 + end + 1
-			offset += advance
-			rest = rest[advance:]
+			tokens = append(tokens, SemToken{
+				Line:      i,
+				Col:       ref.Col,
+				Len:       tokenLen,
+				TokenType: semVariable,
+			})
 		}
 
 		// Scan for quoted strings "..."
@@ -1206,43 +1195,3 @@ func PrepareRenameAt(content string, line, col int) (Loc, bool) {
 	return Loc{}, false
 }
 
-// parseNodes is a thin wrapper to lex+parse a content string.
-func parseNodes(content string) []parser.Node {
-	bl := lexer.New(content)
-	pr := parser.New(bl)
-	return pr.Parse()
-}
-
-// collectLabels walks the AST and collects all LabelNode names (lower-cased).
-// Used as a cross-check alongside the text-based scan.
-func collectLabelsFromAST(nodes []parser.Node) []string {
-	var out []string
-	var walk func([]parser.Node)
-	walk = func(ns []parser.Node) {
-		for _, n := range ns {
-			switch v := n.(type) {
-			case *parser.LabelNode:
-				out = append(out, strings.ToLower(v.Name))
-			case *parser.Block:
-				walk(v.Body)
-			case *parser.IfNode:
-				if v.Then != nil {
-					walk([]parser.Node{v.Then})
-				}
-				if v.Else != nil {
-					walk([]parser.Node{v.Else})
-				}
-			case *parser.ForNode:
-				if v.Do != nil {
-					walk([]parser.Node{v.Do})
-				}
-			case *parser.BinaryNode:
-				walk([]parser.Node{v.Left, v.Right})
-			case *parser.PipeNode:
-				walk([]parser.Node{v.Left, v.Right})
-			}
-		}
-	}
-	walk(nodes)
-	return out
-}

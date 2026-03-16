@@ -11,10 +11,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
-	"github.com/sonroyaalmerol/go-msbatch/pkg/executor"
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 	"github.com/tliron/glsp/server"
@@ -23,7 +23,15 @@ import (
 const serverName = "msbatch-lsp"
 
 // allCommands is the list of recognised command names used for completion.
-var allCommands = executor.CommandNames()
+// Derived from batchKeywords so it always stays in sync with the lexer and executor registries.
+var allCommands = func() []string {
+	names := make([]string, 0, len(batchKeywords))
+	for name := range batchKeywords {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}()
 
 // Server wraps the glsp server and owns the document store.
 type Server struct {
