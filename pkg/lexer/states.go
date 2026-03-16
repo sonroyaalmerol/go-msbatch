@@ -108,38 +108,15 @@ func (bl *BatchLexer) stateWord() stateFn {
 		return bl.stateFollow
 	}
 
-	switch lower {
-	case KwRem:
+	if entry, ok := keywordTable[lower]; ok {
 		bl.emit(TokenKeyword)
-		return bl.stateRem
-	case KwSet:
-		bl.emit(TokenKeyword)
-		return bl.stateSet
-	case KwFor:
-		bl.emit(TokenKeyword)
-		return bl.stateFor
-	case KwIf:
-		bl.emit(TokenKeyword)
-		return bl.stateIf
-	case KwElse:
-		bl.emit(TokenKeyword)
-		return bl.stateRoot
-	case KwGoto:
-		bl.emit(TokenKeyword)
-		return bl.stateGoto
-	case KwCall:
-		bl.emit(TokenKeyword)
-		return bl.stateCall
-	case KwDo:
-		bl.emit(TokenKeyword)
-		return bl.stateRoot
-	case KwIn:
-		bl.emit(TokenKeyword)
-		return bl.stateRoot
-	default:
-		bl.emit(TokenWord)
+		if entry.next != nil {
+			return entry.next(bl)
+		}
 		return bl.stateFollow
 	}
+	bl.emit(TokenWord)
+	return bl.stateFollow
 }
 
 func (bl *BatchLexer) stateFollow() stateFn {
