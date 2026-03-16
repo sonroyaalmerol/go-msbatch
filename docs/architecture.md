@@ -6,12 +6,14 @@ go-msbatch mirrors cmd.exe's documented multi-phase processing model.
 
 ```
 cmd/msbatch/           Binary entry point (file mode + interactive REPL)
+cmd/msbatch-lsp/       LSP server binary entry point
 internal/lex/          Generic cursor-based state-machine lexer framework
 pkg/lexer/             Batch-specific tokenizer → 18 token types
 pkg/parser/            Recursive-descent AST builder
 pkg/processor/         Multi-phase expansion engine + flow-control executor
 pkg/executor/          Built-in command registry + implementations
 pkg/executor/tools/    Native cross-platform tool implementations
+pkg/lsp/               LSP server (analysis, diagnostics, completion, …)
 ```
 
 ## The Six Phases
@@ -102,6 +104,15 @@ When a bare command name resolves to a `.bat` or `.cmd` file (searched in CWD th
 ### Pipes
 
 Each side of a `|` runs concurrently in a goroutine. An `os.Pipe()` connects the left side's stdout to the right side's stdin. Both sides share a copy of the environment snapshot taken at pipe-setup time; environment changes inside a piped segment do **not** propagate back to the parent.
+
+## LSP Integration
+
+The `pkg/lsp` package implements a Language Server Protocol server. It performs a purely text-based static analysis pass (`Analyze`) that is separate from the multi-phase processor — the LSP never executes the script.
+
+Key points where the LSP reuses processor internals:
+
+- **`processor.BuiltinVarNames()`** — returns the set of variable names present in a freshly initialised CMD environment (`os.Environ()` + `ERRORLEVEL`). The LSP uses this to suppress false-positive "not defined" diagnostics for variables that are always present at runtime. Because it calls `NewEnvironment`, it automatically stays in sync with whatever the processor considers built-in.
+- **`executor.New().Names()` + `lexer.Keywords`** — the LSP's keyword set for semantic highlighting and command completion is derived from these two authoritative registries.
 
 ## Caveats vs Real CMD
 

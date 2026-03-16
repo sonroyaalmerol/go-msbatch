@@ -6,6 +6,7 @@ import (
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/executor"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/lexer"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
 // LabelDef is a :label definition found in the document.
@@ -481,20 +482,10 @@ func isWordChar(r rune) bool {
 		(r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.'
 }
 
-// cmdBuiltinVars is the set of CMD/environment variables that are always defined
-// at runtime. Usages of these never trigger "not defined in this file" hints.
-var cmdBuiltinVars = map[string]bool{
-	"ERRORLEVEL": true, "CD": true, "DATE": true, "TIME": true,
-	"RANDOM": true, "COMPUTERNAME": true, "USERNAME": true,
-	"USERPROFILE": true, "WINDIR": true, "SYSTEMROOT": true,
-	"SYSTEMDRIVE": true, "PATH": true, "PATHEXT": true, "COMSPEC": true,
-	"TEMP": true, "TMP": true, "OS": true,
-	"PROCESSOR_ARCHITECTURE": true, "NUMBER_OF_PROCESSORS": true,
-	"CMDEXTVERSION": true, "APPDATA": true, "LOCALAPPDATA": true,
-	"PROGRAMFILES": true, "PROGRAMFILES(X86)": true, "PROGRAMDATA": true,
-	"ALLUSERSPROFILE": true, "PUBLIC": true,
-	"HOMEDRIVE": true, "HOMEPATH": true,
-}
+// cmdBuiltinVars is the set of variable names that are always present in a CMD
+// environment at runtime (OS environment + ERRORLEVEL). Populated once from
+// processor.BuiltinVarNames() so the LSP and the processor stay in sync.
+var cmdBuiltinVars = processor.BuiltinVarNames()
 
 // extractForFTokensSpec returns the tokens= value from a FOR /F options string,
 // or "" if there is none. It finds the first double-quoted string in forLine and

@@ -33,6 +33,20 @@ func NewEnvironment(batchMode bool) *Environment {
 	return e
 }
 
+// BuiltinVarNames returns the set of variable names that exist in a freshly
+// initialised CMD environment: every OS environment variable (from os.Environ)
+// plus CMD-specific builtins such as ERRORLEVEL. Static-analysis tools (e.g.
+// the LSP) use this to suppress false-positive "not defined" diagnostics for
+// variables that are always present at runtime.
+func BuiltinVarNames() map[string]bool {
+	snap := NewEnvironment(false).Snapshot()
+	m := make(map[string]bool, len(snap))
+	for k := range snap {
+		m[k] = true
+	}
+	return m
+}
+
 // NewEmptyEnvironment creates an Environment with no OS variables.
 // Useful for deterministic tests.
 func NewEmptyEnvironment(batchMode bool) *Environment {
