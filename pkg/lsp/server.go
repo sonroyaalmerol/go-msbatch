@@ -42,17 +42,17 @@ func NewServer() *Server {
 // Run starts the server on stdin/stdout and blocks until the connection closes.
 func (s *Server) Run() error {
 	handler := protocol.Handler{
-		Initialize:                  s.initialize,
-		Initialized:                 s.initialized,
-		Shutdown:                    s.shutdown,
-		TextDocumentDidOpen:         s.didOpen,
-		TextDocumentDidChange:       s.didChange,
-		TextDocumentDidClose:        s.didClose,
-		TextDocumentHover:           s.hover,
-		TextDocumentCompletion:      s.completion,
-		TextDocumentDocumentSymbol:  s.documentSymbol,
-		TextDocumentDefinition:      s.definition,
-		TextDocumentReferences:      s.references,
+		Initialize:                 s.initialize,
+		Initialized:                s.initialized,
+		Shutdown:                   s.shutdown,
+		TextDocumentDidOpen:        s.didOpen,
+		TextDocumentDidChange:      s.didChange,
+		TextDocumentDidClose:       s.didClose,
+		TextDocumentHover:          s.hover,
+		TextDocumentCompletion:     s.completion,
+		TextDocumentDocumentSymbol: s.documentSymbol,
+		TextDocumentDefinition:     s.definition,
+		TextDocumentReferences:     s.references,
 	}
 	srv := server.NewServer(&handler, serverName, false)
 	return srv.RunStdio()
@@ -129,11 +129,11 @@ func (s *Server) initialize(_ *glsp.Context, _ *protocol.InitializeParams) (any,
 				OpenClose: ptr(true),
 				Change:    &syncKind,
 			},
-			HoverProvider:            true,
-			CompletionProvider:       &protocol.CompletionOptions{TriggerCharacters: []string{"%", ":"}},
-			DocumentSymbolProvider:   true,
-			DefinitionProvider:       true,
-			ReferencesProvider:       true,
+			HoverProvider:          true,
+			CompletionProvider:     &protocol.CompletionOptions{TriggerCharacters: []string{"%", ":"}},
+			DocumentSymbolProvider: true,
+			DefinitionProvider:     true,
+			ReferencesProvider:     true,
 		},
 		ServerInfo: &protocol.InitializeResultServerInfo{
 			Name:    serverName,
@@ -212,10 +212,7 @@ func (s *Server) completion(_ *glsp.Context, params *protocol.CompletionParams) 
 	}
 
 	line := lineAt(content, int(params.Position.Line))
-	col := int(params.Position.Character)
-	if col > len(line) {
-		col = len(line)
-	}
+	col := min(int(params.Position.Character), len(line))
 	lineBefore := line[:col]
 
 	ctx := CompletionContextAt(lineBefore)
@@ -249,9 +246,9 @@ func (s *Server) completion(_ *glsp.Context, params *protocol.CompletionParams) 
 			if strings.HasPrefix(lbl.Name, strings.ToLower(prefix)) {
 				kind := protocol.CompletionItemKindReference
 				items = append(items, protocol.CompletionItem{
-					Label:      lbl.Name,
-					Kind:       &kind,
-					Detail:     ptr(fmt.Sprintf("line %d", lbl.Line+1)),
+					Label:  lbl.Name,
+					Kind:   &kind,
+					Detail: ptr(fmt.Sprintf("line %d", lbl.Line+1)),
 				})
 			}
 		}
