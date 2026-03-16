@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/sonroyaalmerol/go-msbatch/pkg/executor"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/lexer"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
 )
@@ -572,19 +573,19 @@ type SemToken struct {
 	Modifiers uint32
 }
 
-// batchKeywords is the set of known batch command names for keyword highlighting.
-var batchKeywords = map[string]bool{
-	"echo": true, "set": true, "goto": true, "call": true, "if": true,
-	"for": true, "rem": true, "cd": true, "dir": true, "copy": true,
-	"move": true, "del": true, "mkdir": true, "rmdir": true, "cls": true,
-	"ver": true, "pause": true, "exit": true, "setlocal": true, "endlocal": true,
-	"pushd": true, "popd": true, "start": true, "mklink": true, "color": true,
-	"title": true, "path": true, "prompt": true, "more": true, "assoc": true,
-	"ftype": true, "find": true, "sort": true, "tree": true, "xcopy": true,
-	"robocopy": true, "timeout": true, "where": true, "hostname": true,
-	"whoami": true, "type": true, "not": true, "defined": true, "exist": true,
-	"errorlevel": true, "else": true, "do": true, "in": true,
-}
+// batchKeywords is the set of known batch keyword names for semantic highlighting.
+// It is built from the executor registry (all registered command names) plus the
+// language-only keywords that never appear as the first word of a command.
+var batchKeywords = func() map[string]bool {
+	m := make(map[string]bool)
+	for _, name := range executor.New().Names() {
+		m[name] = true
+	}
+	for _, kw := range executor.LanguageKeywords {
+		m[kw] = true
+	}
+	return m
+}()
 
 // SemanticTokens returns semantic tokens for the document, sorted by position.
 func SemanticTokens(content string) []SemToken {
