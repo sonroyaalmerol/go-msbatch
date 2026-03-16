@@ -46,7 +46,17 @@ func runFile(filename string) {
 	env := processor.NewEnvironment(true)
 	proc := processor.New(env, os.Args[1:], executor.New())
 
-	src := processor.Phase0ReadLine(string(content))
+	// Strip Unix shebang so scripts can start with #!/usr/bin/env msbatch
+	raw := string(content)
+	if strings.HasPrefix(raw, "#!") {
+		if nl := strings.IndexByte(raw, '\n'); nl >= 0 {
+			raw = raw[nl+1:]
+		} else {
+			raw = ""
+		}
+	}
+
+	src := processor.Phase0ReadLine(raw)
 	nodes := processor.ParseExpanded(src)
 
 	if err := proc.Execute(nodes); err != nil {
