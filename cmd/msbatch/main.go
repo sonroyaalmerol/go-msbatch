@@ -1,8 +1,8 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -230,16 +230,29 @@ func runInteractiveFallback(proc *processor.Processor) {
 	fmt.Println(executor.VersionString())
 	fmt.Println()
 
-	buf := make([]byte, 4096)
+	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		promptStr, _ := proc.Env.Get("PROMPT")
 		fmt.Print(proc.ExpandPrompt(promptStr))
 
-		n, err := os.Stdin.Read(buf)
-		if n == 0 || err == io.EOF {
+		if !scanner.Scan() {
 			break
 		}
-		line := strings.TrimRight(string(buf[:n]), "\r\n")
+		line := scanner.Text()
+
+		// CMD-style ^ line continuation: trailing ^ causes "More? " prompt.
+		for {
+			trimmed := strings.TrimRight(line, " \t")
+			if !strings.HasSuffix(trimmed, "^") {
+				break
+			}
+			fmt.Print("More? ")
+			if !scanner.Scan() {
+				break
+			}
+			line = trimmed[:len(trimmed)-1] + scanner.Text()
+		}
+
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
