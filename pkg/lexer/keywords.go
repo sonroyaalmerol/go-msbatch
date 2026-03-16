@@ -2,25 +2,6 @@ package lexer
 
 import "sort"
 
-// Keyword string constants – the single definition of every batch keyword
-// string in the lexer.  Use these in states_commands.go (tryKeyword calls)
-// so that all files stay in sync automatically.
-const (
-	KwRem        = "rem"
-	KwSet        = "set"
-	KwFor        = "for"
-	KwIf         = "if"
-	KwElse       = "else"
-	KwGoto       = "goto"
-	KwCall       = "call"
-	KwDo         = "do"
-	KwIn         = "in"
-	KwNot        = "not"
-	KwExist      = "exist"
-	KwDefined    = "defined"
-	KwErrorlevel = "errorlevel"
-)
-
 // keywordEntry describes a registered keyword.
 // next is the state function to transition to after emitting the keyword
 // token from stateWord.  It is nil for modifier keywords (not, exist,
@@ -50,23 +31,23 @@ var Keywords []string
 func init() {
 	// command-position keywords: appear as the first word of a statement
 	// and dispatch to a dedicated state function.
-	registerKeyword(KwRem, func(bl *BatchLexer) stateFn { return bl.stateRem })
-	registerKeyword(KwSet, func(bl *BatchLexer) stateFn { return bl.stateSet })
-	registerKeyword(KwFor, func(bl *BatchLexer) stateFn { return bl.stateFor })
-	registerKeyword(KwIf, func(bl *BatchLexer) stateFn { return bl.stateIf })
-	registerKeyword(KwElse, func(bl *BatchLexer) stateFn { return bl.stateRoot })
-	registerKeyword(KwGoto, func(bl *BatchLexer) stateFn { return bl.stateGoto })
-	registerKeyword(KwCall, func(bl *BatchLexer) stateFn { return bl.stateCall })
-	registerKeyword(KwDo, func(bl *BatchLexer) stateFn { return bl.stateRoot })
-	registerKeyword(KwIn, func(bl *BatchLexer) stateFn { return bl.stateRoot })
+	registerKeyword("rem", func(bl *BatchLexer) stateFn { return bl.stateRem })
+	registerKeyword("set", func(bl *BatchLexer) stateFn { return bl.stateSet })
+	registerKeyword("for", func(bl *BatchLexer) stateFn { return bl.stateFor })
+	registerKeyword("if", func(bl *BatchLexer) stateFn { return bl.stateIf })
+	registerKeyword("else", func(bl *BatchLexer) stateFn { return bl.stateRoot })
+	registerKeyword("goto", func(bl *BatchLexer) stateFn { return bl.stateGoto })
+	registerKeyword("call", func(bl *BatchLexer) stateFn { return bl.stateCall })
+	registerKeyword("do", func(bl *BatchLexer) stateFn { return bl.stateRoot })
+	registerKeyword("in", func(bl *BatchLexer) stateFn { return bl.stateRoot })
 
 	// modifier keywords: only matched mid-line inside IF/FOR constructs via
 	// tryKeyword; not dispatched from stateWord.  Registered with nil next so
 	// they appear in Keywords without affecting stateWord dispatch.
-	registerKeyword(KwNot, nil)
-	registerKeyword(KwExist, nil)
-	registerKeyword(KwDefined, nil)
-	registerKeyword(KwErrorlevel, nil)
+	registerKeyword("not", nil)
+	registerKeyword("exist", nil)
+	registerKeyword("defined", nil)
+	registerKeyword("errorlevel", nil)
 
 	// derive Keywords from the table (sorted for stability)
 	kws := make([]string, 0, len(keywordTable))
