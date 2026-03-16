@@ -168,12 +168,7 @@ func Phase1PercentExpand(src string, env *Environment, args []string) string {
 			rawName := string(runes[i+1 : end])
 			i = end + 1
 
-			varName := rawName
-			manipulation := ""
-			if before, after, ok := strings.Cut(rawName, ":"); ok {
-				varName = before
-				manipulation = after
-			}
+			varName, manipulation := SplitVarModifier(rawName)
 
 			val, ok := env.Get(varName)
 			if !ok {
@@ -198,6 +193,19 @@ func Phase1PercentExpand(src string, env *Environment, args []string) string {
 		}
 	}
 	return sb.String()
+}
+
+// SplitVarModifier splits a raw percent-expansion expression into the base
+// variable name and optional modifier string (the part after the first ':').
+//
+//	"STR:~0,5"   → ("STR", "~0,5")
+//	"VAR:old=new" → ("VAR", "old=new")
+//	"PLAIN"       → ("PLAIN", "")
+func SplitVarModifier(expr string) (name, modifier string) {
+	if before, after, ok := strings.Cut(expr, ":"); ok {
+		return before, after
+	}
+	return expr, ""
 }
 
 func indexRuneFrom(runes []rune, r rune, start int) int {

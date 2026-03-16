@@ -83,6 +83,8 @@ Errors and hints are published on every file open and change.
 | Hint     | A variable is defined but never used (`%VAR%` or `!VAR!` never appears) |
 | Hint     | A `%VAR%` or `!VAR!` is used but not defined anywhere in the file (suppressed for built-in CMD variables and for files that make external `CALL <file>.bat` calls, since called scripts can set any variable) |
 
+Modifier expressions (`%VAR:~start,len%`, `%VAR:old=new%`) are fully understood — the base variable name is extracted and checked against definitions, so no false-positive "not defined" hint is raised.
+
 Built-in CMD variables (`ERRORLEVEL`, `PATH`, `USERNAME`, `WINDIR`, etc.) are derived at startup from the host OS environment via `processor.BuiltinVarNames()` so the set always matches what the processor itself recognises.
 
 ### Hover
@@ -95,40 +97,42 @@ Hover over any built-in command name to see its syntax and flag reference.
 |---------|---------------------|
 | Start of line | All recognised command names |
 | After `GOTO ` or `CALL :` | Label names defined in the file |
-| After `%` (open) | `SET` variable names (workspace-wide; closes with `%`) and in-scope `FOR` loop variables (as `%%V`) |
-| After `%%` | In-scope `FOR` loop variables only |
+| After `%` (open) | `SET` variable names from the current file and files explicitly `CALL`-ed from it (closes with `%`) |
+| After `%%` | In-scope `FOR` loop variables only (closes with nothing — the letter is inserted) |
 | After `!` (open) | Delayed-expansion variable names — only offered when `SETLOCAL ENABLEDELAYEDEXPANSION` is present (closes with `!`) |
 
 All variable completions use a `textEdit` with an explicit replacement range so the full token (including opening/closing sigils) is inserted correctly regardless of editor settings.
 
 ### Variable scoping
 
-- **`SET` variables** are file-wide. Completions and Go-to-Definition search the current file first, then fall back to files explicitly `CALL`-ed from the current file.
-- **`FOR` loop variables** (`%%V`) are scoped to the loop body (single-line or block `do (...)`). They are not offered or resolved outside that scope.
+- **`SET` variables** are file-wide. Completions, Go-to-Definition, and Find References search the current file first, then fall back to files explicitly `CALL`-ed from the current file. Variables in unrelated files that are not reachable via a `CALL` chain are never surfaced.
+- **`FOR` loop variables** (`%%V`) are scoped strictly to the loop body (single-line or block `do (...)`). They are never resolved across file boundaries.
 - **`FOR /F` implicit token variables** — when `tokens=N,M` or `tokens=N-M` is specified, the additional captured tokens are automatically assigned to successive loop letters (e.g. `tokens=2,3 %%a` also defines `%%b`). All such variables are treated as in-scope within the loop body.
 - **Delayed-expansion variables** (`!VAR!`) reference the same underlying `SET` variable store and respect the same file-wide scope. Cross-file lookup follows the same `CALL` chain as `%VAR%`.
+- **Modifier expressions** — `%VAR:~start,len%` (substring), `%VAR:~-n%` (from end), and `%VAR:old=new%` (replacement) are all recognised. The LSP extracts the base variable name for definition lookup, reference search, and diagnostics, and highlights the full modifier expression as a single variable token.
 
 ### Go to Definition
 
 - On a `GOTO`/`CALL :label` target → jumps to the `:label` definition line.
 - On a `CALL other.bat` → jumps to `other.bat` if it exists in the workspace.
-- On a `%VARIABLE%`, `%%V`, or `!VAR!` → jumps to the `SET VAR=...` line (searches locally first, then falls back to other files in the workspace).
-- FOR loop variables resolve only within their own scope.
+- On a `%VARIABLE%`, `%VAR:modifier%`, or `!VAR!` → jumps to the `SET VAR=...` line (searches the current file first, then falls back to files explicitly `CALL`-ed from the current file).
+- `%%V` FOR loop variables resolve only within their own loop scope and never cross file boundaries.
 - Forward references are supported (label defined after use).
 
 ### Find References
 
 - On a `:label` definition or any `GOTO`/`CALL` site → lists all `GOTO` and `CALL` sites for that label locally.
-- On a `%VARIABLE%` or `!VAR!` → lists all usage sites (both `%VAR%` and `!VAR!` forms) **across the entire workspace**.
-- FOR loop variable references are restricted to the loop's scope.
+- On a `%VARIABLE%`, `%VAR:modifier%`, or `!VAR!` → lists all usage sites (both `%VAR%` and `!VAR!` forms) across the current file and files explicitly `CALL`-ed from it.
+- `%%V` FOR loop variable references are restricted to the loop's scope and never cross file boundaries.
 - Supports the `includeDeclaration` flag.
 
 ### Rename
 
 Atomically renames a symbol and all its sites:
 
-- **Label** — updates the `:label` definition and every `GOTO`/`CALL` reference locally.
-- **Variable** (`%VAR%` or `!VAR!`) — updates the `SET VAR=...` line and every `%VAR%`/`!VAR!` usage **across the entire workspace**.
+- **Label** — updates the `:label` definition and every `GOTO`/`CALL` reference in the current file.
+- **SET variable** (`%VAR%` or `!VAR!`) — updates the `SET VAR=...` line and every `%VAR%`/`!VAR!` usage across the current file and files explicitly `CALL`-ed from it.
+- **FOR loop variable** (`%%V`) — renames the loop variable letter in the `FOR` statement and all in-scope references within that loop body. Changes are local to the current file.
 
 ### Document Symbols
 
@@ -158,7 +162,7 @@ Full syntax highlighting served by the LSP (no separate TextMate grammar require
 |-------|----------------------|
 | Keyword | `ECHO`, `SET`, `GOTO`, `CALL`, `IF`, `FOR`, and all other built-in commands |
 | Function | `:label` definitions (with declaration modifier) and `GOTO`/`CALL` targets |
-| Variable | `%VARIABLE%` names, `%%V` FOR loop variables, and `!VAR!` delayed-expansion variables |
+| Variable | `%VARIABLE%` names, `%VAR:modifier%` expressions (highlighted as a whole), `%%V` FOR loop variables, and `!VAR!` delayed-expansion variables |
 | Comment | `::` comment lines and `REM` lines |
 | String | Quoted strings `"..."` |
 

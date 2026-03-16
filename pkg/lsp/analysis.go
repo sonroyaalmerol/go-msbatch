@@ -739,6 +739,18 @@ func labelColAfterKeyword(line string, keyLen int) int {
 // appendVarRefs scans line for %NAME% / %%X / !NAME! patterns and appends a
 // VarRef for each. %% (escaped percent) and positional args %0-%9 are skipped.
 // !! (escaped exclamation) is also skipped.
+//
+// %%X (FOR-loop variable usage) requires a text scan: outside stateFor the
+// batch lexer emits %% as TokenStringEscape and cannot produce a single
+// variable token for %%X in echo/if/other contexts.
+//
+// %NAME% and !NAME! also use text scanning for full coverage: the lexer's
+// stateGoto consumes "goto %VAR%" as TokenNameLabel rather than
+// TokenNameVariable, so a purely lexer-driven pass would miss variable
+// references inside GOTO targets.
+//
+// processor.SplitVarModifier is used to strip any :modifier suffix so the
+// stored Name is always the bare variable name.
 func appendVarRefs(refs []VarRef, line string, lineIdx int) []VarRef {
 	// --- %NAME% and %%X pass ---
 	rest := line
@@ -776,11 +788,10 @@ func appendVarRefs(refs []VarRef, line string, lineIdx int) []VarRef {
 			// Skip tilde-modifier positional-param patterns like %~n0, %~$PATH:1
 			// that got captured because a later % on the line closed the token.
 			if name[0] != '~' {
-				// Strip :modifier suffix — %VAR:~start,len% / %VAR:old=new% → base name before ':'
-				baseName := name
+				// Strip :modifier suffix using the shared processor helper.
+				baseName, _ := processor.SplitVarModifier(name)
 				var exprLen int
-				if i := strings.IndexByte(name, ':'); i > 0 {
-					baseName = name[:i]
+				if baseName != name {
 					exprLen = len(name)
 				}
 				refs = append(refs, VarRef{
@@ -812,11 +823,9 @@ func appendVarRefs(refs []VarRef, line string, lineIdx int) []VarRef {
 		advance := bang + 1 + end + 1 // past closing !
 		// Skip empty !!→escaped !
 		if name != "" {
-			// Strip :modifier suffix — !VAR:~start,len! / !VAR:old=new!
-			baseName := name
+			baseName, _ := processor.SplitVarModifier(name)
 			var exprLen int
-			if i := strings.IndexByte(name, ':'); i > 0 {
-				baseName = name[:i]
+			if baseName != name {
 				exprLen = len(name)
 			}
 			refs = append(refs, VarRef{

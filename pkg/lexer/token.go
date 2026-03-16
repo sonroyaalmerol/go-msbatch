@@ -2,7 +2,7 @@ package lexer
 
 // Item is a single lexed token.
 type Item struct {
-	Pos   int
+	Col   int       // 0-based rune column within the input line
 	Type  TokenType
 	Value []rune
 }

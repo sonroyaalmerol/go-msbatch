@@ -83,7 +83,7 @@ func (bl *BatchLexer) ignore() {
 // emit sends the current buffer as a token of type t and advances start.
 func (bl *BatchLexer) emit(t TokenType) {
 	bl.items <- Item{
-		Pos:   bl.start,
+		Col:   bl.start,
 		Type:  t,
 		Value: bl.input[bl.start:bl.pos],
 	}
