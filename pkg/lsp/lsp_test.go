@@ -51,11 +51,17 @@ func TestAnalyzeVars(t *testing.T) {
 	}
 }
 
-func TestAnalyzeVarsArithmeticSkipped(t *testing.T) {
-	// SET /A and SET /P should not produce VarDef entries.
+func TestAnalyzeVarsArithmeticAndPrompt(t *testing.T) {
+	// SET /A and SET /P should produce VarDef entries so usages are not flagged undefined.
 	a := Analyze("set /a X=1+2\nset /p NAME=Enter: \n")
-	if len(a.Vars) != 0 {
-		t.Errorf("expected 0 vars for /A and /P, got %d: %v", len(a.Vars), a.Vars)
+	if len(a.Vars) != 2 {
+		t.Fatalf("expected 2 vars for /A and /P, got %d: %v", len(a.Vars), a.Vars)
+	}
+	if a.Vars[0].Name != "X" {
+		t.Errorf("expected Name=X from set /a, got %q", a.Vars[0].Name)
+	}
+	if a.Vars[1].Name != "NAME" {
+		t.Errorf("expected Name=NAME from set /p, got %q", a.Vars[1].Name)
 	}
 }
 
@@ -1423,5 +1429,196 @@ func TestDiagnosticsSetVarDefined(t *testing.T) {
 		if strings.Contains(d.Message, "not defined") && strings.Contains(d.Message, "FOO") {
 			t.Errorf("unexpected 'not defined' hint for SET variable: %v", d)
 		}
+	}
+}
+
+// ── Feature 7: Delayed Expansion Variables ────────────────────────────────────
+
+func TestAnalyzeDelayedExpansionNotEnabled(t *testing.T) {
+	a := Analyze("set FOO=bar\necho !FOO!\n")
+	if a.DelayedExpansionEnabled {
+		t.Error("expected DelayedExpansionEnabled=false when setlocal is absent")
+	}
+}
+
+func TestAnalyzeDelayedExpansionEnabled(t *testing.T) {
+	a := Analyze("setlocal enabledelayedexpansion\nset FOO=bar\necho !FOO!\n")
+	if !a.DelayedExpansionEnabled {
+		t.Error("expected DelayedExpansionEnabled=true after SETLOCAL ENABLEDELAYEDEXPANSION")
+	}
+}
+
+func TestAnalyzeDelayedExpansionEnabledCaseInsensitive(t *testing.T) {
+	a := Analyze("SETLOCAL EnableDelayedExpansion\necho !X!\n")
+	if !a.DelayedExpansionEnabled {
+		t.Error("expected DelayedExpansionEnabled=true (case-insensitive)")
+	}
+}
+
+func TestAnalyzeDelayedExpansionSetlocalOnly(t *testing.T) {
+	// Plain SETLOCAL without ENABLEDELAYEDEXPANSION must not set the flag.
+	a := Analyze("setlocal\necho !FOO!\n")
+	if a.DelayedExpansionEnabled {
+		t.Error("expected DelayedExpansionEnabled=false for plain SETLOCAL")
+	}
+}
+
+func TestAppendVarRefsDelayed(t *testing.T) {
+	refs := appendVarRefs(nil, "echo !MYVAR! and !OTHER!", 0)
+	var delayed []VarRef
+	for _, r := range refs {
+		if r.IsDelayed {
+			delayed = append(delayed, r)
+		}
+	}
+	if len(delayed) != 2 {
+		t.Fatalf("expected 2 delayed refs, got %d: %v", len(delayed), refs)
+	}
+	if delayed[0].Name != "MYVAR" {
+		t.Errorf("delayed[0].Name = %q, want MYVAR", delayed[0].Name)
+	}
+	if delayed[1].Name != "OTHER" {
+		t.Errorf("delayed[1].Name = %q, want OTHER", delayed[1].Name)
+	}
+	// Col should point to first char of name (after '!')
+	// "echo !MYVAR!" → '!' at col 5, name starts at col 6
+	if delayed[0].Col != 6 {
+		t.Errorf("delayed[0].Col = %d, want 6", delayed[0].Col)
+	}
+}
+
+func TestAppendVarRefsDelayedEscaped(t *testing.T) {
+	// !! is an escaped exclamation and must not produce a ref.
+	refs := appendVarRefs(nil, "echo !!", 0)
+	for _, r := range refs {
+		if r.IsDelayed {
+			t.Errorf("unexpected delayed ref from !!: %+v", r)
+		}
+	}
+}
+
+func TestCompletionContextAtDelayed(t *testing.T) {
+	ctx := CompletionContextAt("echo !")
+	if ctx != CompleteDelayedVariable {
+		t.Errorf("CompletionContextAt(\"echo !\") = %v, want CompleteDelayedVariable", ctx)
+	}
+}
+
+func TestCompletionContextAtDelayedWithPrefix(t *testing.T) {
+	ctx := CompletionContextAt("echo !MY")
+	if ctx != CompleteDelayedVariable {
+		t.Errorf("CompletionContextAt(\"echo !MY\") = %v, want CompleteDelayedVariable", ctx)
+	}
+}
+
+func TestCompletionContextAtDelayedClosed(t *testing.T) {
+	// Even number of '!' → closed, should not be CompleteDelayedVariable
+	ctx := CompletionContextAt("echo !FOO!")
+	if ctx == CompleteDelayedVariable {
+		t.Errorf("CompletionContextAt with closed !FOO! should not be CompleteDelayedVariable")
+	}
+}
+
+func TestDiagnosticsDelayedNotEnabled(t *testing.T) {
+	// !FOO! without SETLOCAL → warning for each usage
+	diags := Diagnostics("set FOO=bar\necho !FOO!\n")
+	var found bool
+	for _, d := range diags {
+		if d.Sev == SevWarning && strings.Contains(d.Message, "Delayed expansion") && d.Line == 1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected SevWarning about delayed expansion not enabled, got %v", diags)
+	}
+}
+
+func TestDiagnosticsDelayedEnabledDefined(t *testing.T) {
+	// SETLOCAL + set + !VAR! usage of defined var → no warning/hint about delayed expansion
+	src := "setlocal enabledelayedexpansion\nset FOO=bar\necho !FOO!\n"
+	diags := Diagnostics(src)
+	for _, d := range diags {
+		if strings.Contains(d.Message, "Delayed expansion") {
+			t.Errorf("unexpected delayed expansion diagnostic: %v", d)
+		}
+		if strings.Contains(d.Message, "FOO") && strings.Contains(d.Message, "not defined") {
+			t.Errorf("unexpected 'not defined' hint for defined delayed var: %v", d)
+		}
+	}
+}
+
+func TestDiagnosticsDelayedEnabledUndefined(t *testing.T) {
+	// SETLOCAL enabled but variable not SET → hint (undefined in file)
+	src := "setlocal enabledelayedexpansion\necho !MISSING!\n"
+	diags := Diagnostics(src)
+	var found bool
+	for _, d := range diags {
+		if d.Sev == SevHint && strings.Contains(d.Message, "MISSING") && strings.Contains(d.Message, "not defined") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected SevHint for undefined delayed var, got %v", diags)
+	}
+}
+
+func TestDiagnosticsDelayedVarCountsAsUsed(t *testing.T) {
+	// !FOO! should count as a "use" of FOO, suppressing the "defined but never used" hint.
+	src := "setlocal enabledelayedexpansion\nset FOO=bar\necho !FOO!\n"
+	diags := Diagnostics(src)
+	for _, d := range diags {
+		if strings.Contains(d.Message, "FOO") && strings.Contains(d.Message, "never used") {
+			t.Errorf("unexpected 'never used' hint for var used via !FOO!: %v", d)
+		}
+	}
+}
+
+func TestDefinitionAtDelayedVar(t *testing.T) {
+	// Cursor inside !FOO! should resolve to the SET FOO= definition.
+	src := "setlocal enabledelayedexpansion\nset FOO=hello\necho !FOO!\n"
+	uri := "file:///test.bat"
+	ws := map[string]*Document{
+		uri: {Content: src, Analysis: Analyze(src)},
+	}
+	// Cursor at col 7 on line 2 ("echo !FOO!" → F is at col 6+1=7 after 'echo !')
+	// "echo !FOO!" → indices: e=0,c=1,h=2,o=3, =4,!=5,F=6,O=7,O=8,!=9
+	loc, found := DefinitionAt(ws, uri, 2, 7)
+	if !found {
+		t.Fatal("DefinitionAt returned not found for !FOO!")
+	}
+	if loc.Line != 1 {
+		t.Errorf("expected definition on line 1, got line %d", loc.Line)
+	}
+}
+
+func TestReferencesAtDelayedVar(t *testing.T) {
+	// ReferencesAt from !FOO! should find both the %FOO% and !FOO! usages.
+	src := "setlocal enabledelayedexpansion\nset FOO=hello\necho %FOO%\necho !FOO!\n"
+	uri := "file:///test.bat"
+	ws := map[string]*Document{
+		uri: {Content: src, Analysis: Analyze(src)},
+	}
+	// Cursor on line 3 ("echo !FOO!"), col 7 (inside FOO)
+	locs := ReferencesAt(ws, uri, 3, 7, false)
+	if len(locs) < 2 {
+		t.Errorf("expected at least 2 refs (%%FOO%% and !FOO!), got %d: %v", len(locs), locs)
+	}
+}
+
+func TestSemanticTokensDelayedVar(t *testing.T) {
+	// !FOO! should produce a semVariable token spanning the full "!FOO!" token.
+	src := "setlocal enabledelayedexpansion\nset FOO=bar\necho !FOO!\n"
+	tokens := SemanticTokens(src)
+	found := false
+	for _, tok := range tokens {
+		if tok.TokenType == semVariable && tok.Line == 2 {
+			// "echo !FOO!" → '!' at col 5, so token col=5, len=5
+			if tok.Col == 5 && tok.Len == 5 {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected semVariable token at line 2 col 5 len 5 for !FOO!, tokens=%v", tokens)
 	}
 }

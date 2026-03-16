@@ -33,11 +33,12 @@ type LabelRef struct {
 	Col  int // 0-based start column of the label name in the line
 }
 
-// VarRef is a %VARIABLE% usage found in the document.
+// VarRef is a %VARIABLE% or !VARIABLE! usage found in the document.
 type VarRef struct {
-	Name string
-	Line int // 0-based
-	Col  int // 0-based start column of the name (the char after the opening %)
+	Name      string
+	Line      int  // 0-based
+	Col       int  // 0-based start column of the name (the char after the opening sigil)
+	IsDelayed bool // true when this is a !VAR! delayed-expansion reference
 }
 
 // Loc is a compact source range returned by DefinitionAt / ReferencesAt.
@@ -63,13 +64,14 @@ type FileRef struct {
 
 // Analysis holds the full analysis result for one document.
 type Analysis struct {
-	Labels          []LabelDef
-	Vars            []VarDef
-	GotoRefs        []LabelRef // GOTO label
-	CallRefs        []LabelRef // CALL :label
-	FileRefs        []FileRef  // CALL file.bat
-	VarRefs         []VarRef   // %VARIABLE% usages
-	HasDynamicJumps bool
+	Labels                  []LabelDef
+	Vars                    []VarDef
+	GotoRefs                []LabelRef // GOTO label
+	CallRefs                []LabelRef // CALL :label
+	FileRefs                []FileRef  // CALL file.bat
+	VarRefs                 []VarRef   // %VARIABLE% and !VARIABLE! usages
+	HasDynamicJumps         bool
+	DelayedExpansionEnabled bool // true when SETLOCAL ENABLEDELAYEDEXPANSION is present
 }
 
 // Analyze parses the document content and extracts structural information.
@@ -84,6 +86,21 @@ func Analyze(content string) Analysis {
 		line := strings.TrimRight(raw, "\r")
 		trimmed := strings.TrimSpace(line)
 		lower := strings.ToLower(trimmed)
+
+		// Skip comment lines: no labels, vars, or var-refs live inside comments.
+		stripped := strings.TrimLeft(trimmed, "@")
+		strippedLower := strings.ToLower(stripped)
+		if strings.HasPrefix(trimmed, "::") || strings.HasPrefix(strippedLower, "rem ") || strippedLower == "rem" {
+			continue
+		}
+
+		// SETLOCAL ENABLEDELAYEDEXPANSION detection
+		if strings.HasPrefix(strippedLower, "setlocal") {
+			rest := strings.TrimSpace(strippedLower[8:])
+			if strings.Contains(rest, "enabledelayedexpansion") {
+				a.DelayedExpansionEnabled = true
+			}
+		}
 
 		// Label definition: line starts with ':'
 		if strings.HasPrefix(trimmed, ":") && !strings.HasPrefix(trimmed, "::") {
@@ -141,21 +158,44 @@ func Analyze(content string) Analysis {
 		} else if strings.HasPrefix(lower, "set ") {
 			// SET: "set varname=value" or "set /a ..." or "set /p ..."
 			rest := strings.TrimSpace(trimmed[3:])
-			if !strings.HasPrefix(strings.ToLower(rest), "/a") &&
-				!strings.HasPrefix(strings.ToLower(rest), "/p") {
+			restLower := strings.ToLower(rest)
+			indent := len(line) - len(strings.TrimLeft(line, " \t"))
+			afterSet := line[indent+3:] // after "set"
+			trimmedAfterSet := strings.TrimLeft(afterSet, " \t")
+			baseCol := indent + 3 + (len(afterSet) - len(trimmedAfterSet))
+			if strings.HasPrefix(restLower, "/a") {
+				// SET /A: arithmetic — extract all assigned variable names.
+				expr := strings.TrimSpace(rest[2:])
+				for _, name := range extractSetAVars(expr) {
+					a.Vars = append(a.Vars, VarDef{
+						Name:     name,
+						Value:    "",
+						Line:     i,
+						Col:      baseCol,
+						ScopeEnd: -1,
+					})
+				}
+			} else if strings.HasPrefix(restLower, "/p") {
+				// SET /P: prompt — variable name before '='.
+				promptPart := strings.TrimSpace(rest[2:])
+				if idx := strings.IndexByte(promptPart, '='); idx > 0 {
+					a.Vars = append(a.Vars, VarDef{
+						Name:     strings.ToUpper(promptPart[:idx]),
+						Value:    "",
+						Line:     i,
+						Col:      baseCol,
+						ScopeEnd: -1,
+					})
+				}
+			} else {
 				if idx := strings.IndexByte(rest, '='); idx > 0 {
 					name := rest[:idx]
 					value := rest[idx+1:]
-					// compute col: find where the varname starts in the original line
-					indent := len(line) - len(strings.TrimLeft(line, " \t"))
-					afterSet := line[indent+3:] // after "set"
-					trimmedAfterSet := strings.TrimLeft(afterSet, " \t")
-					varCol := indent + 3 + (len(afterSet) - len(trimmedAfterSet))
 					a.Vars = append(a.Vars, VarDef{
 						Name:     strings.ToUpper(name),
 						Value:    value,
 						Line:     i,
-						Col:      varCol,
+						Col:      baseCol,
 						ScopeEnd: -1,
 					})
 				}
@@ -280,11 +320,14 @@ func Diagnostics(content string) []Diag {
 		}
 	}
 
-	// Variables defined but never used: SET VAR=... but %VAR% never appears.
+	// Variables defined but never used: SET VAR=... but %VAR% / !VAR! never appears.
 	varUsed := make(map[string]bool)
 	for _, ref := range a.VarRefs {
 		varUsed[ref.Name] = true
 	}
+	// Delayed refs reference the same variable as their SET counterpart.
+	// varUsed already contains the name (no sigil) for delayed refs since
+	// VarRef.Name is always just the identifier (e.g. "MYVAR").
 	for _, v := range a.Vars {
 		if !varUsed[v.Name] {
 			endCol := v.Col + len(v.Name)
@@ -315,7 +358,26 @@ func Diagnostics(content string) []Diag {
 
 	// Variables used but never defined.
 	for _, ref := range a.VarRefs {
-		if strings.HasPrefix(ref.Name, "%") {
+		if ref.IsDelayed {
+			// !VAR! delayed-expansion reference.
+			if !a.DelayedExpansionEnabled {
+				diags = append(diags, Diag{
+					Line:    ref.Line,
+					Col:     ref.Col - 1, // include the leading '!'
+					EndCol:  ref.Col + len(ref.Name) + 1,
+					Message: "Delayed expansion used but SETLOCAL ENABLEDELAYEDEXPANSION not found",
+					Sev:     SevWarning,
+				})
+			} else if !setDefined[ref.Name] {
+				diags = append(diags, Diag{
+					Line:    ref.Line,
+					Col:     ref.Col - 1,
+					EndCol:  ref.Col + len(ref.Name) + 1,
+					Message: "Variable not defined in this file: " + ref.Name,
+					Sev:     SevHint,
+				})
+			}
+		} else if strings.HasPrefix(ref.Name, "%") {
 			// FOR-style %%X: must have a VarDef whose scope contains ref.Line.
 			inScope := false
 			for _, s := range forScopes[ref.Name] {
@@ -391,6 +453,26 @@ func WordAtPosition(line string, col int) string {
 func isWordChar(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
 		(r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.'
+}
+
+// extractSetAVars parses a SET /A expression and returns all variable names
+// that are assigned (including augmented assignments like +=, -= etc.).
+// Handles comma-separated multiple expressions: "A=1, B=2, C=A+B".
+func extractSetAVars(expr string) []string {
+	var names []string
+	for _, part := range strings.Split(expr, ",") {
+		part = strings.TrimSpace(part)
+		eqIdx := strings.IndexByte(part, '=')
+		if eqIdx <= 0 {
+			continue
+		}
+		// Strip any trailing assignment operator (+=, -=, *=, /=, %=, &=, |=, ^=)
+		name := strings.TrimRight(part[:eqIdx], "+-*/%&|^~! \t")
+		if name != "" {
+			names = append(names, strings.ToUpper(name))
+		}
+	}
+	return names
 }
 
 // forScopeEnd returns the 0-based last line of the body of a FOR loop whose
@@ -476,11 +558,12 @@ func CalledDocURIs(a Analysis, workspace map[string]*Document) map[string]bool {
 type CompletionContext int
 
 const (
-	CompleteCommand     CompletionContext = iota // start of line / after pipe/& etc.
-	CompleteLabel                                // after GOTO or CALL :
-	CompleteVariable                             // inside %VAR% (odd number of %)
-	CompleteForVariable                          // inside %%VAR (lineBefore ends with %%)
-	CompleteFile                                 // generic path argument
+	CompleteCommand         CompletionContext = iota // start of line / after pipe/& etc.
+	CompleteLabel                                    // after GOTO or CALL :
+	CompleteVariable                                 // inside %VAR% (odd number of %)
+	CompleteForVariable                              // inside %%VAR (lineBefore ends with %%)
+	CompleteDelayedVariable                          // inside !VAR! (odd number of !)
+	CompleteFile                                     // generic path argument
 )
 
 // CompletionContextAt determines the completion context from the text up to
@@ -506,6 +589,11 @@ func CompletionContextAt(lineBefore string) CompletionContext {
 	// %VAR% style: odd number of '%' means the last '%' is an unclosed opener.
 	if strings.Count(lineBefore, "%")%2 == 1 {
 		return CompleteVariable
+	}
+
+	// !VAR! style: odd number of '!' means the last '!' is an unclosed opener.
+	if strings.Count(lineBefore, "!")%2 == 1 {
+		return CompleteDelayedVariable
 	}
 
 	// After GOTO or inside CALL :
@@ -547,9 +635,11 @@ func labelColAfterKeyword(line string, keyLen int) int {
 	return indent + keyLen + (len(after) - len(name))
 }
 
-// appendVarRefs scans line for %NAME% patterns and appends a VarRef for each.
-// %% (escaped percent) and positional args %0-%9 are skipped.
+// appendVarRefs scans line for %NAME% / %%X / !NAME! patterns and appends a
+// VarRef for each. %% (escaped percent) and positional args %0-%9 are skipped.
+// !! (escaped exclamation) is also skipped.
 func appendVarRefs(refs []VarRef, line string, lineIdx int) []VarRef {
+	// --- %NAME% and %%X pass ---
 	rest := line
 	offset := 0
 	for {
@@ -557,7 +647,7 @@ func appendVarRefs(refs []VarRef, line string, lineIdx int) []VarRef {
 		if pct < 0 {
 			break
 		}
-		
+
 		// Check for %%I style FOR loop variables
 		if pct+2 < len(rest) && rest[pct+1] == '%' {
 			char := rest[pct+2]
@@ -591,6 +681,35 @@ func appendVarRefs(refs []VarRef, line string, lineIdx int) []VarRef {
 		offset += advance
 		rest = rest[advance:]
 	}
+
+	// --- !NAME! delayed-expansion pass ---
+	rest = line
+	offset = 0
+	for {
+		bang := strings.Index(rest, "!")
+		if bang < 0 {
+			break
+		}
+		after := rest[bang+1:]
+		end := strings.Index(after, "!")
+		if end < 0 {
+			break
+		}
+		name := after[:end]
+		// Skip empty !!→escaped ! ; name must be a valid identifier
+		if name != "" {
+			refs = append(refs, VarRef{
+				Name:      strings.ToUpper(name),
+				Line:      lineIdx,
+				Col:       offset + bang + 1, // col of first char of name (after !)
+				IsDelayed: true,
+			})
+		}
+		advance := bang + 1 + end + 1 // past closing !
+		offset += advance
+		rest = rest[advance:]
+	}
+
 	return refs
 }
 
@@ -656,9 +775,9 @@ func DefinitionAt(workspace map[string]*Document, uri string, line, col int) (Lo
 		return Loc{}, false
 	}
 
-	// Prefer variable context when cursor is inside %...% or %%X
+	// Prefer variable context when cursor is inside %...%, %%X, or !...!
 	ctx := CompletionContextAt(lineBefore)
-	if ctx == CompleteVariable || ctx == CompleteForVariable {
+	if ctx == CompleteVariable || ctx == CompleteForVariable || ctx == CompleteDelayedVariable {
 		word := strings.ToUpper(WordAtPosition(src, col))
 		return findVarDef(word)
 	}
@@ -728,7 +847,7 @@ func ReferencesAt(workspace map[string]*Document, uri string, line, col int, inc
 	isVar := false
 
 	refCtx := CompletionContextAt(lineBefore)
-	if refCtx == CompleteVariable || refCtx == CompleteForVariable {
+	if refCtx == CompleteVariable || refCtx == CompleteForVariable || refCtx == CompleteDelayedVariable {
 		isVar = true
 	} else {
 		lowerSrc := strings.ToLower(strings.TrimSpace(src))
@@ -1100,7 +1219,11 @@ func SemanticTokens(content string) []SemToken {
 		// Variable refs (collected by Analyze, indexed by line above).
 		for _, ref := range varRefsByLine[i] {
 			col, tokenLen := ref.Col, len(ref.Name)
-			if strings.HasPrefix(ref.Name, "%") {
+			if ref.IsDelayed {
+				// !NAME! — ref.Col points to first char of name; token is !NAME! (name+2 chars).
+				col -= 1
+				tokenLen = len(ref.Name) + 2
+			} else if strings.HasPrefix(ref.Name, "%") {
 				// %%X style FOR-loop variable: ref.Col points to the letter (X),
 				// but the full source token is %%X (3 chars starting 2 before).
 				col -= 2
@@ -1244,7 +1367,8 @@ func RenameAt(workspace map[string]*Document, uri string, line, col int, newName
 	editsByURI := make(map[string][]TextEdit)
 
 	// Variable context
-	if CompletionContextAt(lineBefore) == CompleteVariable {
+	renameCtx := CompletionContextAt(lineBefore)
+	if renameCtx == CompleteVariable || renameCtx == CompleteDelayedVariable {
 		word := strings.ToUpper(WordAtPosition(src, col))
 		if word == "" {
 			return nil, fmt.Errorf("no renameable symbol at cursor")
@@ -1344,7 +1468,8 @@ func PrepareRenameAt(content string, line, col int) (Loc, bool) {
 		lineBefore = src[:col]
 	}
 
-	if CompletionContextAt(lineBefore) == CompleteVariable {
+	prepCtx := CompletionContextAt(lineBefore)
+	if prepCtx == CompleteVariable || prepCtx == CompleteDelayedVariable {
 		word := strings.ToUpper(WordAtPosition(src, col))
 		if word == "" {
 			return Loc{}, false

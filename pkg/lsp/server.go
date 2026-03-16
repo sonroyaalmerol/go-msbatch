@@ -181,7 +181,7 @@ func (s *Server) initialize(ctx *glsp.Context, params *protocol.InitializeParams
 				Change:    &syncKind,
 			},
 			HoverProvider:           true,
-			CompletionProvider:      &protocol.CompletionOptions{TriggerCharacters: []string{"%", ":"}},
+			CompletionProvider:      &protocol.CompletionOptions{TriggerCharacters: []string{"%", ":", "!"}},
 			DocumentSymbolProvider:  true,
 			WorkspaceSymbolProvider: true,
 			DefinitionProvider:      true,
@@ -484,6 +484,48 @@ func (s *Server) completion(_ *glsp.Context, params *protocol.CompletionParams) 
 				})
 			}
 		}
+
+	case CompleteDelayedVariable:
+		// Only offer completions when delayed expansion is enabled.
+		if !a.DelayedExpansionEnabled {
+			break
+		}
+		// User typed "![partial]". Replace the entire "![partial]" with "!NAME!".
+		prefix := delayedVarPrefixFromLine(lineBefore)
+		// The '!' is at: col - 1 - len(prefix)
+		replaceStart := uint32(col - 1 - len(prefix))
+		replaceEnd := uint32(col)
+		s.mu.RLock()
+		calledURIs := CalledDocURIs(a, s.docs)
+		seenVars := make(map[string]bool)
+		currentURI := string(params.TextDocument.URI)
+		for wUri, wDoc := range s.docs {
+			if wUri != currentURI && !calledURIs[wUri] {
+				continue
+			}
+			for _, v := range wDoc.Analysis.Vars {
+				if strings.HasPrefix(v.Name, "%") {
+					continue // FOR loop vars are not accessible via !VAR!
+				}
+				if !seenVars[v.Name] && strings.HasPrefix(strings.ToUpper(v.Name), strings.ToUpper(prefix)) {
+					seenVars[v.Name] = true
+					kind := protocol.CompletionItemKindVariable
+					items = append(items, protocol.CompletionItem{
+						Label:  v.Name,
+						Kind:   &kind,
+						Detail: ptr(v.Value),
+						TextEdit: protocol.TextEdit{
+							Range: protocol.Range{
+								Start: protocol.Position{Line: params.Position.Line, Character: replaceStart},
+								End:   protocol.Position{Line: params.Position.Line, Character: replaceEnd},
+							},
+							NewText: "!" + v.Name + "!",
+						},
+					})
+				}
+			}
+		}
+		s.mu.RUnlock()
 	}
 
 	return items, nil
@@ -763,6 +805,15 @@ func labelPrefixFromLine(lineBefore string) string {
 // varPrefixFromLine extracts the partial variable name after the last '%'.
 func varPrefixFromLine(lineBefore string) string {
 	idx := strings.LastIndex(lineBefore, "%")
+	if idx < 0 {
+		return ""
+	}
+	return lineBefore[idx+1:]
+}
+
+// delayedVarPrefixFromLine extracts the partial variable name after the last '!'.
+func delayedVarPrefixFromLine(lineBefore string) string {
+	idx := strings.LastIndex(lineBefore, "!")
 	if idx < 0 {
 		return ""
 	}
