@@ -201,6 +201,9 @@ func runBatchFile(p *processor.Processor, batPath string, args []string) error {
 	child.Stderr = p.Stderr
 	child.Stdin = p.Stdin
 	child.Echo = p.Echo
+	// Treat the called batch as if it's one CALL level deep so that
+	// EXIT /B returns to the caller rather than calling os.Exit.
+	child.CallDepth = 1
 
 	src := processor.Phase0ReadLine(string(content))
 	nodes := processor.ParseExpanded(src)

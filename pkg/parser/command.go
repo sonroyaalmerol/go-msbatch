@@ -149,8 +149,15 @@ func (p *Parser) collectArgs(cmd *SimpleCommand) {
 			flushArg()
 
 		case lexer.TokenKeyword:
-			v := strings.ToLower(val(t))
-			if v == "else" || v == "do" || v == "in" {
+			// Structural keywords emitted by specialised lexer states (e.g. "in"
+			// from stateFor) are never arg terminators; include them verbatim.
+			cur.WriteString(val(p.consume()))
+
+		case lexer.TokenWord:
+			// "else" at the top level (compoundDepth == 0) terminates the
+			// then-branch of an IF statement written without enclosing parens.
+			// Inside a compound block the word is a plain argument.
+			if strings.ToLower(val(t)) == "else" && p.compoundDepth == 0 {
 				flushArg()
 				return
 			}

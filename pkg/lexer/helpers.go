@@ -11,7 +11,7 @@ func isNL(r rune) bool {
 }
 
 func isPunct(r rune) bool {
-	return strings.ContainsRune("()@:|[&><", r)
+	return strings.ContainsRune("()@:|&><", r)
 }
 
 func isKeywordEnd(r rune) bool {

@@ -50,11 +50,8 @@ func init() {
 	registerKeyword("set", func(bl *BatchLexer) stateFn { return bl.stateSet })
 	registerKeyword("for", func(bl *BatchLexer) stateFn { return bl.stateFor })
 	registerKeyword("if", func(bl *BatchLexer) stateFn { return bl.stateIf })
-	registerKeyword("else", func(bl *BatchLexer) stateFn { return bl.stateRoot })
 	registerKeyword("goto", func(bl *BatchLexer) stateFn { return bl.stateGoto })
 	registerKeyword("call", func(bl *BatchLexer) stateFn { return bl.stateCall })
-	registerKeyword("do", func(bl *BatchLexer) stateFn { return bl.stateRoot })
-	registerKeyword("in", func(bl *BatchLexer) stateFn { return bl.stateRoot })
 
 	// IF modifier keywords (order matters: "not" must precede terminal modifiers)
 	registerIfModifier("not", func(_ *BatchLexer) stateFn { return nil }) // prefix – continue

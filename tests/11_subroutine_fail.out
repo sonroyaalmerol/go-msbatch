@@ -1,0 +1,4 @@
+inside: inside
+scope-ok
+inner-override: inner
+after-inner-endlocal: outer

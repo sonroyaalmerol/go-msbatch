@@ -1,0 +1,3 @@
+UNDEF=END
+not-defined
+arith-undef: 5

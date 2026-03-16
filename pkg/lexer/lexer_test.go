@@ -86,9 +86,12 @@ func TestSingleTokens(t *testing.T) {
 		// "call" without a ':' returns immediately to stateFollow → nothing extra.
 		{"keyword_call", "call", []tok{{TokenKeyword, "call"}}},
 		// structural keywords that return to stateRoot with no follow state.
-		{"keyword_else", "else", []tok{{TokenKeyword, "else"}}},
-		{"keyword_do", "do", []tok{{TokenKeyword, "do"}}},
-		{"keyword_in", "in", []tok{{TokenKeyword, "in"}}},
+		// "else", "do", "in" are plain words at command position.
+		// "in" within a FOR clause is still TokenKeyword (emitted by stateFor
+		// via lexKeyword, independent of the keyword table).
+		{"word_else", "else", []tok{{TokenWord, "else"}}},
+		{"word_do", "do", []tok{{TokenWord, "do"}}},
+		{"word_in", "in", []tok{{TokenWord, "in"}}},
 		// keywords are matched case-insensitively; the original text is preserved.
 		{"keyword_case_insensitive", "IF", []tok{{TokenKeyword, "IF"}}},
 		{"keyword_mixed_case", "GoTo", []tok{{TokenKeyword, "GoTo"}, {TokenNameLabel, ""}}},
@@ -438,7 +441,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenWord, "*.txt"},
 				{TokenPunctuation, ")"},
 				{TokenWhitespace, " "},
-				{TokenKeyword, "do"},
+				{TokenWord, "do"},
 				{TokenWhitespace, " "},
 				{TokenWord, "echo"},
 				{TokenWhitespace, " "},
@@ -466,7 +469,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenWord, "f.txt"},
 				{TokenPunctuation, ")"},
 				{TokenWhitespace, " "},
-				{TokenKeyword, "do"},
+				{TokenWord, "do"},
 				{TokenWhitespace, " "},
 				{TokenWord, "echo"},
 				{TokenWhitespace, " "},
@@ -493,7 +496,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenWord, "f.txt"},
 				{TokenPunctuation, ")"},
 				{TokenWhitespace, " "},
-				{TokenKeyword, "do"},
+				{TokenWord, "do"},
 				{TokenWhitespace, " "},
 				{TokenWord, "echo"},
 				{TokenWhitespace, " "},
@@ -518,7 +521,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenWord, "1,1,5"},
 				{TokenPunctuation, ")"},
 				{TokenWhitespace, " "},
-				{TokenKeyword, "do"},
+				{TokenWord, "do"},
 				{TokenWhitespace, " "},
 				{TokenWord, "echo"},
 				{TokenWhitespace, " "},

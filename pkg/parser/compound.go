@@ -271,10 +271,6 @@ func (p *Parser) collectStoken() string {
 			return p.collectQuotedString()
 
 		case lexer.TokenKeyword:
-			v := strings.ToLower(val(t))
-			if v == "else" || v == "do" || v == "in" {
-				return sb.String()
-			}
 			sb.WriteString(val(p.consume()))
 			return sb.String()
 

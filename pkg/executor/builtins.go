@@ -99,16 +99,21 @@ func cmdCd(p *processor.Processor, cmd *parser.SimpleCommand) error {
 }
 
 func cmdType(p *processor.Processor, cmd *parser.SimpleCommand) error {
+	failed := false
 	for _, arg := range cmd.Args {
 		content, err := os.ReadFile(processor.MapPath(arg))
 		if err != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
-			p.Env.Set("ERRORLEVEL", "1")
+			failed = true
 			continue
 		}
 		fmt.Fprint(p.Stdout, string(content))
 	}
-	p.Env.Set("ERRORLEVEL", "0")
+	if failed {
+		p.Env.Set("ERRORLEVEL", "1")
+	} else {
+		p.Env.Set("ERRORLEVEL", "0")
+	}
 	return nil
 }
 
