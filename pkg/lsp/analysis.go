@@ -551,7 +551,9 @@ func DefinitionAt(workspace map[string]*Document, uri string, line, col int) (Lo
 		lineBefore = src[:col]
 	}
 
-	// Helper to search workspace for a variable definition
+	// Helper to search workspace for a variable definition.
+	// Scope-aware: FOR loop vars (ScopeEnd >= 0) only match when line is within
+	// [v.Line, v.ScopeEnd]; they are never returned from other documents.
 	findVarDef := func(word string) (Loc, bool) {
 		// word is just the text, e.g. "MYVAR" or "I"
 		wordWithPercent := "%" + word
@@ -570,17 +572,22 @@ func DefinitionAt(workspace map[string]*Document, uri string, line, col int) (Lo
 
 		// Search current document first
 		for _, v := range a.Vars {
-			if v.Name == word || v.Name == wordWithPercent {
-				return varLoc(v, uri), true
+			if v.Name != word && v.Name != wordWithPercent {
+				continue
 			}
+			// FOR loop vars: only match if cursor line is within the loop's scope
+			if v.ScopeEnd >= 0 && (line < v.Line || line > v.ScopeEnd) {
+				continue
+			}
+			return varLoc(v, uri), true
 		}
-		// Fallback to searching other documents in workspace
+		// Fallback to other documents: only for file-wide vars (FOR vars are never shared)
 		for otherUri, otherDoc := range workspace {
 			if otherUri == uri {
 				continue
 			}
 			for _, v := range otherDoc.Analysis.Vars {
-				if v.Name == word || v.Name == wordWithPercent {
+				if (v.Name == word || v.Name == wordWithPercent) && v.ScopeEnd < 0 {
 					return varLoc(v, otherUri), true
 				}
 			}
@@ -588,18 +595,19 @@ func DefinitionAt(workspace map[string]*Document, uri string, line, col int) (Lo
 		return Loc{}, false
 	}
 
-	// Prefer variable context when cursor is inside %...%
-	if CompletionContextAt(lineBefore) == CompleteVariable {
+	// Prefer variable context when cursor is inside %...% or %%X
+	ctx := CompletionContextAt(lineBefore)
+	if ctx == CompleteVariable || ctx == CompleteForVariable {
 		word := strings.ToUpper(WordAtPosition(src, col))
 		return findVarDef(word)
 	}
 
-	// Check if cursor is on a variable definition in a SET command
+	// Check if cursor is on a variable definition (SET or FOR)
 	lowerSrc := strings.ToLower(strings.TrimSpace(src))
-	if strings.HasPrefix(lowerSrc, "set ") {
+	if strings.HasPrefix(lowerSrc, "set ") || strings.HasPrefix(lowerSrc, "for ") {
 		word := strings.ToUpper(WordAtPosition(src, col))
 		for _, v := range a.Vars {
-			if v.Name == word && v.Line == line {
+			if (v.Name == word || v.Name == "%"+word) && v.Line == line {
 				return findVarDef(word)
 			}
 		}
@@ -657,34 +665,46 @@ func ReferencesAt(workspace map[string]*Document, uri string, line, col int, inc
 	word := strings.ToUpper(WordAtPosition(src, col))
 	wordWithPercent := "%" + word
 	isVar := false
-	
-	if CompletionContextAt(lineBefore) == CompleteVariable {
+
+	refCtx := CompletionContextAt(lineBefore)
+	if refCtx == CompleteVariable || refCtx == CompleteForVariable {
 		isVar = true
-	} else if strings.HasPrefix(strings.ToLower(strings.TrimSpace(src)), "set ") {
-		// Check if it's the variable being defined
-		for _, v := range a.Vars {
-			if (v.Name == word || v.Name == wordWithPercent) && v.Line == line {
-				isVar = true
-				break
-			}
-		}
-	} else if strings.HasPrefix(strings.ToLower(strings.TrimSpace(src)), "for ") {
-		for _, v := range a.Vars {
-			if (v.Name == word || v.Name == wordWithPercent) && v.Line == line {
-				isVar = true
-				break
+	} else {
+		lowerSrc := strings.ToLower(strings.TrimSpace(src))
+		if strings.HasPrefix(lowerSrc, "set ") || strings.HasPrefix(lowerSrc, "for ") {
+			for _, v := range a.Vars {
+				if (v.Name == word || v.Name == wordWithPercent) && v.Line == line {
+					isVar = true
+					break
+				}
 			}
 		}
 	}
 
-	// Variable references (Workspace-wide)
+	// Variable references
 	if isVar {
 		if word == "" {
 			return nil
 		}
+
+		// Find the VarDef that covers the cursor position (scope-aware).
+		// FOR loop vars may have multiple definitions (nested loops); pick the
+		// innermost one whose scope contains the cursor line.
+		var scopedVar *VarDef
+		for i := range a.Vars {
+			v := &a.Vars[i]
+			if v.Name != word && v.Name != wordWithPercent {
+				continue
+			}
+			if v.ScopeEnd >= 0 && (line < v.Line || line > v.ScopeEnd) {
+				continue // cursor outside this loop's scope
+			}
+			scopedVar = v
+			break
+		}
+
 		var locs []Loc
 		seenLocs := make(map[string]bool)
-		
 		addLoc := func(l Loc) {
 			key := fmt.Sprintf("%s:%d:%d", l.URI, l.Line, l.Col)
 			if !seenLocs[key] {
@@ -695,19 +715,35 @@ func ReferencesAt(workspace map[string]*Document, uri string, line, col int, inc
 
 		for wUri, wDoc := range workspace {
 			for _, ref := range wDoc.Analysis.VarRefs {
-				if ref.Name == word || ref.Name == wordWithPercent {
-					addLoc(Loc{URI: wUri, Line: ref.Line, Col: ref.Col, EndCol: ref.Col + len(ref.Name)})
+				if ref.Name != word && ref.Name != wordWithPercent {
+					continue
 				}
+				// FOR loop vars: restrict to this loop's scope (current doc only)
+				if scopedVar != nil && scopedVar.ScopeEnd >= 0 {
+					if wUri != uri || ref.Line < scopedVar.Line || ref.Line > scopedVar.ScopeEnd {
+						continue
+					}
+				}
+				addLoc(Loc{URI: wUri, Line: ref.Line, Col: ref.Col, EndCol: ref.Col + len(ref.Name)})
 			}
 			if includeDecl {
 				for _, v := range wDoc.Analysis.Vars {
-					if v.Name == word || v.Name == wordWithPercent {
-						endCol := v.Col + len(v.Name)
-						if strings.HasPrefix(v.Name, "%") {
-							endCol++
-						}
-						addLoc(Loc{URI: wUri, Line: v.Line, Col: v.Col, EndCol: endCol})
+					if v.Name != word && v.Name != wordWithPercent {
+						continue
 					}
+					// FOR loop vars: only include the specific definition we matched
+					if v.ScopeEnd >= 0 {
+						if scopedVar == nil || wUri != uri || v.Line != scopedVar.Line {
+							continue
+						}
+					}
+					var endCol int
+					if strings.HasPrefix(v.Name, "%") {
+						endCol = v.Col + 1
+					} else {
+						endCol = v.Col + len(v.Name)
+					}
+					addLoc(Loc{URI: wUri, Line: v.Line, Col: v.Col, EndCol: endCol})
 				}
 			}
 		}

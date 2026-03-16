@@ -388,33 +388,34 @@ func (s *Server) completion(_ *glsp.Context, params *protocol.CompletionParams) 
 		}
 
 	case CompleteForVariable:
-		// FOR loop vars only: %%X variables in scope at the cursor line.
-		// Only from the current document; label = "%%X" (with %% prefix).
+		// User typed "%%". Insert just the letter so the result is "%%X".
 		cursorLine := int(params.Position.Line)
-		prefix := varPrefixFromLine(lineBefore)
+		prefix := varPrefixFromLine(lineBefore) // text after last %
 		seenForVars := make(map[string]bool)
 		for _, v := range a.Vars {
 			if !strings.HasPrefix(v.Name, "%") {
-				continue // skip SET vars
+				continue
 			}
-			// In scope: defined on or before cursor line, scope not yet ended.
 			if v.Line > cursorLine || (v.ScopeEnd >= 0 && cursorLine > v.ScopeEnd) {
 				continue
 			}
-			label := "%%" + v.Name[1:] // "%I" → "%%I"
-			if !seenForVars[label] && strings.HasPrefix(strings.ToUpper(label), strings.ToUpper("%%"+prefix)) {
+			label := "%%" + v.Name[1:]
+			letter := v.Name[1:]
+			if !seenForVars[label] && strings.HasPrefix(strings.ToUpper(letter), strings.ToUpper(prefix)) {
 				seenForVars[label] = true
 				kind := protocol.CompletionItemKindVariable
 				items = append(items, protocol.CompletionItem{
-					Label: label,
-					Kind:  &kind,
+					Label:      label,
+					Kind:       &kind,
+					InsertText: ptr(letter),
 				})
 			}
 		}
 
 	case CompleteVariable:
-		// SET-style %VAR% vars only (Name does NOT start with %).
-		// Current doc always; other docs only if explicitly called by this file.
+		// User typed "%". Insert text for SET vars includes the closing "%".
+		// FOR loop vars in scope are also offered: insert text adds the second "%" and letter.
+		cursorLine := int(params.Position.Line)
 		prefix := varPrefixFromLine(lineBefore)
 		s.mu.RLock()
 		calledURIs := CalledDocURIs(a, s.docs)
@@ -426,20 +427,40 @@ func (s *Server) completion(_ *glsp.Context, params *protocol.CompletionParams) 
 			}
 			for _, v := range wDoc.Analysis.Vars {
 				if strings.HasPrefix(v.Name, "%") {
-					continue // skip FOR loop vars
+					continue // FOR loop vars handled below
 				}
 				if !seenVars[v.Name] && strings.HasPrefix(strings.ToUpper(v.Name), strings.ToUpper(prefix)) {
 					seenVars[v.Name] = true
 					kind := protocol.CompletionItemKindVariable
 					items = append(items, protocol.CompletionItem{
-						Label:  v.Name,
-						Kind:   &kind,
-						Detail: ptr(v.Value),
+						Label:      v.Name,
+						Kind:       &kind,
+						Detail:     ptr(v.Value),
+						InsertText: ptr(v.Name + "%"),
 					})
 				}
 			}
 		}
 		s.mu.RUnlock()
+		// FOR loop vars in scope: label "%%X", insert text "%X" (first % already typed).
+		for _, v := range a.Vars {
+			if !strings.HasPrefix(v.Name, "%") {
+				continue
+			}
+			if v.Line > cursorLine || (v.ScopeEnd >= 0 && cursorLine > v.ScopeEnd) {
+				continue
+			}
+			label := "%%" + v.Name[1:]
+			if !seenVars[label] && strings.HasPrefix(strings.ToUpper(v.Name[1:]), strings.ToUpper(prefix)) {
+				seenVars[label] = true
+				kind := protocol.CompletionItemKindVariable
+				items = append(items, protocol.CompletionItem{
+					Label:      label,
+					Kind:       &kind,
+					InsertText: ptr("%" + v.Name[1:]),
+				})
+			}
+		}
 	}
 
 	return items, nil
