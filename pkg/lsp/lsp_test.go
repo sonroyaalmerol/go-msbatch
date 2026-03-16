@@ -1432,7 +1432,154 @@ func TestDiagnosticsSetVarDefined(t *testing.T) {
 	}
 }
 
-// ── Feature 7: Delayed Expansion Variables ────────────────────────────────────
+// ── Feature 7: FOR /F implicit tokens & digit-percent fixes ──────────────────
+
+func TestForFImplicitTokenVars(t *testing.T) {
+	// tokens=2,3 with %%a → should also define %%b
+	src := `for /F "tokens=2,3 delims=," %%a in ("x,y,z") do (` + "\n" +
+		`    echo %%a` + "\n" +
+		`    echo %%b` + "\n" +
+		`)`
+	a := Analyze(src)
+	names := make(map[string]bool)
+	for _, v := range a.Vars {
+		names[v.Name] = true
+	}
+	if !names["%A"] {
+		t.Error("expected %A to be defined")
+	}
+	if !names["%B"] {
+		t.Error("expected implicit %B from tokens=2,3 to be defined")
+	}
+}
+
+func TestForFImplicitTokenVarsTwoTokens(t *testing.T) {
+	// tokens=1,2 with %%i → should also define %%j
+	src := `for /F "usebackq tokens=1,2" %%i in (` + "`echo hello world`" + `) do (` + "\n" +
+		`    echo %%i` + "\n" +
+		`    echo %%j` + "\n" +
+		`)`
+	a := Analyze(src)
+	names := make(map[string]bool)
+	for _, v := range a.Vars {
+		names[v.Name] = true
+	}
+	if !names["%I"] {
+		t.Error("expected %I")
+	}
+	if !names["%J"] {
+		t.Error("expected implicit %J from tokens=1,2")
+	}
+}
+
+func TestForFImplicitTokenVarsRange(t *testing.T) {
+	// tokens=1-3 with %%a → should define %%a, %%b, %%c
+	src := `for /F "tokens=1-3" %%a in (file.txt) do echo %%a %%b %%c`
+	a := Analyze(src)
+	names := make(map[string]bool)
+	for _, v := range a.Vars {
+		names[v.Name] = true
+	}
+	for _, want := range []string{"%A", "%B", "%C"} {
+		if !names[want] {
+			t.Errorf("expected %s from tokens=1-3", want)
+		}
+	}
+}
+
+func TestForFImplicitNoDiagForTokenVars(t *testing.T) {
+	// %%b inside tokens=2,3 loop should not produce a warning
+	src := "for /F \"tokens=2,3 delims=,\" %%a in (\"x,y,z\") do (\n    echo %%a\n    echo %%b\n)\n"
+	diags := Diagnostics(src)
+	for _, d := range diags {
+		if d.Sev == SevWarning && strings.Contains(d.Message, "%B") {
+			t.Errorf("unexpected warning for implicit token var %%b: %v", d)
+		}
+	}
+}
+
+func TestDoublePercentDigitNotForVar(t *testing.T) {
+	// %%1 is an escaped positional arg, not a FOR loop variable
+	src := "echo echo helper says %%1 >> helper.bat\n"
+	a := Analyze(src)
+	for _, ref := range a.VarRefs {
+		if ref.Name == "%1" {
+			t.Errorf("%%1 should not be parsed as a FOR loop variable ref: %+v", ref)
+		}
+	}
+}
+
+func TestDoublePercentDigitNoDiag(t *testing.T) {
+	// %%1 outside a FOR loop should produce no warning about undefined FOR var
+	diags := Diagnostics("echo test %%1\n")
+	for _, d := range diags {
+		if strings.Contains(d.Message, "%1") {
+			t.Errorf("unexpected diagnostic for %%1: %v", d)
+		}
+	}
+}
+
+func TestCmdBuiltinVarNoHint(t *testing.T) {
+	// %ERRORLEVEL% is a built-in — must not produce "not defined" hint
+	diags := Diagnostics("echo %ERRORLEVEL%\n")
+	for _, d := range diags {
+		if strings.Contains(d.Message, "ERRORLEVEL") && strings.Contains(d.Message, "not defined") {
+			t.Errorf("unexpected 'not defined' hint for ERRORLEVEL: %v", d)
+		}
+	}
+}
+
+func TestFileCallSuppressesUndefinedHint(t *testing.T) {
+	// Variables set by called scripts are unknown; suppress "not defined" hints
+	// when the file contains any external CALL <file.bat>.
+	src := "call helper.bat\necho %HELPER_RAN%\n"
+	diags := Diagnostics(src)
+	for _, d := range diags {
+		if strings.Contains(d.Message, "HELPER_RAN") && strings.Contains(d.Message, "not defined") {
+			t.Errorf("unexpected 'not defined' hint when file has external CALL: %v", d)
+		}
+	}
+}
+
+func TestExtractForFTokensSpec(t *testing.T) {
+	cases := []struct{ line, want string }{
+		{`for /F "tokens=2,3 delims=," %%a in (x) do echo`, "2,3"},
+		{`for /F "usebackq tokens=1,2" %%i in (x) do echo`, "1,2"},
+		{`for /F "tokens=1-3" %%a in (x) do echo`, "1-3"},
+		{`for /F "delims=," %%a in (x) do echo`, ""},
+		{`for %%i in (1 2 3) do echo`, ""},
+	}
+	for _, c := range cases {
+		got := extractForFTokensSpec(c.line)
+		if got != c.want {
+			t.Errorf("extractForFTokensSpec(%q) = %q, want %q", c.line, got, c.want)
+		}
+	}
+}
+
+func TestCountForFTokens(t *testing.T) {
+	cases := []struct {
+		spec string
+		want int
+	}{
+		{"2,3", 2},
+		{"1,2", 2},
+		{"1,2,3", 3},
+		{"1-3", 3},
+		{"1-5", 5},
+		{"*", 1},
+		{"1,*", 2},
+		{"", 1},
+	}
+	for _, c := range cases {
+		got := countForFTokens(c.spec)
+		if got != c.want {
+			t.Errorf("countForFTokens(%q) = %d, want %d", c.spec, got, c.want)
+		}
+	}
+}
+
+// ── Feature 8: Delayed Expansion Variables ────────────────────────────────────
 
 func TestAnalyzeDelayedExpansionNotEnabled(t *testing.T) {
 	a := Analyze("set FOO=bar\necho !FOO!\n")

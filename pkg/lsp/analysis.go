@@ -206,18 +206,38 @@ func Analyze(content string) Analysis {
 			idx := strings.Index(rest, "%%")
 			if idx >= 0 && idx+2 < len(rest) {
 				char := rest[idx+2]
-				if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') {
+				// FOR loop variables must be letters; %%0-%%9 are escaped positional args.
+				if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') {
 					indent := len(line) - len(strings.TrimLeft(line, " \t"))
 					// +2 skips the %% sigil so Col points to the letter, consistent
 					// with how %FOO% vars store Col at the first letter after %.
 					varCol := indent + 4 + idx + 2
+					scopeEnd := forScopeEnd(lines, i)
 					a.Vars = append(a.Vars, VarDef{
-						Name:  "%" + strings.ToUpper(string(char)),
-						Value: "",
+						Name:     "%" + strings.ToUpper(string(char)),
+						Value:    "",
 						Line:     i,
 						Col:      varCol,
-						ScopeEnd: forScopeEnd(lines, i),
+						ScopeEnd: scopeEnd,
 					})
+					// FOR /F with tokens= can capture multiple values into
+					// successive letters. Add implicit VarDefs for each.
+					if tokenSpec := extractForFTokensSpec(trimmed); tokenSpec != "" {
+						nTokens := countForFTokens(tokenSpec)
+						for k := 1; k < nTokens; k++ {
+							nextChar := char + byte(k)
+							if !((nextChar >= 'a' && nextChar <= 'z') || (nextChar >= 'A' && nextChar <= 'Z')) {
+								break
+							}
+							a.Vars = append(a.Vars, VarDef{
+								Name:     "%" + strings.ToUpper(string(nextChar)),
+								Value:    "",
+								Line:     i,
+								Col:      varCol,
+								ScopeEnd: scopeEnd,
+							})
+						}
+					}
 				}
 			}
 		}
@@ -344,6 +364,11 @@ func Diagnostics(content string) []Diag {
 		}
 	}
 
+	// If the script makes any external CALL file.bat, those scripts can set
+	// arbitrary variables. Suppress "not defined in this file" hints in that case
+	// since we cannot statically know what the called script exports.
+	hasFileCalls := len(a.FileRefs) > 0
+
 	// Build lookup: defined SET vars (file-wide) and FOR vars with their scopes.
 	type forScope struct{ start, end int }
 	forScopes := make(map[string][]forScope) // Name → list of scopes
@@ -368,7 +393,7 @@ func Diagnostics(content string) []Diag {
 					Message: "Delayed expansion used but SETLOCAL ENABLEDELAYEDEXPANSION not found",
 					Sev:     SevWarning,
 				})
-			} else if !setDefined[ref.Name] {
+			} else if !setDefined[ref.Name] && !cmdBuiltinVars[ref.Name] && !hasFileCalls {
 				diags = append(diags, Diag{
 					Line:    ref.Line,
 					Col:     ref.Col - 1,
@@ -396,9 +421,10 @@ func Diagnostics(content string) []Diag {
 				})
 			}
 		} else {
-			// SET-style %VAR%: warn if not defined anywhere in this file.
-			// Lower severity (hint) since the variable might come from the environment.
-			if !setDefined[ref.Name] {
+			// SET-style %VAR%: hint if not defined anywhere in this file.
+			// Suppressed for built-in CMD vars and when the script makes external
+			// CALL file.bat references (those scripts can set any variable).
+			if !setDefined[ref.Name] && !cmdBuiltinVars[ref.Name] && !hasFileCalls {
 				diags = append(diags, Diag{
 					Line:    ref.Line,
 					Col:     ref.Col,
@@ -453,6 +479,81 @@ func WordAtPosition(line string, col int) string {
 func isWordChar(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
 		(r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.'
+}
+
+// cmdBuiltinVars is the set of CMD/environment variables that are always defined
+// at runtime. Usages of these never trigger "not defined in this file" hints.
+var cmdBuiltinVars = map[string]bool{
+	"ERRORLEVEL": true, "CD": true, "DATE": true, "TIME": true,
+	"RANDOM": true, "COMPUTERNAME": true, "USERNAME": true,
+	"USERPROFILE": true, "WINDIR": true, "SYSTEMROOT": true,
+	"SYSTEMDRIVE": true, "PATH": true, "PATHEXT": true, "COMSPEC": true,
+	"TEMP": true, "TMP": true, "OS": true,
+	"PROCESSOR_ARCHITECTURE": true, "NUMBER_OF_PROCESSORS": true,
+	"CMDEXTVERSION": true, "APPDATA": true, "LOCALAPPDATA": true,
+	"PROGRAMFILES": true, "PROGRAMFILES(X86)": true, "PROGRAMDATA": true,
+	"ALLUSERSPROFILE": true, "PUBLIC": true,
+	"HOMEDRIVE": true, "HOMEPATH": true,
+}
+
+// extractForFTokensSpec returns the tokens= value from a FOR /F options string,
+// or "" if there is none. It finds the first double-quoted string in forLine and
+// searches it for "tokens=<spec>".
+func extractForFTokensSpec(forLine string) string {
+	start := strings.IndexByte(forLine, '"')
+	if start < 0 {
+		return ""
+	}
+	end := strings.IndexByte(forLine[start+1:], '"')
+	if end < 0 {
+		return ""
+	}
+	opts := forLine[start+1 : start+1+end]
+	optsLower := strings.ToLower(opts)
+	tokIdx := strings.Index(optsLower, "tokens=")
+	if tokIdx < 0 {
+		return ""
+	}
+	spec := opts[tokIdx+7:]
+	if spaceIdx := strings.IndexAny(spec, " \t"); spaceIdx >= 0 {
+		spec = spec[:spaceIdx]
+	}
+	return spec
+}
+
+// countForFTokens returns the number of tokens captured by a FOR /F tokens= spec.
+// Examples: "2,3" → 2, "1-3" → 3, "1,2,3" → 3, "*" → 1.
+func countForFTokens(spec string) int {
+	count := 0
+	for _, part := range strings.Split(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "*" {
+			count++
+		} else if dashIdx := strings.Index(part, "-"); dashIdx > 0 {
+			start, end := 0, 0
+			for _, c := range part[:dashIdx] {
+				if c >= '0' && c <= '9' {
+					start = start*10 + int(c-'0')
+				}
+			}
+			for _, c := range part[dashIdx+1:] {
+				if c >= '0' && c <= '9' {
+					end = end*10 + int(c-'0')
+				}
+			}
+			if end >= start && start > 0 {
+				count += end - start + 1
+			} else {
+				count++
+			}
+		} else {
+			count++
+		}
+	}
+	if count == 0 {
+		return 1
+	}
+	return count
 }
 
 // extractSetAVars parses a SET /A expression and returns all variable names
@@ -648,10 +749,10 @@ func appendVarRefs(refs []VarRef, line string, lineIdx int) []VarRef {
 			break
 		}
 
-		// Check for %%I style FOR loop variables
+		// Check for %%I style FOR loop variables (letters only; %%0-%%9 are escaped positional args)
 		if pct+2 < len(rest) && rest[pct+1] == '%' {
 			char := rest[pct+2]
-			if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') {
+			if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') {
 				refs = append(refs, VarRef{
 					Name: "%" + strings.ToUpper(string(char)),
 					Line: lineIdx,
