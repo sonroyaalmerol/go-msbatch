@@ -13,19 +13,20 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
-// winePrefix returns the Wine command tokens from the MSBATCH_WINE_CMD
-// environment variable, or nil if Wine support is disabled.
+// exePrefix returns the command tokens from the MSBATCH_EXE_PREFIX
+// environment variable, or nil when unset.
 //
-// MSBATCH_WINE_CMD is a space-separated command that is prepended to any
-// .exe invocation, e.g.:
+// MSBATCH_EXE_PREFIX is a space-separated command that is prepended to every
+// .exe invocation on non-Windows hosts, e.g.:
 //
-//	MSBATCH_WINE_CMD=wine
-//	MSBATCH_WINE_CMD=wine64
-//	MSBATCH_WINE_CMD=wine --bottle /path/to/prefix
+//	MSBATCH_EXE_PREFIX=wine
+//	MSBATCH_EXE_PREFIX=wine64
+//	MSBATCH_EXE_PREFIX="wine --bottle /path/to/prefix"
+//	MSBATCH_EXE_PREFIX="box64 wine"
 //
 // When unset (or empty), .exe files cannot be run and will produce an error.
-func winePrefix() []string {
-	v := os.Getenv("MSBATCH_WINE_CMD")
+func exePrefix() []string {
+	v := os.Getenv("MSBATCH_EXE_PREFIX")
 	if v == "" {
 		return nil
 	}
@@ -38,22 +39,21 @@ func winePrefix() []string {
 // host OS via os/exec.
 //
 // On non-Windows systems, commands whose resolved name ends in .exe are
-// dispatched through Wine when MSBATCH_WINE_CMD is set; without it they fail
-// immediately with a descriptive error.
+// dispatched through the prefix defined by MSBATCH_EXE_PREFIX; without it
+// they fail immediately with a descriptive error.
 //
-// Argument handling differs between Wine and native dispatch:
+// Argument handling differs between prefixed and native dispatch:
 //   - Native: Windows-style paths in arguments are converted via MapPath and
 //     glob patterns are expanded against the Unix filesystem.
-//   - Wine: arguments are passed through unchanged. The Windows binary running
-//     inside Wine resolves paths through its own Windows API calls, which Wine
-//     intercepts. Converting them to Unix paths beforehand would break the
-//     program's path handling.
+//   - Prefixed (.exe): arguments are passed through unchanged. The Windows
+//     binary resolves paths through its own Windows API calls (e.g. via Wine),
+//     so converting them to Unix paths beforehand would break path handling.
 func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	cmdName := processor.MapPath(cmd.Name)
 
-	// Determine early whether this will be a Wine dispatch so that argument
+	// Determine early whether this is a prefixed .exe dispatch so that argument
 	// handling can be chosen correctly before we build the args slice.
-	isWine := runtime.GOOS != "windows" && strings.HasSuffix(strings.ToLower(cmdName), ".exe")
+	isExe := runtime.GOOS != "windows" && strings.HasSuffix(strings.ToLower(cmdName), ".exe")
 
 	// If the command resolves to a batch file, run it in-process.
 	// (Batch files are never Wine candidates.)
@@ -73,17 +73,17 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		return runBatchFile(p, batPath, batArgs)
 	}
 
-	if isWine {
-		wine := winePrefix()
-		if len(wine) == 0 {
-			fmt.Fprintf(p.Stderr, "cannot execute '%s': Wine is not configured (set MSBATCH_WINE_CMD, e.g. MSBATCH_WINE_CMD=wine)\n", cmd.Name)
+	if isExe {
+		prefix := exePrefix()
+		if len(prefix) == 0 {
+			fmt.Fprintf(p.Stderr, "cannot execute '%s': no exe prefix configured (set MSBATCH_EXE_PREFIX, e.g. MSBATCH_EXE_PREFIX=wine)\n", cmd.Name)
 			p.Env.Set("ERRORLEVEL", "9009")
 			return nil
 		}
 		// Pass arguments to the Windows binary verbatim — no MapPath, no glob
-		// expansion. Wine translates Windows paths internally.
-		wineArgs := append(append(wine[1:], cmdName), cmd.Args...)
-		return runOSCommand(p, wine[0], wineArgs, cmd.Name)
+		// expansion. The prefix tool (e.g. Wine) translates Windows paths internally.
+		prefixArgs := append(append(prefix[1:], cmdName), cmd.Args...)
+		return runOSCommand(p, prefix[0], prefixArgs, cmd.Name)
 	}
 
 	// Native Unix command — map paths and expand globs in arguments.

@@ -73,55 +73,63 @@ When **no UNC variable matches**, the path is passed through unchanged (with bac
 - Drive-relative paths (`C:foo` — relative to the current directory on drive C) are treated as absolute, which is incorrect in general.
 - The mapping only applies when `MapPath()` is called. Arguments that look like bare filenames are not mapped.
 
-## Running .exe Files (Wine)
+## Running .exe Files (exe prefix)
 
-On non-Windows hosts, invoking a `.exe` binary (e.g. `program.exe` or `C:\Tools\app.exe`) requires [Wine](https://www.winehq.org/).  go-msbatch does **not** manage Wine configuration; it only dispatches the call through whatever Wine command you provide.
+On non-Windows hosts, invoking a `.exe` binary (e.g. `program.exe` or `C:\Tools\app.exe`) requires a compatibility layer.  go-msbatch does **not** manage any such layer itself; it simply prepends whatever command you configure to every `.exe` invocation.
+
+[Wine](https://www.winehq.org/) is the most common choice, but anything that acts as a transparent prefix works (e.g. `box64 wine`, a custom wrapper script, a container entry-point, etc.).
 
 ### Configuration
 
-Set the `MSBATCH_WINE_CMD` host environment variable to the Wine executable (and any extra flags) you want prepended to every `.exe` invocation:
+Set the `MSBATCH_EXE_PREFIX` host environment variable to the executable (and any extra flags) you want prepended to every `.exe` invocation:
 
 ```sh
-# Minimal — use whatever "wine" is on PATH
-export MSBATCH_WINE_CMD=wine
+# Wine — use whatever "wine" is on PATH
+export MSBATCH_EXE_PREFIX=wine
 
-# Explicit 64-bit binary
-export MSBATCH_WINE_CMD=wine64
+# Explicit 64-bit Wine binary
+export MSBATCH_EXE_PREFIX=wine64
 
-# Custom prefix/bottle (extra flags go here, before the .exe path)
-export MSBATCH_WINE_CMD="wine --bottle /home/user/.wine-bottles/myapp"
+# Wine with a custom bottle/prefix
+export MSBATCH_EXE_PREFIX="wine --bottle /home/user/.wine-bottles/myapp"
+
+# box64 + Wine (ARM/RISC-V hosts)
+export MSBATCH_EXE_PREFIX="box64 wine"
+
+# Any other wrapper that accepts a Windows exe path as its first argument
+export MSBATCH_EXE_PREFIX="/usr/local/bin/my-compat-layer"
 ```
 
-When `MSBATCH_WINE_CMD` is **not** set (the default), any `.exe` invocation fails immediately with:
+When `MSBATCH_EXE_PREFIX` is **not** set (the default), any `.exe` invocation fails immediately with:
 
 ```
-cannot execute 'program.exe': Wine is not configured (set MSBATCH_WINE_CMD, e.g. MSBATCH_WINE_CMD=wine)
+cannot execute 'program.exe': no exe prefix configured (set MSBATCH_EXE_PREFIX, e.g. MSBATCH_EXE_PREFIX=wine)
 ```
 
 `ERRORLEVEL` is set to `9009` in that case, matching the standard "not recognised" exit code.
 
 ### How it works
 
-The variable is split on whitespace.  The first token becomes the executable; any remaining tokens are inserted between the wine binary and the `.exe` path.  The `.exe` path is run through `MapPath` (drive-letter remapping) so Wine receives a valid Unix path to the binary:
+The variable is split on whitespace.  The first token becomes the executable; any remaining tokens are prepended before the `.exe` path.  The `.exe` path is run through `MapPath` (drive-letter remapping) so the prefix tool receives a valid Unix path to the binary:
 
 ```
-MSBATCH_WINE_CMD="wine64 --some-flag"
+MSBATCH_EXE_PREFIX="wine64 --some-flag"
 C:\Tools\app.exe C:\data\file.txt
 →  wine64 --some-flag /mnt/c/Tools/app.exe C:\data\file.txt
                       ^^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^^^^
-                      mapped (Wine needs    NOT mapped — the
-                      a Unix path to load   Windows binary handles
-                      the binary)           this via Windows APIs
+                      mapped (prefix tool   NOT mapped — the
+                      needs a Unix path     Windows binary handles
+                      to load the binary)   this via Windows APIs
 ```
 
-Arguments are intentionally **not** converted to Unix paths.  The Windows program running inside Wine resolves paths through Windows API calls, which Wine intercepts and translates internally.  Passing Unix paths as arguments would break any program that uses those strings as Windows paths.
+Arguments are intentionally **not** converted to Unix paths.  The Windows binary resolves paths through Windows API calls, which the compatibility layer (e.g. Wine) intercepts and translates internally.  Passing Unix paths as arguments would break any program that treats those strings as Windows paths.
 
 ### Caveats
 
-- Wine is never invoked for `.bat` / `.cmd` files — those are always run in-process.
-- Glob patterns in arguments (e.g. `*.txt`) are **not** expanded for Wine commands — expansion is left to the Windows program or Wine's own shell layer.
-- Exit codes from Wine are forwarded to `ERRORLEVEL` as-is.
-- `WINEPREFIX` and other Wine environment variables must be configured separately in the host environment; go-msbatch does not set them.
+- The exe prefix is never used for `.bat` / `.cmd` files — those are always run in-process.
+- Glob patterns in arguments (e.g. `*.txt`) are **not** expanded — expansion is left to the Windows binary or the compatibility layer's own shell layer.
+- Exit codes from the prefix command are forwarded to `ERRORLEVEL` as-is.
+- Tool-specific environment variables (e.g. `WINEPREFIX`) must be configured separately in the host environment; go-msbatch does not set them.
 
 ## ANSI Escape Sequences
 
