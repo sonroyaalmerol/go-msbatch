@@ -432,7 +432,7 @@ func TestVarRefsSkipEscapedPercent(t *testing.T) {
 func TestDefinitionAtGotoLabel(t *testing.T) {
 	// "goto start" on line 0, ":start" on line 1
 	src := "goto start\n:start\necho hi\n"
-	loc, ok := DefinitionAt(src, 0, 7) // col 7 = inside "start"
+	loc, ok := DefinitionAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 0, 7) // col 7 = inside "start"
 	if !ok {
 		t.Fatal("expected a definition location")
 	}
@@ -443,7 +443,7 @@ func TestDefinitionAtGotoLabel(t *testing.T) {
 
 func TestDefinitionAtCallLabel(t *testing.T) {
 	src := "call :sub\n:sub\necho hi\n"
-	loc, ok := DefinitionAt(src, 0, 7) // col 7 = inside "sub"
+	loc, ok := DefinitionAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 0, 7) // col 7 = inside "sub"
 	if !ok {
 		t.Fatal("expected a definition location")
 	}
@@ -455,7 +455,7 @@ func TestDefinitionAtCallLabel(t *testing.T) {
 func TestDefinitionAtVariable(t *testing.T) {
 	src := "set MYVAR=hello\necho %MYVAR%\n"
 	// line 1, col 8 = inside "MYVAR" in "%MYVAR%"
-	loc, ok := DefinitionAt(src, 1, 8)
+	loc, ok := DefinitionAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 1, 8)
 	if !ok {
 		t.Fatal("expected a definition location for variable")
 	}
@@ -467,7 +467,7 @@ func TestDefinitionAtVariable(t *testing.T) {
 func TestDefinitionAtForwardReference(t *testing.T) {
 	// GOTO target defined later in the file.
 	src := "goto end\n:end\necho done\n"
-	loc, ok := DefinitionAt(src, 0, 6)
+	loc, ok := DefinitionAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 0, 6)
 	if !ok {
 		t.Fatal("expected definition for forward goto")
 	}
@@ -478,14 +478,14 @@ func TestDefinitionAtForwardReference(t *testing.T) {
 
 func TestDefinitionAtUnknownWord(t *testing.T) {
 	src := "echo hello\n"
-	_, ok := DefinitionAt(src, 0, 6) // "hello" is not a label or var
+	_, ok := DefinitionAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 0, 6) // "hello" is not a label or var
 	if ok {
 		t.Error("expected no definition for plain word")
 	}
 }
 
 func TestDefinitionAtEmptyPosition(t *testing.T) {
-	_, ok := DefinitionAt("echo hi\n", 0, 4) // space between "echo" and "hi"
+	_, ok := DefinitionAt(singleDocWorkspace("file:///a.bat", "echo hi\n"), "file:///a.bat", 0, 4) // space between "echo" and "hi"
 	// "echo" is returned by WordAtPosition but is not a label/var
 	if ok {
 		t.Error("expected no definition for 'echo'")
@@ -497,7 +497,7 @@ func TestDefinitionAtEmptyPosition(t *testing.T) {
 func TestReferencesAtLabelDef(t *testing.T) {
 	// Cursor on the label definition line; should find all GOTO/CALL refs.
 	src := ":loop\ngoto loop\ncall :loop\n"
-	locs := ReferencesAt(src, 0, 2, false) // col 2 = inside "loop" on ":loop" line
+	locs := ReferencesAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 0, 2, false) // col 2 = inside "loop" on ":loop" line
 	if len(locs) != 2 {
 		t.Fatalf("expected 2 refs, got %d: %v", len(locs), locs)
 	}
@@ -505,7 +505,7 @@ func TestReferencesAtLabelDef(t *testing.T) {
 
 func TestReferencesAtLabelRefIncludeDecl(t *testing.T) {
 	src := ":start\ngoto start\n"
-	locs := ReferencesAt(src, 1, 7, true) // cursor on "start" in "goto start"
+	locs := ReferencesAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 1, 7, true) // cursor on "start" in "goto start"
 	// Should include both the GOTO ref and the declaration.
 	if len(locs) != 2 {
 		t.Fatalf("expected 2 locs (ref + decl), got %d: %v", len(locs), locs)
@@ -514,7 +514,7 @@ func TestReferencesAtLabelRefIncludeDecl(t *testing.T) {
 
 func TestReferencesAtLabelRefExcludeDecl(t *testing.T) {
 	src := ":start\ngoto start\ngoto start\n"
-	locs := ReferencesAt(src, 0, 2, false) // on label def, excludeDecl
+	locs := ReferencesAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 0, 2, false) // on label def, excludeDecl
 	if len(locs) != 2 {
 		t.Errorf("expected 2 goto refs, got %d", len(locs))
 	}
@@ -523,7 +523,7 @@ func TestReferencesAtLabelRefExcludeDecl(t *testing.T) {
 func TestReferencesAtVarRef(t *testing.T) {
 	src := "set FOO=bar\necho %FOO%\necho %FOO%\n"
 	// col 8 = inside "FOO" in "%FOO%" on line 1
-	locs := ReferencesAt(src, 1, 8, false)
+	locs := ReferencesAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 1, 8, false)
 	if len(locs) != 2 {
 		t.Errorf("expected 2 var refs, got %d: %v", len(locs), locs)
 	}
@@ -531,7 +531,7 @@ func TestReferencesAtVarRef(t *testing.T) {
 
 func TestReferencesAtVarRefIncludeDecl(t *testing.T) {
 	src := "set FOO=bar\necho %FOO%\n"
-	locs := ReferencesAt(src, 1, 8, true)
+	locs := ReferencesAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 1, 8, true)
 	if len(locs) != 2 { // 1 usage + 1 declaration
 		t.Errorf("expected 2 locs (ref + decl), got %d: %v", len(locs), locs)
 	}
@@ -540,7 +540,7 @@ func TestReferencesAtVarRefIncludeDecl(t *testing.T) {
 func TestReferencesAtUnknownLabel(t *testing.T) {
 	// Word under cursor is not a known label → no results.
 	src := "goto ghost\n"
-	locs := ReferencesAt(src, 0, 7, false)
+	locs := ReferencesAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 0, 7, false)
 	if len(locs) != 0 {
 		t.Errorf("expected 0 locs for undefined label, got %d", len(locs))
 	}
@@ -549,7 +549,7 @@ func TestReferencesAtUnknownLabel(t *testing.T) {
 func TestReferencesAtRefRange(t *testing.T) {
 	// Verify the col/endCol of a goto ref points to the label name.
 	src := ":sub\ngoto sub\n"
-	locs := ReferencesAt(src, 0, 2, false)
+	locs := ReferencesAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 0, 2, false)
 	if len(locs) != 1 {
 		t.Fatalf("expected 1 ref, got %d", len(locs))
 	}
@@ -568,8 +568,8 @@ func TestServerStoreLoad(t *testing.T) {
 	if !ok {
 		t.Fatal("expected document to be found after store")
 	}
-	if content != "echo hi" {
-		t.Errorf("expected stored content, got %q", content)
+	if content.Content != "echo hi" {
+		t.Errorf("expected stored content, got %q", content.Content)
 	}
 }
 
@@ -596,8 +596,8 @@ func TestServerStoreOverwrite(t *testing.T) {
 	s.store("file:///a.bat", "v1")
 	s.store("file:///a.bat", "v2")
 	content, _ := s.load("file:///a.bat")
-	if content != "v2" {
-		t.Errorf("expected v2 after overwrite, got %q", content)
+	if content.Content != "v2" {
+		t.Errorf("expected v2 after overwrite, got %q", content.Content)
 	}
 }
 
@@ -612,7 +612,7 @@ func TestLineAt(t *testing.T) {
 		{0, "line0"},
 		{1, "line1"},
 		{2, "line2"},
-		{3, ""},   // beyond end
+		{3, ""},  // beyond end
 		{-1, ""}, // before start
 	}
 	for _, tc := range cases {
@@ -676,10 +676,11 @@ func TestVarDefCol(t *testing.T) {
 
 func TestRenameAtLabel(t *testing.T) {
 	src := ":start\ngoto start\n"
-	edits, err := RenameAt(src, 0, 2, "begin")
+	editsMap, err := RenameAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 0, 2, "begin")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	edits := editsMap["file:///a.bat"]
 	if len(edits) != 2 {
 		t.Fatalf("expected 2 edits, got %d: %v", len(edits), edits)
 	}
@@ -697,10 +698,11 @@ func TestRenameAtLabel(t *testing.T) {
 
 func TestRenameAtLabelMultipleRefs(t *testing.T) {
 	src := ":loop\ngoto loop\ncall :loop\ngoto loop\n"
-	edits, err := RenameAt(src, 0, 2, "cycle")
+	editsMap, err := RenameAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 0, 2, "cycle")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	edits := editsMap["file:///a.bat"]
 	// 1 def + 2 goto + 1 call = 4
 	if len(edits) != 4 {
 		t.Fatalf("expected 4 edits, got %d", len(edits))
@@ -710,10 +712,11 @@ func TestRenameAtLabelMultipleRefs(t *testing.T) {
 func TestRenameAtVariable(t *testing.T) {
 	src := "set FOO=bar\necho %FOO%\n"
 	// col 8 = inside %FOO%
-	edits, err := RenameAt(src, 1, 8, "BAR")
+	editsMap, err := RenameAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 1, 8, "BAR")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	edits := editsMap["file:///a.bat"]
 	// 1 def + 1 ref = 2
 	if len(edits) != 2 {
 		t.Fatalf("expected 2 edits, got %d", len(edits))
@@ -722,7 +725,7 @@ func TestRenameAtVariable(t *testing.T) {
 
 func TestRenameAtUnknown(t *testing.T) {
 	src := "echo hello\n"
-	_, err := RenameAt(src, 0, 7, "world")
+	_, err := RenameAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 0, 7, "world")
 	if err == nil {
 		t.Error("expected error for non-symbol")
 	}
@@ -1086,5 +1089,69 @@ func TestSemanticTokensEncoding(t *testing.T) {
 		if data[5] > 1000 {
 			t.Errorf("second token deltaLine seems wrong: %d", data[5])
 		}
+	}
+}
+
+func TestIssueEOF(t *testing.T) {
+	// GOTO :EOF and CALL :EOF should not be reported as undefined.
+	// Current implementation is case-sensitive and misses CALL :EOF.
+	src := "goto :EOF\ncall :EOF\ngoto eof\ncall :eof\n"
+	diags := Diagnostics(src)
+	for _, d := range diags {
+		if strings.Contains(strings.ToLower(d.Message), "undefined label: eof") {
+			t.Errorf("Unexpected diagnostic: %v", d.Message)
+		}
+	}
+}
+
+func TestIssueDynamicGoto(t *testing.T) {
+	// goto %TARGET% should:
+	// 1. Not be reported as "Undefined label: %target%"
+	// 2. Count as a reference to TARGET variable.
+	src := "set TARGET=MYLABEL\ngoto %TARGET%\n:MYLABEL\n:REALLYUNUSED\n"
+	diags := Diagnostics(src)
+
+	unusedFound := false
+
+	for _, d := range diags {
+		// Should not have "Variable defined but never used: TARGET"
+		if strings.Contains(d.Message, "Variable defined but never used: TARGET") {
+			t.Errorf("Unexpected diagnostic: %v", d.Message)
+		}
+		// Should not have "Undefined label: %target%"
+		if strings.Contains(d.Message, "Undefined label: %target%") {
+			t.Errorf("Unexpected diagnostic: %v", d.Message)
+		}
+		if strings.Contains(d.Message, "Unused label: mylabel") {
+			t.Errorf("Unexpected diagnostic: %v (should have been resolved from TARGET)", d.Message)
+		}
+		if strings.Contains(d.Message, "Unused label: reallyunused") {
+			unusedFound = true
+		}
+	}
+
+	if !unusedFound {
+		t.Errorf("Expected 'Unused label: reallyunused' but it was not reported")
+	}
+}
+
+func TestIssueUnresolvedDynamicGoto(t *testing.T) {
+	// If there is an unresolved dynamic goto, we might want to suppress unused label warnings.
+	src := "goto %1\n:MYLABEL\n"
+	diags := Diagnostics(src)
+
+	for _, d := range diags {
+		if strings.Contains(d.Message, "Unused label: mylabel") {
+			t.Errorf("Unexpected diagnostic: %v (unresolved dynamic goto should suppress)", d.Message)
+		}
+	}
+}
+
+func singleDocWorkspace(uri, content string) map[string]*Document {
+	return map[string]*Document{
+		uri: {
+			Content:  content,
+			Analysis: Analyze(content),
+		},
 	}
 }

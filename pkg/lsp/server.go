@@ -9,6 +9,8 @@ package lsp
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -26,34 +28,36 @@ var allCommands = executor.CommandNames()
 // Server wraps the glsp server and owns the document store.
 type Server struct {
 	mu   sync.RWMutex
-	docs map[string]string // URI → content
+	docs map[string]*Document // URI → Document
 }
 
 // NewServer creates a ready-to-run LSP server.
 func NewServer() *Server {
-	return &Server{docs: make(map[string]string)}
+	return &Server{docs: make(map[string]*Document)}
 }
 
 // Run starts the server on stdin/stdout and blocks until the connection closes.
 func (s *Server) Run() error {
 	handler := protocol.Handler{
-		Initialize:                 s.initialize,
-		Initialized:                s.initialized,
-		Shutdown:                   s.shutdown,
-		TextDocumentDidOpen:        s.didOpen,
-		TextDocumentDidChange:      s.didChange,
-		TextDocumentDidClose:       s.didClose,
-		TextDocumentHover:          s.hover,
-		TextDocumentCompletion:     s.completion,
-		TextDocumentDocumentSymbol: s.documentSymbol,
-		TextDocumentDefinition:     s.definition,
-		TextDocumentReferences:     s.references,
-		TextDocumentPrepareRename:  s.prepareRename,
-		TextDocumentRename:         s.rename,
-		TextDocumentCodeLens:            s.codeLens,
-		TextDocumentSemanticTokensFull:  s.semanticTokensFull,
-		TextDocumentFoldingRange:        s.foldingRange,
-		TextDocumentCodeAction:          s.codeAction,
+		Initialize:                     s.initialize,
+		Initialized:                    s.initialized,
+		Shutdown:                       s.shutdown,
+		TextDocumentDidOpen:            s.didOpen,
+		TextDocumentDidChange:          s.didChange,
+		TextDocumentDidClose:           s.didClose,
+		TextDocumentHover:              s.hover,
+		TextDocumentCompletion:         s.completion,
+		TextDocumentDocumentSymbol:     s.documentSymbol,
+		TextDocumentDefinition:         s.definition,
+		TextDocumentReferences:         s.references,
+		TextDocumentPrepareRename:      s.prepareRename,
+		TextDocumentRename:             s.rename,
+		TextDocumentCodeLens:           s.codeLens,
+		TextDocumentSemanticTokensFull: s.semanticTokensFull,
+		TextDocumentFoldingRange:       s.foldingRange,
+		TextDocumentCodeAction:         s.codeAction,
+		WorkspaceDidChangeWatchedFiles: s.didChangeWatchedFiles,
+		WorkspaceSymbol:                s.workspaceSymbol,
 	}
 	srv := server.NewServer(&handler, serverName, false)
 	return srv.RunStdio()
@@ -63,15 +67,18 @@ func (s *Server) Run() error {
 
 func (s *Server) store(uri, content string) {
 	s.mu.Lock()
-	s.docs[uri] = content
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	s.docs[uri] = &Document{
+		Content:  content,
+		Analysis: Analyze(content),
+	}
 }
 
-func (s *Server) load(uri string) (string, bool) {
+func (s *Server) load(uri string) (*Document, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	c, ok := s.docs[uri]
-	return c, ok
+	d, ok := s.docs[uri]
+	return d, ok
 }
 
 func (s *Server) remove(uri string) {
@@ -122,7 +129,41 @@ func lineAt(content string, lineIdx int) string {
 
 // ── LSP handlers ──────────────────────────────────────────────────────────────
 
-func (s *Server) initialize(_ *glsp.Context, _ *protocol.InitializeParams) (any, error) {
+func (s *Server) initialize(ctx *glsp.Context, params *protocol.InitializeParams) (any, error) {
+	// Index workspace files if root URI or workspace folders are provided
+	var roots []string
+	if params.RootURI != nil {
+		roots = append(roots, *params.RootURI)
+	}
+	if params.WorkspaceFolders != nil {
+		for _, f := range params.WorkspaceFolders {
+			roots = append(roots, f.URI)
+		}
+	}
+
+	for _, root := range roots {
+		if after, ok := strings.CutPrefix(root, "file://"); ok {
+			path := after
+			// Read all .bat and .cmd files
+			_ = filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
+				if err != nil {
+					return nil
+				}
+				if !d.IsDir() {
+					ext := strings.ToLower(filepath.Ext(p))
+					if ext == ".bat" || ext == ".cmd" {
+						content, err := os.ReadFile(p)
+						if err == nil {
+							uri := "file://" + p
+							s.store(uri, string(content))
+						}
+					}
+				}
+				return nil
+			})
+		}
+	}
+
 	syncKind := protocol.TextDocumentSyncKindFull
 	return protocol.InitializeResult{
 		Capabilities: protocol.ServerCapabilities{
@@ -130,13 +171,14 @@ func (s *Server) initialize(_ *glsp.Context, _ *protocol.InitializeParams) (any,
 				OpenClose: ptr(true),
 				Change:    &syncKind,
 			},
-			HoverProvider:          true,
-			CompletionProvider:     &protocol.CompletionOptions{TriggerCharacters: []string{"%", ":"}},
-			DocumentSymbolProvider: true,
-			DefinitionProvider:     true,
-			ReferencesProvider:     true,
-			RenameProvider:         &protocol.RenameOptions{PrepareProvider: ptr(true)},
-			CodeLensProvider:       &protocol.CodeLensOptions{},
+			HoverProvider:           true,
+			CompletionProvider:      &protocol.CompletionOptions{TriggerCharacters: []string{"%", ":"}},
+			DocumentSymbolProvider:  true,
+			WorkspaceSymbolProvider: true,
+			DefinitionProvider:      true,
+			ReferencesProvider:      true,
+			RenameProvider:          &protocol.RenameOptions{PrepareProvider: ptr(true)},
+			CodeLensProvider:        &protocol.CodeLensOptions{},
 			SemanticTokensProvider: &protocol.SemanticTokensOptions{
 				Legend: protocol.SemanticTokensLegend{
 					TokenTypes:     SemTokenTypes,
@@ -154,8 +196,79 @@ func (s *Server) initialize(_ *glsp.Context, _ *protocol.InitializeParams) (any,
 	}, nil
 }
 
-func (s *Server) initialized(_ *glsp.Context, _ *protocol.InitializedParams) error {
+func (s *Server) initialized(ctx *glsp.Context, _ *protocol.InitializedParams) error {
+	ctx.Notify("client/registerCapability", &protocol.RegistrationParams{
+		Registrations: []protocol.Registration{
+			{
+				ID:     "workspace/didChangeWatchedFiles",
+				Method: "workspace/didChangeWatchedFiles",
+				RegisterOptions: protocol.DidChangeWatchedFilesRegistrationOptions{
+					Watchers: []protocol.FileSystemWatcher{
+						{GlobPattern: "**/*.bat"},
+						{GlobPattern: "**/*.cmd"},
+						{GlobPattern: "**/*.BAT"},
+						{GlobPattern: "**/*.CMD"},
+					},
+				},
+			},
+		},
+	})
 	return nil
+}
+
+func (s *Server) didChangeWatchedFiles(_ *glsp.Context, params *protocol.DidChangeWatchedFilesParams) error {
+	for _, change := range params.Changes {
+		uri := change.URI
+		if change.Type == protocol.FileChangeTypeDeleted {
+			s.remove(uri)
+		} else {
+			if after, ok := strings.CutPrefix(uri, "file://"); ok {
+				path := after
+				content, err := os.ReadFile(path)
+				if err == nil {
+					s.store(uri, string(content))
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Server) workspaceSymbol(_ *glsp.Context, params *protocol.WorkspaceSymbolParams) ([]protocol.SymbolInformation, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var syms []protocol.SymbolInformation
+	query := strings.ToLower(params.Query)
+
+	for uri, doc := range s.docs {
+		for _, lbl := range doc.Analysis.Labels {
+			if query == "" || strings.Contains(strings.ToLower(lbl.Name), query) {
+				syms = append(syms, protocol.SymbolInformation{
+					Name: ":" + lbl.Name,
+					Kind: protocol.SymbolKindFunction,
+					Location: protocol.Location{
+						URI:   uri,
+						Range: lineRange(uint32(lbl.Line)),
+					},
+				})
+			}
+		}
+
+		for _, v := range doc.Analysis.Vars {
+			if query == "" || strings.Contains(strings.ToLower(v.Name), query) {
+				syms = append(syms, protocol.SymbolInformation{
+					Name: v.Name,
+					Kind: protocol.SymbolKindVariable,
+					Location: protocol.Location{
+						URI:   uri,
+						Range: lineRange(uint32(v.Line)),
+					},
+				})
+			}
+		}
+	}
+	return syms, nil
 }
 
 func (s *Server) shutdown(_ *glsp.Context) error {
@@ -193,12 +306,12 @@ func (s *Server) didClose(_ *glsp.Context, params *protocol.DidCloseTextDocument
 }
 
 func (s *Server) hover(_ *glsp.Context, params *protocol.HoverParams) (*protocol.Hover, error) {
-	content, ok := s.load(string(params.TextDocument.URI))
+	doc, ok := s.load(string(params.TextDocument.URI))
 	if !ok {
 		return nil, nil
 	}
 
-	line := lineAt(content, int(params.Position.Line))
+	line := lineAt(doc.Content, int(params.Position.Line))
 	word := WordAtPosition(line, int(params.Position.Character))
 	if word == "" {
 		return nil, nil
@@ -218,17 +331,17 @@ func (s *Server) hover(_ *glsp.Context, params *protocol.HoverParams) (*protocol
 }
 
 func (s *Server) completion(_ *glsp.Context, params *protocol.CompletionParams) (any, error) {
-	content, ok := s.load(string(params.TextDocument.URI))
+	doc, ok := s.load(string(params.TextDocument.URI))
 	if !ok {
 		return nil, nil
 	}
 
-	line := lineAt(content, int(params.Position.Line))
+	line := lineAt(doc.Content, int(params.Position.Line))
 	col := min(int(params.Position.Character), len(line))
 	lineBefore := line[:col]
 
 	ctx := CompletionContextAt(lineBefore)
-	a := Analyze(content)
+	a := doc.Analysis
 
 	var items []protocol.CompletionItem
 	switch ctx {
@@ -267,28 +380,35 @@ func (s *Server) completion(_ *glsp.Context, params *protocol.CompletionParams) 
 
 	case CompleteVariable:
 		prefix := varPrefixFromLine(lineBefore)
-		for _, v := range a.Vars {
-			if strings.HasPrefix(strings.ToUpper(v.Name), strings.ToUpper(prefix)) {
-				kind := protocol.CompletionItemKindVariable
-				items = append(items, protocol.CompletionItem{
-					Label:  v.Name,
-					Kind:   &kind,
-					Detail: ptr(v.Value),
-				})
+		// Return variables from the entire workspace
+		s.mu.RLock()
+		seenVars := make(map[string]bool)
+		for _, wDoc := range s.docs {
+			for _, v := range wDoc.Analysis.Vars {
+				if !seenVars[v.Name] && strings.HasPrefix(strings.ToUpper(v.Name), strings.ToUpper(prefix)) {
+					seenVars[v.Name] = true
+					kind := protocol.CompletionItemKindVariable
+					items = append(items, protocol.CompletionItem{
+						Label:  v.Name,
+						Kind:   &kind,
+						Detail: ptr(v.Value),
+					})
+				}
 			}
 		}
+		s.mu.RUnlock()
 	}
 
 	return items, nil
 }
 
 func (s *Server) documentSymbol(_ *glsp.Context, params *protocol.DocumentSymbolParams) (any, error) {
-	content, ok := s.load(string(params.TextDocument.URI))
+	doc, ok := s.load(string(params.TextDocument.URI))
 	if !ok {
 		return nil, nil
 	}
 
-	a := Analyze(content)
+	a := doc.Analysis
 	var syms []protocol.DocumentSymbol
 
 	for _, lbl := range a.Labels {
@@ -316,16 +436,20 @@ func (s *Server) documentSymbol(_ *glsp.Context, params *protocol.DocumentSymbol
 }
 
 func (s *Server) definition(_ *glsp.Context, params *protocol.DefinitionParams) (any, error) {
-	content, ok := s.load(string(params.TextDocument.URI))
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	uri := string(params.TextDocument.URI)
+	_, ok := s.docs[uri]
 	if !ok {
 		return nil, nil
 	}
-	loc, found := DefinitionAt(content, int(params.Position.Line), int(params.Position.Character))
+	loc, found := DefinitionAt(s.docs, uri, int(params.Position.Line), int(params.Position.Character))
 	if !found {
 		return nil, nil
 	}
 	return protocol.Location{
-		URI: params.TextDocument.URI,
+		URI: protocol.DocumentUri(loc.URI),
 		Range: protocol.Range{
 			Start: protocol.Position{Line: uint32(loc.Line), Character: uint32(loc.Col)},
 			End:   protocol.Position{Line: uint32(loc.Line), Character: uint32(loc.EndCol)},
@@ -334,11 +458,16 @@ func (s *Server) definition(_ *glsp.Context, params *protocol.DefinitionParams) 
 }
 
 func (s *Server) references(_ *glsp.Context, params *protocol.ReferenceParams) ([]protocol.Location, error) {
-	content, ok := s.load(string(params.TextDocument.URI))
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	uri := string(params.TextDocument.URI)
+	_, ok := s.docs[uri]
 	if !ok {
 		return nil, nil
 	}
-	raw := ReferencesAt(content,
+	raw := ReferencesAt(s.docs,
+		uri,
 		int(params.Position.Line),
 		int(params.Position.Character),
 		params.Context.IncludeDeclaration,
@@ -349,7 +478,7 @@ func (s *Server) references(_ *glsp.Context, params *protocol.ReferenceParams) (
 	locs := make([]protocol.Location, len(raw))
 	for i, r := range raw {
 		locs[i] = protocol.Location{
-			URI: params.TextDocument.URI,
+			URI: protocol.DocumentUri(r.URI),
 			Range: protocol.Range{
 				Start: protocol.Position{Line: uint32(r.Line), Character: uint32(r.Col)},
 				End:   protocol.Position{Line: uint32(r.Line), Character: uint32(r.EndCol)},
@@ -360,10 +489,11 @@ func (s *Server) references(_ *glsp.Context, params *protocol.ReferenceParams) (
 }
 
 func (s *Server) codeAction(_ *glsp.Context, params *protocol.CodeActionParams) (any, error) {
-	content, ok := s.load(string(params.TextDocument.URI))
+	doc, ok := s.load(string(params.TextDocument.URI))
 	if !ok {
 		return nil, nil
 	}
+	content := doc.Content
 	startLine := int(params.Range.Start.Line)
 	endLine := int(params.Range.End.Line)
 
@@ -409,10 +539,11 @@ func (s *Server) codeAction(_ *glsp.Context, params *protocol.CodeActionParams) 
 }
 
 func (s *Server) foldingRange(_ *glsp.Context, params *protocol.FoldingRangeParams) ([]protocol.FoldingRange, error) {
-	content, ok := s.load(string(params.TextDocument.URI))
+	doc, ok := s.load(string(params.TextDocument.URI))
 	if !ok {
 		return nil, nil
 	}
+	content := doc.Content
 	folds := FoldingRanges(content)
 	if len(folds) == 0 {
 		return nil, nil
@@ -429,20 +560,22 @@ func (s *Server) foldingRange(_ *glsp.Context, params *protocol.FoldingRangePara
 }
 
 func (s *Server) semanticTokensFull(_ *glsp.Context, params *protocol.SemanticTokensParams) (*protocol.SemanticTokens, error) {
-	content, ok := s.load(string(params.TextDocument.URI))
+	doc, ok := s.load(string(params.TextDocument.URI))
 	if !ok {
 		return nil, nil
 	}
+	content := doc.Content
 	tokens := SemanticTokens(content)
 	data := EncodeSemanticTokens(tokens)
 	return &protocol.SemanticTokens{Data: data}, nil
 }
 
 func (s *Server) codeLens(_ *glsp.Context, params *protocol.CodeLensParams) ([]protocol.CodeLens, error) {
-	content, ok := s.load(string(params.TextDocument.URI))
+	doc, ok := s.load(string(params.TextDocument.URI))
 	if !ok {
 		return nil, nil
 	}
+	content := doc.Content
 	lenses := CodeLenses(content)
 	if len(lenses) == 0 {
 		return nil, nil
@@ -469,10 +602,11 @@ func (s *Server) codeLens(_ *glsp.Context, params *protocol.CodeLensParams) ([]p
 }
 
 func (s *Server) prepareRename(_ *glsp.Context, params *protocol.PrepareRenameParams) (any, error) {
-	content, ok := s.load(string(params.TextDocument.URI))
+	doc, ok := s.load(string(params.TextDocument.URI))
 	if !ok {
 		return nil, nil
 	}
+	content := doc.Content
 	loc, found := PrepareRenameAt(content, int(params.Position.Line), int(params.Position.Character))
 	if !found {
 		return nil, nil
@@ -484,29 +618,37 @@ func (s *Server) prepareRename(_ *glsp.Context, params *protocol.PrepareRenamePa
 }
 
 func (s *Server) rename(_ *glsp.Context, params *protocol.RenameParams) (*protocol.WorkspaceEdit, error) {
-	content, ok := s.load(string(params.TextDocument.URI))
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	uri := string(params.TextDocument.URI)
+	_, ok := s.docs[uri]
 	if !ok {
 		return nil, nil
 	}
-	edits, err := RenameAt(content, int(params.Position.Line), int(params.Position.Character), params.NewName)
-	if err != nil || len(edits) == 0 {
+
+	editsByURI, err := RenameAt(s.docs, uri, int(params.Position.Line), int(params.Position.Character), params.NewName)
+	if err != nil || len(editsByURI) == 0 {
 		return nil, nil
 	}
-	lspEdits := make([]protocol.TextEdit, len(edits))
-	for i, e := range edits {
-		lspEdits[i] = protocol.TextEdit{
-			Range: protocol.Range{
-				Start: protocol.Position{Line: uint32(e.Line), Character: uint32(e.Col)},
-				End:   protocol.Position{Line: uint32(e.Line), Character: uint32(e.EndCol)},
-			},
-			NewText: e.NewText,
+
+	workspaceChanges := make(map[protocol.DocumentUri][]protocol.TextEdit)
+	for wUri, edits := range editsByURI {
+		lspEdits := make([]protocol.TextEdit, len(edits))
+		for i, e := range edits {
+			lspEdits[i] = protocol.TextEdit{
+				Range: protocol.Range{
+					Start: protocol.Position{Line: uint32(e.Line), Character: uint32(e.Col)},
+					End:   protocol.Position{Line: uint32(e.Line), Character: uint32(e.EndCol)},
+				},
+				NewText: e.NewText,
+			}
 		}
+		workspaceChanges[protocol.DocumentUri(wUri)] = lspEdits
 	}
-	uri := params.TextDocument.URI
+
 	return &protocol.WorkspaceEdit{
-		Changes: map[protocol.DocumentUri][]protocol.TextEdit{
-			uri: lspEdits,
-		},
+		Changes: workspaceChanges,
 	}, nil
 }
 

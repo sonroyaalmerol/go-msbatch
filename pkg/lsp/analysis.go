@@ -40,18 +40,34 @@ type VarRef struct {
 
 // Loc is a compact source range returned by DefinitionAt / ReferencesAt.
 type Loc struct {
+	URI    string
 	Line   int // 0-based
 	Col    int // 0-based start column
 	EndCol int // 0-based exclusive end column (same line)
 }
 
+// Document represents a single loaded file and its cached analysis.
+type Document struct {
+	Content  string
+	Analysis Analysis
+}
+
+// FileRef is a CALL <file> reference.
+type FileRef struct {
+	Path string // The literal string typed after "CALL "
+	Line int    // 0-based
+	Col  int    // 0-based start column of the file path in the line
+}
+
 // Analysis holds the full analysis result for one document.
 type Analysis struct {
-	Labels   []LabelDef
-	Vars     []VarDef
-	GotoRefs []LabelRef // GOTO label
-	CallRefs []LabelRef // CALL :label
-	VarRefs  []VarRef   // %VARIABLE% usages
+	Labels          []LabelDef
+	Vars            []VarDef
+	GotoRefs        []LabelRef // GOTO label
+	CallRefs        []LabelRef // CALL :label
+	FileRefs        []FileRef  // CALL file.bat
+	VarRefs         []VarRef   // %VARIABLE% usages
+	HasDynamicJumps bool
 }
 
 // Analyze parses the document content and extracts structural information.
@@ -82,29 +98,46 @@ func Analyze(content string) Analysis {
 		if strings.HasPrefix(lower, "goto ") || lower == "goto" {
 			target := strings.TrimSpace(trimmed[4:])
 			target = strings.TrimPrefix(target, ":")
-			if target != "" && target != "eof" && target != ":eof" {
+			targetLower := strings.ToLower(target)
+			if target != "" && targetLower != "eof" {
 				col := labelColAfterKeyword(line, 4) // "goto" = 4 chars
-				a.GotoRefs = append(a.GotoRefs, LabelRef{Name: strings.ToLower(target), Line: i, Col: col})
-			}
-			continue
-		}
-
-		// CALL :label (subroutine call — plain CALL <file> is not a label ref)
-		if strings.HasPrefix(lower, "call :") {
-			rest := strings.TrimSpace(trimmed[5:]) // after "call "
-			fields := strings.Fields(rest)
-			if len(fields) > 0 {
-				name := strings.TrimPrefix(fields[0], ":")
-				if name != "" {
-					col := labelColAfterKeyword(line, 4) // "call" = 4 chars
-					a.CallRefs = append(a.CallRefs, LabelRef{Name: strings.ToLower(name), Line: i, Col: col})
+				a.GotoRefs = append(a.GotoRefs, LabelRef{Name: targetLower, Line: i, Col: col})
+				if strings.Contains(target, "%") {
+					a.HasDynamicJumps = true
 				}
 			}
-			continue
-		}
-
-		// SET: "set varname=value" or "set /a ..." or "set /p ..."
-		if strings.HasPrefix(lower, "set ") {
+			// Don't continue, scan for %VAR% in the same line
+		} else if strings.HasPrefix(lower, "call ") {
+			// CALL <something>
+			rest := strings.TrimSpace(trimmed[5:]) // after "call "
+			if strings.HasPrefix(rest, ":") {
+				// Subroutine call
+				fields := strings.Fields(rest)
+				if len(fields) > 0 {
+					name := strings.TrimPrefix(fields[0], ":")
+					nameLower := strings.ToLower(name)
+					if name != "" && nameLower != "eof" {
+						col := labelColAfterKeyword(line, 4) // "call" = 4 chars
+						a.CallRefs = append(a.CallRefs, LabelRef{Name: nameLower, Line: i, Col: col})
+						if strings.Contains(name, "%") {
+							a.HasDynamicJumps = true
+						}
+					}
+				}
+			} else {
+				// File call or external command
+				fields := strings.Fields(rest)
+				if len(fields) > 0 {
+					path := fields[0]
+					if strings.HasSuffix(strings.ToLower(path), ".bat") || strings.HasSuffix(strings.ToLower(path), ".cmd") {
+						col := labelColAfterKeyword(line, 4)
+						a.FileRefs = append(a.FileRefs, FileRef{Path: path, Line: i, Col: col})
+					}
+				}
+			}
+			// Don't continue, scan for %VAR% in the same line
+		} else if strings.HasPrefix(lower, "set ") {
+			// SET: "set varname=value" or "set /a ..." or "set /p ..."
 			rest := strings.TrimSpace(trimmed[3:])
 			if !strings.HasPrefix(strings.ToLower(rest), "/a") &&
 				!strings.HasPrefix(strings.ToLower(rest), "/p") {
@@ -143,9 +176,18 @@ func Diagnostics(content string) []Diag {
 		defined[l.Name] = true
 	}
 
+	// Pre-collect variable values for dynamic jump resolution
+	varValues := make(map[string][]string)
+	for _, v := range a.Vars {
+		varValues[v.Name] = append(varValues[v.Name], v.Value)
+	}
+
 	var diags []Diag
 
 	for _, ref := range a.GotoRefs {
+		if strings.Contains(ref.Name, "%") {
+			continue // Suppress undefined label warning for dynamic targets
+		}
 		if !defined[ref.Name] {
 			diags = append(diags, Diag{
 				Line:    ref.Line,
@@ -155,6 +197,9 @@ func Diagnostics(content string) []Diag {
 		}
 	}
 	for _, ref := range a.CallRefs {
+		if strings.Contains(ref.Name, "%") {
+			continue // Suppress undefined label warning for dynamic targets
+		}
 		if !defined[ref.Name] {
 			diags = append(diags, Diag{
 				Line:    ref.Line,
@@ -166,21 +211,49 @@ func Diagnostics(content string) []Diag {
 
 	// Unused labels: defined but never referenced by any GOTO or CALL.
 	refCounts := make(map[string]int, len(a.Labels))
+	hasUnresolvedJumps := false
+
+	resolveDynamic := func(name string) {
+		if !strings.Contains(name, "%") {
+			refCounts[name]++
+			return
+		}
+
+		// Very basic resolution: if name is exactly "%varname%"
+		if strings.HasPrefix(name, "%") && strings.HasSuffix(name, "%") && strings.Count(name, "%") == 2 {
+			varName := strings.ToUpper(name[1 : len(name)-1])
+			if vals, ok := varValues[varName]; ok {
+				for _, v := range vals {
+					refCounts[strings.ToLower(strings.TrimSpace(v))]++
+				}
+			} else {
+				hasUnresolvedJumps = true
+			}
+		} else {
+			hasUnresolvedJumps = true
+		}
+	}
+
 	for _, ref := range a.GotoRefs {
-		refCounts[ref.Name]++
+		resolveDynamic(ref.Name)
 	}
 	for _, ref := range a.CallRefs {
-		refCounts[ref.Name]++
+		resolveDynamic(ref.Name)
 	}
-	for _, lbl := range a.Labels {
-		if refCounts[lbl.Name] == 0 {
-			diags = append(diags, Diag{
-				Line:    lbl.Line,
-				Col:     lbl.Col,
-				EndCol:  lbl.Col + len(lbl.Name),
-				Message: "Unused label: " + lbl.Name,
-				Sev:     SevHint,
-			})
+
+	// If the script contains unresolvable dynamic jumps, we suppress unused label warnings
+	// because any label might be a target.
+	if !hasUnresolvedJumps {
+		for _, lbl := range a.Labels {
+			if refCounts[lbl.Name] == 0 {
+				diags = append(diags, Diag{
+					Line:    lbl.Line,
+					Col:     lbl.Col,
+					EndCol:  lbl.Col + len(lbl.Name),
+					Message: "Unused label: " + lbl.Name,
+					Sev:     SevHint,
+				})
+			}
 		}
 	}
 
@@ -331,33 +404,72 @@ func appendVarRefs(refs []VarRef, line string, lineIdx int) []VarRef {
 
 // DefinitionAt returns the definition location for the symbol under (line, col),
 // or the zero Loc and false if nothing was found. Lines and cols are 0-based.
-func DefinitionAt(content string, line, col int) (Loc, bool) {
+func DefinitionAt(workspace map[string]*Document, uri string, line, col int) (Loc, bool) {
+	doc, ok := workspace[uri]
+	if !ok {
+		return Loc{}, false
+	}
+	content := doc.Content
 	src := lineAt(content, line)
-	a := Analyze(content)
+	a := doc.Analysis
 
-	// Prefer variable context when cursor is inside %...%
 	lineBefore := src
 	if col <= len(src) {
 		lineBefore = src[:col]
 	}
+
+	// Prefer variable context when cursor is inside %...%
 	if CompletionContextAt(lineBefore) == CompleteVariable {
 		word := strings.ToUpper(WordAtPosition(src, col))
+
+		// Search current document first
 		for _, v := range a.Vars {
 			if v.Name == word {
-				return Loc{Line: v.Line, Col: 0, EndCol: len(lineAt(content, v.Line))}, true
+				return Loc{URI: uri, Line: v.Line, Col: 0, EndCol: len(lineAt(content, v.Line))}, true
 			}
 		}
+
+		// Fallback to searching other documents in workspace
+		for otherUri, otherDoc := range workspace {
+			if otherUri == uri {
+				continue
+			}
+			for _, v := range otherDoc.Analysis.Vars {
+				if v.Name == word {
+					return Loc{URI: otherUri, Line: v.Line, Col: 0, EndCol: len(lineAt(otherDoc.Content, v.Line))}, true
+				}
+			}
+		}
+
 		return Loc{}, false
 	}
 
-	// Label context
+	// Check if cursor is on a CALL <file>
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(lineBefore)), "call ") {
+		word := WordAtPosition(src, col)
+		for _, ref := range a.FileRefs {
+			// Compare path component (rough approximation, could be exact match)
+			if strings.Contains(ref.Path, word) {
+				// We need to resolve ref.Path to a URI.
+				// A simple heuristic is to check if it ends with .bat or .cmd and find it in the workspace.
+				lowerPath := strings.ToLower(ref.Path)
+				for wUri := range workspace {
+					if strings.HasSuffix(strings.ToLower(wUri), lowerPath) {
+						return Loc{URI: wUri, Line: 0, Col: 0, EndCol: 0}, true
+					}
+				}
+			}
+		}
+	}
+
+	// Label context (local to document)
 	word := strings.ToLower(WordAtPosition(src, col))
 	if word == "" {
 		return Loc{}, false
 	}
 	for _, lbl := range a.Labels {
 		if lbl.Name == word {
-			return Loc{Line: lbl.Line, Col: 0, EndCol: len(lineAt(content, lbl.Line))}, true
+			return Loc{URI: uri, Line: lbl.Line, Col: 0, EndCol: len(lineAt(content, lbl.Line))}, true
 		}
 	}
 	return Loc{}, false
@@ -365,38 +477,45 @@ func DefinitionAt(content string, line, col int) (Loc, bool) {
 
 // ReferencesAt returns all reference locations for the symbol under (line, col).
 // When includeDecl is true the definition site is included in the results.
-func ReferencesAt(content string, line, col int, includeDecl bool) []Loc {
+func ReferencesAt(workspace map[string]*Document, uri string, line, col int, includeDecl bool) []Loc {
+	doc, ok := workspace[uri]
+	if !ok {
+		return nil
+	}
+	content := doc.Content
 	src := lineAt(content, line)
-	a := Analyze(content)
+	a := doc.Analysis
 
 	lineBefore := src
 	if col <= len(src) {
 		lineBefore = src[:col]
 	}
 
-	// Variable references
+	// Variable references (Workspace-wide)
 	if CompletionContextAt(lineBefore) == CompleteVariable {
 		name := strings.ToUpper(WordAtPosition(src, col))
 		if name == "" {
 			return nil
 		}
 		var locs []Loc
-		for _, ref := range a.VarRefs {
-			if ref.Name == name {
-				locs = append(locs, Loc{Line: ref.Line, Col: ref.Col, EndCol: ref.Col + len(ref.Name)})
+		for wUri, wDoc := range workspace {
+			for _, ref := range wDoc.Analysis.VarRefs {
+				if ref.Name == name {
+					locs = append(locs, Loc{URI: wUri, Line: ref.Line, Col: ref.Col, EndCol: ref.Col + len(ref.Name)})
+				}
 			}
-		}
-		if includeDecl {
-			for _, v := range a.Vars {
-				if v.Name == name {
-					locs = append(locs, Loc{Line: v.Line, Col: 0, EndCol: len(lineAt(content, v.Line))})
+			if includeDecl {
+				for _, v := range wDoc.Analysis.Vars {
+					if v.Name == name {
+						locs = append(locs, Loc{URI: wUri, Line: v.Line, Col: 0, EndCol: len(lineAt(wDoc.Content, v.Line))})
+					}
 				}
 			}
 		}
 		return locs
 	}
 
-	// Label references
+	// Label references (Local to document)
 	name := strings.ToLower(WordAtPosition(src, col))
 	if name == "" {
 		return nil
@@ -415,18 +534,18 @@ func ReferencesAt(content string, line, col int, includeDecl bool) []Loc {
 	var locs []Loc
 	for _, ref := range a.GotoRefs {
 		if ref.Name == name {
-			locs = append(locs, Loc{Line: ref.Line, Col: ref.Col, EndCol: ref.Col + len(ref.Name)})
+			locs = append(locs, Loc{URI: uri, Line: ref.Line, Col: ref.Col, EndCol: ref.Col + len(ref.Name)})
 		}
 	}
 	for _, ref := range a.CallRefs {
 		if ref.Name == name {
-			locs = append(locs, Loc{Line: ref.Line, Col: ref.Col, EndCol: ref.Col + len(ref.Name)})
+			locs = append(locs, Loc{URI: uri, Line: ref.Line, Col: ref.Col, EndCol: ref.Col + len(ref.Name)})
 		}
 	}
 	if includeDecl {
 		for _, lbl := range a.Labels {
 			if lbl.Name == name {
-				locs = append(locs, Loc{Line: lbl.Line, Col: 0, EndCol: len(lineAt(content, lbl.Line))})
+				locs = append(locs, Loc{URI: uri, Line: lbl.Line, Col: 0, EndCol: len(lineAt(content, lbl.Line))})
 			}
 		}
 	}
@@ -764,7 +883,7 @@ func EncodeSemanticTokens(tokens []SemToken) []uint32 {
 
 // CodeLensData holds data for a single code lens annotation on a label definition.
 type CodeLensData struct {
-	Line      int    // line of the :label definition
+	Line      int // line of the :label definition
 	LabelName string
 	RefCount  int // total GOTO + CALL refs
 }
@@ -819,14 +938,21 @@ func wordRangeAt(line string, col int) (start, end int) {
 
 // RenameAt returns all text edits required to rename the symbol at (line, col)
 // to newName. Returns an error if there is no renameable symbol at the cursor.
-func RenameAt(content string, line, col int, newName string) ([]TextEdit, error) {
+func RenameAt(workspace map[string]*Document, uri string, line, col int, newName string) (map[string][]TextEdit, error) {
+	doc, ok := workspace[uri]
+	if !ok {
+		return nil, fmt.Errorf("document not found")
+	}
+	content := doc.Content
 	src := lineAt(content, line)
-	a := Analyze(content)
+	a := doc.Analysis
 
 	lineBefore := src
 	if col <= len(src) {
 		lineBefore = src[:col]
 	}
+
+	editsByURI := make(map[string][]TextEdit)
 
 	// Variable context
 	if CompletionContextAt(lineBefore) == CompleteVariable {
@@ -834,36 +960,43 @@ func RenameAt(content string, line, col int, newName string) ([]TextEdit, error)
 		if word == "" {
 			return nil, fmt.Errorf("no renameable symbol at cursor")
 		}
-		var edits []TextEdit
-		// Rename definition site
-		for _, v := range a.Vars {
-			if v.Name == word {
-				edits = append(edits, TextEdit{
-					Line:    v.Line,
-					Col:     v.Col,
-					EndCol:  v.Col + len(v.Name),
-					NewText: strings.ToUpper(newName),
-				})
+
+		for wUri, wDoc := range workspace {
+			var edits []TextEdit
+			// Rename definition site
+			for _, v := range wDoc.Analysis.Vars {
+				if v.Name == word {
+					edits = append(edits, TextEdit{
+						Line:    v.Line,
+						Col:     v.Col,
+						EndCol:  v.Col + len(v.Name),
+						NewText: strings.ToUpper(newName),
+					})
+				}
+			}
+			// Rename all usage sites
+			for _, ref := range wDoc.Analysis.VarRefs {
+				if ref.Name == word {
+					edits = append(edits, TextEdit{
+						Line:    ref.Line,
+						Col:     ref.Col,
+						EndCol:  ref.Col + len(ref.Name),
+						NewText: strings.ToUpper(newName),
+					})
+				}
+			}
+			if len(edits) > 0 {
+				editsByURI[wUri] = edits
 			}
 		}
-		// Rename all usage sites
-		for _, ref := range a.VarRefs {
-			if ref.Name == word {
-				edits = append(edits, TextEdit{
-					Line:    ref.Line,
-					Col:     ref.Col,
-					EndCol:  ref.Col + len(ref.Name),
-					NewText: strings.ToUpper(newName),
-				})
-			}
-		}
-		if len(edits) == 0 {
+
+		if len(editsByURI) == 0 {
 			return nil, fmt.Errorf("no renameable symbol at cursor")
 		}
-		return edits, nil
+		return editsByURI, nil
 	}
 
-	// Label context
+	// Label context (Local only)
 	word := strings.ToLower(WordAtPosition(src, col))
 	if word == "" {
 		return nil, fmt.Errorf("no renameable symbol at cursor")
@@ -906,7 +1039,9 @@ func RenameAt(content string, line, col int, newName string) ([]TextEdit, error)
 	if !found {
 		return nil, fmt.Errorf("no renameable symbol at cursor")
 	}
-	return edits, nil
+
+	editsByURI[uri] = edits
+	return editsByURI, nil
 }
 
 // PrepareRenameAt returns the range of the symbol under cursor if renameable.

@@ -90,26 +90,27 @@ Hover over any built-in command name to see its syntax and flag reference.
 |---------|---------------------|
 | Start of line | All recognised command names |
 | After `GOTO ` or `CALL :` | Label names defined in the file |
-| After `%` (open) | Variable names defined by `SET` in the file |
+| After `%` (open) | Variable names defined by `SET` across the entire workspace |
 
 ### Go to Definition
 
-- On a `GOTO`/`CALL` target → jumps to the `:label` definition line.
-- On a `%VARIABLE%` name → jumps to the `SET VAR=...` line.
+- On a `GOTO`/`CALL :label` target → jumps to the `:label` definition line.
+- On a `CALL other.bat` → jumps to `other.bat` if it exists in the workspace.
+- On a `%VARIABLE%` name → jumps to the `SET VAR=...` line (searches locally first, then falls back to other files in the workspace).
 - Forward references are supported (label defined after use).
 
 ### Find References
 
-- On a `:label` definition or any `GOTO`/`CALL` site → lists all `GOTO` and `CALL` sites for that label.
-- On a `%VARIABLE%` → lists all `%VAR%` usage sites in the file.
+- On a `:label` definition or any `GOTO`/`CALL` site → lists all `GOTO` and `CALL` sites for that label locally.
+- On a `%VARIABLE%` → lists all `%VAR%` usage sites **across the entire workspace**.
 - Supports the `includeDeclaration` flag.
 
 ### Rename
 
 Atomically renames a symbol and all its sites:
 
-- **Label** — updates the `:label` definition and every `GOTO`/`CALL` reference.
-- **Variable** — updates the `SET VAR=...` line and every `%VAR%` usage.
+- **Label** — updates the `:label` definition and every `GOTO`/`CALL` reference locally.
+- **Variable** — updates the `SET VAR=...` line and every `%VAR%` usage **across the entire workspace**.
 
 ### Document Symbols
 
@@ -117,6 +118,15 @@ Provides an outline of the file for the editor's symbol panel:
 
 - `:labels` shown as functions.
 - `SET` variables shown as variables with their current value.
+
+### Workspace Symbols
+
+Provides project-wide symbol search (e.g. via `Ctrl+T` or `Cmd+T`):
+- Search for any `:label` or `SET` variable across all `.bat` and `.cmd` files in the loaded workspace.
+
+### Workspace File Watching
+
+The language server actively watches the workspace for file changes (`workspace/didChangeWatchedFiles`). Creating, deleting, or modifying `.bat` or `.cmd` files outside of the editor will automatically update the language server's index and diagnostics.
 
 ### Code Lens
 
