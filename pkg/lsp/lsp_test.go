@@ -951,6 +951,59 @@ func TestFoldingRangesSmallSection(t *testing.T) {
 	}
 }
 
+// ── Feature 5: Code Actions ───────────────────────────────────────────────────
+
+func TestCodeActionsAtNoIssue(t *testing.T) {
+	src := ":start\ngoto start\n"
+	actions := CodeActionsAt(src, 1) // line 1: goto start (defined)
+	if len(actions) != 0 {
+		t.Errorf("expected 0 actions for defined label, got %d", len(actions))
+	}
+}
+
+func TestCodeActionsAtMissingLabel(t *testing.T) {
+	src := "goto missing\n"
+	actions := CodeActionsAt(src, 0)
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+	if actions[0].NewLabelName != "missing" {
+		t.Errorf("expected label=missing, got %q", actions[0].NewLabelName)
+	}
+	if actions[0].Kind != "quickfix" {
+		t.Errorf("expected kind=quickfix, got %q", actions[0].Kind)
+	}
+}
+
+func TestCodeActionsAtMultipleMissing(t *testing.T) {
+	src := "goto a\ngoto b\n"
+	actionsLine0 := CodeActionsAt(src, 0)
+	actionsLine1 := CodeActionsAt(src, 1)
+	if len(actionsLine0) != 1 {
+		t.Errorf("line 0: expected 1 action, got %d", len(actionsLine0))
+	}
+	if len(actionsLine1) != 1 {
+		t.Errorf("line 1: expected 1 action, got %d", len(actionsLine1))
+	}
+	if actionsLine0[0].NewLabelName != "a" {
+		t.Errorf("line 0 action: expected label=a, got %q", actionsLine0[0].NewLabelName)
+	}
+	if actionsLine1[0].NewLabelName != "b" {
+		t.Errorf("line 1 action: expected label=b, got %q", actionsLine1[0].NewLabelName)
+	}
+}
+
+func TestCodeActionsAtCallMissing(t *testing.T) {
+	src := "call :func\n"
+	actions := CodeActionsAt(src, 0)
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action for undefined call target, got %d", len(actions))
+	}
+	if actions[0].NewLabelName != "func" {
+		t.Errorf("expected label=func, got %q", actions[0].NewLabelName)
+	}
+}
+
 func TestSemanticTokensEncoding(t *testing.T) {
 	// Two tokens on different lines: keyword on line 0, variable on line 1
 	src := "echo hi\necho %VAR%\n"

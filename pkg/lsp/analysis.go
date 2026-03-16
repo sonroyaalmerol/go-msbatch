@@ -395,6 +395,63 @@ func ReferencesAt(content string, line, col int, includeDecl bool) []Loc {
 	return locs
 }
 
+// ── Code Actions ─────────────────────────────────────────────────────────────
+
+// CodeActionData describes a code action that can be applied to the document.
+type CodeActionData struct {
+	Title        string
+	Kind         string // "quickfix"
+	NewLabelName string // label name for "create missing label" actions
+	InsertLine   int    // line at which to insert (end of file)
+}
+
+// CodeActionsAt returns code actions available at the given line.
+// Currently produces "Create missing label" quick-fix for undefined GOTO/CALL targets.
+func CodeActionsAt(content string, line int) []CodeActionData {
+	a := Analyze(content)
+
+	defined := make(map[string]bool, len(a.Labels))
+	for _, l := range a.Labels {
+		defined[l.Name] = true
+	}
+
+	lines := strings.Split(content, "\n")
+	lastLine := len(lines) - 1
+	// find last non-empty line for insert point
+	insertLine := lastLine
+	for insertLine > 0 && strings.TrimSpace(strings.TrimRight(lines[insertLine], "\r")) == "" {
+		insertLine--
+	}
+
+	seen := make(map[string]bool)
+	var actions []CodeActionData
+
+	for _, ref := range a.GotoRefs {
+		if ref.Line == line && !defined[ref.Name] && !seen[ref.Name] {
+			seen[ref.Name] = true
+			actions = append(actions, CodeActionData{
+				Title:        "Create missing label :" + ref.Name,
+				Kind:         "quickfix",
+				NewLabelName: ref.Name,
+				InsertLine:   insertLine,
+			})
+		}
+	}
+	for _, ref := range a.CallRefs {
+		if ref.Line == line && !defined[ref.Name] && !seen[ref.Name] {
+			seen[ref.Name] = true
+			actions = append(actions, CodeActionData{
+				Title:        "Create missing label :" + ref.Name,
+				Kind:         "quickfix",
+				NewLabelName: ref.Name,
+				InsertLine:   insertLine,
+			})
+		}
+	}
+
+	return actions
+}
+
 // ── Folding Ranges ────────────────────────────────────────────────────────────
 
 // FoldRange represents a collapsible region in the document.

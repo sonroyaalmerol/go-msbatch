@@ -58,6 +58,7 @@ func (s *Server) Run() error {
 		TextDocumentCodeLens:            s.codeLens,
 		TextDocumentSemanticTokensFull:  s.semanticTokensFull,
 		TextDocumentFoldingRange:        s.foldingRange,
+		TextDocumentCodeAction:          s.codeAction,
 	}
 	srv := server.NewServer(&handler, serverName, false)
 	return srv.RunStdio()
@@ -149,6 +150,7 @@ func (s *Server) initialize(_ *glsp.Context, _ *protocol.InitializeParams) (any,
 				Full: true,
 			},
 			FoldingRangeProvider: true,
+			CodeActionProvider:   &protocol.CodeActionOptions{CodeActionKinds: []protocol.CodeActionKind{protocol.CodeActionKindQuickFix}},
 		},
 		ServerInfo: &protocol.InitializeResultServerInfo{
 			Name:    serverName,
@@ -360,6 +362,55 @@ func (s *Server) references(_ *glsp.Context, params *protocol.ReferenceParams) (
 		}
 	}
 	return locs, nil
+}
+
+func (s *Server) codeAction(_ *glsp.Context, params *protocol.CodeActionParams) (any, error) {
+	content, ok := s.load(string(params.TextDocument.URI))
+	if !ok {
+		return nil, nil
+	}
+	startLine := int(params.Range.Start.Line)
+	endLine := int(params.Range.End.Line)
+
+	seen := make(map[string]bool)
+	var actions []protocol.CodeAction
+	for line := startLine; line <= endLine; line++ {
+		for _, ca := range CodeActionsAt(content, line) {
+			if seen[ca.NewLabelName] {
+				continue
+			}
+			seen[ca.NewLabelName] = true
+			newText := "\n:" + ca.NewLabelName + "\n"
+			insertLine := uint32(ca.InsertLine)
+			// Insert at end of the insert line
+			lineText := lineAt(content, ca.InsertLine)
+			insertChar := uint32(len(lineText))
+			kind := protocol.CodeActionKind(ca.Kind)
+			uri := params.TextDocument.URI
+			changes := map[protocol.DocumentUri][]protocol.TextEdit{
+				uri: {
+					{
+						Range: protocol.Range{
+							Start: protocol.Position{Line: insertLine, Character: insertChar},
+							End:   protocol.Position{Line: insertLine, Character: insertChar},
+						},
+						NewText: newText,
+					},
+				},
+			}
+			actions = append(actions, protocol.CodeAction{
+				Title: ca.Title,
+				Kind:  &kind,
+				Edit: &protocol.WorkspaceEdit{
+					Changes: changes,
+				},
+			})
+		}
+	}
+	if len(actions) == 0 {
+		return nil, nil
+	}
+	return actions, nil
 }
 
 func (s *Server) foldingRange(_ *glsp.Context, params *protocol.FoldingRangeParams) ([]protocol.FoldingRange, error) {
