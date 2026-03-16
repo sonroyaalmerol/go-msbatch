@@ -6,13 +6,6 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/executor/tools"
 )
 
-// LanguageKeywords contains batch language keywords that are not command names
-// (i.e. they never appear as the first word of a line but are still reserved
-// words within IF, FOR, and other constructs).
-var LanguageKeywords = []string{
-	"not", "defined", "exist", "errorlevel", "else", "do", "in",
-}
-
 // CommandNames returns the names of all commands that have help text.
 func CommandNames() []string {
 	names := make([]string, 0, len(builtinHelp)+len(tools.ToolHelp))

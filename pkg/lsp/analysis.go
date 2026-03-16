@@ -574,14 +574,14 @@ type SemToken struct {
 }
 
 // batchKeywords is the set of known batch keyword names for semantic highlighting.
-// It is built from the executor registry (all registered command names) plus the
-// language-only keywords that never appear as the first word of a command.
+// It is built from the executor registry (all registered command names) plus all
+// lexer keywords (the single authoritative list in pkg/lexer/keywords.go).
 var batchKeywords = func() map[string]bool {
 	m := make(map[string]bool)
 	for _, name := range executor.New().Names() {
 		m[name] = true
 	}
-	for _, kw := range executor.LanguageKeywords {
+	for _, kw := range lexer.Keywords {
 		m[kw] = true
 	}
 	return m
