@@ -154,22 +154,4 @@ func registerBuiltins(r *Registry) {
 	r.HandleFunc("xcopy", tools.Xcopy)
 	r.HandleFunc("robocopy", tools.Robocopy)
 
-	// ---- commonly-used external commands (fall through to host executable) ----
-	for _, name := range []string{
-		"attrib", "chcp", "choice", "clip",
-		"comp", "fc", "curl",
-		"diskpart", "findstr", "forfiles",
-		"getmac", "gpupdate",
-		"ipconfig",
-		"net", "netstat", "nslookup",
-		"ping",
-		"reg",
-		"sc", "schtasks", "setx", "shutdown",
-		"ssh", "systeminfo",
-		"takeown", "tar",
-		"taskkill", "tasklist",
-		"tracert",
-	} {
-		r.HandleFunc(name, runExternal)
-	}
 }
