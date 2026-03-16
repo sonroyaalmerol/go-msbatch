@@ -47,7 +47,9 @@ builds:
       - -s -w
 
 archives:
-  - id: default
+  - id: msbatch
+    builds:
+      - msbatch
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
@@ -56,6 +58,13 @@ archives:
     files:
       - README.md
       - docs/**
+
+  - id: msbatch-lsp
+    builds:
+      - msbatch-lsp
+    name_template: "msbatch-lsp_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
 
 checksum:
   name_template: "checksums.txt"
