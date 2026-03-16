@@ -1769,3 +1769,205 @@ func TestSemanticTokensDelayedVar(t *testing.T) {
 		t.Errorf("expected semVariable token at line 2 col 5 len 5 for !FOO!, tokens=%v", tokens)
 	}
 }
+
+// ── Scoping framework tests ───────────────────────────────────────────────────
+
+// TestReferencesForVarDoesNotCrossFiles verifies that ReferencesAt for a FOR
+// loop variable (%%a) never returns results from another file, even if that
+// file contains a SET variable whose name is the same letter.
+func TestReferencesForVarDoesNotCrossFiles(t *testing.T) {
+	// fileA has a FOR loop using %%a
+	srcA := "for %%a in (1 2 3) do echo %%a\n"
+	uriA := "file:///a.bat"
+	// fileB has a SET variable named A — should NOT appear in refs for %%a in fileA
+	srcB := "set A=hello\necho %A%\n"
+	uriB := "file:///b.bat"
+	ws := map[string]*Document{
+		uriA: {Content: srcA, Analysis: Analyze(srcA)},
+		uriB: {Content: srcB, Analysis: Analyze(srcB)},
+	}
+	// Cursor inside %%a on line 0 of fileA: "for %%a in..." → 'a' is at col 6
+	locs := ReferencesAt(ws, uriA, 0, 6, true)
+	for _, loc := range locs {
+		if loc.URI == uriB {
+			t.Errorf("FOR var %%a references leaked into file %s: %v", uriB, loc)
+		}
+	}
+}
+
+// TestReferencesForVarNoMatchWithSetVar verifies that %%a and SET var "A" are
+// never conflated — references for %%a must not include %A% usages.
+func TestReferencesForVarNoMatchWithSetVar(t *testing.T) {
+	// Single file with both a FOR var %%a and a SET var A.
+	src := "set A=world\necho %A%\nfor %%a in (1 2 3) do echo %%a\n"
+	uri := "file:///test.bat"
+	ws := map[string]*Document{
+		uri: {Content: src, Analysis: Analyze(src)},
+	}
+	// Cursor on "%%a" inside the FOR loop body: line 2, "for %%a in (1 2 3) do echo %%a"
+	// The second %%a (in "echo %%a"): 'a' is at col 29
+	locs := ReferencesAt(ws, uri, 2, 29, false)
+	for _, loc := range locs {
+		// Should only be refs on line 2 (the FOR line), not line 1 (the %A% usage)
+		if loc.Line == 1 {
+			t.Errorf("FOR var %%a incorrectly matched SET var usage on line 1: %v", loc)
+		}
+	}
+}
+
+// TestDefinitionForVarDoesNotFindSetVar verifies that DefinitionAt for %%a
+// finds the FOR definition (Name="%A") and not a SET var "A".
+func TestDefinitionForVarDoesNotFindSetVar(t *testing.T) {
+	src := "set A=world\nfor %%a in (1 2 3) do echo %%a\n"
+	uri := "file:///test.bat"
+	ws := map[string]*Document{
+		uri: {Content: src, Analysis: Analyze(src)},
+	}
+	// Cursor inside %%a in "echo %%a" on line 1: 'a' is at col 29
+	loc, found := DefinitionAt(ws, uri, 1, 29)
+	if !found {
+		t.Fatal("DefinitionAt returned not found for %%a")
+	}
+	// Definition must be on line 1 (the FOR statement), not line 0 (the SET).
+	if loc.Line != 1 {
+		t.Errorf("expected definition on line 1 (FOR), got line %d", loc.Line)
+	}
+}
+
+// TestDefinitionSetVarCrossFileOnlyWhenCalled verifies that SET var cross-file
+// lookup only works when the other file is explicitly CALLed.
+func TestDefinitionSetVarCrossFileOnlyWhenCalled(t *testing.T) {
+	// fileA calls fileB; fileB defines FOO.
+	srcA := "call b.bat\necho %FOO%\n"
+	uriA := "file:///a.bat"
+	srcB := "set FOO=bar\n"
+	uriB := "file:///b.bat"
+	ws := map[string]*Document{
+		uriA: {Content: srcA, Analysis: Analyze(srcA)},
+		uriB: {Content: srcB, Analysis: Analyze(srcB)},
+	}
+	// Cursor on %FOO% in fileA line 1: "echo %FOO%" → col 6 (inside 'F')
+	loc, found := DefinitionAt(ws, uriA, 1, 6)
+	if !found {
+		t.Fatal("DefinitionAt should find FOO defined in called file b.bat")
+	}
+	if loc.URI != uriB {
+		t.Errorf("expected definition in %s, got %s", uriB, loc.URI)
+	}
+}
+
+// TestDefinitionSetVarNoCrossFileWithoutCall verifies that cross-file SET var
+// lookup does NOT work when the other file is NOT called.
+func TestDefinitionSetVarNoCrossFileWithoutCall(t *testing.T) {
+	// fileA does NOT call fileB; so FOO defined in fileB should not resolve.
+	srcA := "echo %FOO%\n"
+	uriA := "file:///a.bat"
+	srcB := "set FOO=bar\n"
+	uriB := "file:///b.bat"
+	ws := map[string]*Document{
+		uriA: {Content: srcA, Analysis: Analyze(srcA)},
+		uriB: {Content: srcB, Analysis: Analyze(srcB)},
+	}
+	// Cursor on %FOO% in fileA line 0: col 6 (inside 'F')
+	_, found := DefinitionAt(ws, uriA, 0, 6)
+	if found {
+		t.Error("DefinitionAt should NOT find FOO from uncalled file b.bat")
+	}
+}
+
+// TestReferencesSetVarCrossFileOnlyWhenCalled verifies that ReferencesAt for a
+// SET var only searches called files, not all workspace files.
+func TestReferencesSetVarCrossFileOnlyWhenCalled(t *testing.T) {
+	srcA := "set FOO=bar\ncall b.bat\necho %FOO%\n"
+	uriA := "file:///a.bat"
+	srcB := "echo %FOO%\n" // b.bat uses FOO but does not call a.bat
+	uriB := "file:///b.bat"
+	srcC := "echo %FOO%\n" // c.bat uses FOO but is not called
+	uriC := "file:///c.bat"
+	ws := map[string]*Document{
+		uriA: {Content: srcA, Analysis: Analyze(srcA)},
+		uriB: {Content: srcB, Analysis: Analyze(srcB)},
+		uriC: {Content: srcC, Analysis: Analyze(srcC)},
+	}
+	// Cursor on %FOO% in fileA line 2: col 6 (inside 'F')
+	locs := ReferencesAt(ws, uriA, 2, 6, false)
+	var foundC bool
+	for _, loc := range locs {
+		if loc.URI == uriC {
+			foundC = true
+		}
+	}
+	if foundC {
+		t.Error("ReferencesAt should NOT include refs from uncalled file c.bat")
+	}
+}
+
+// TestRenameForVar verifies that RenameAt for a FOR loop variable renames only
+// within the loop's scope and does not touch SET vars with the same letter.
+func TestRenameForVar(t *testing.T) {
+	// Line 0: set A=world  (SET var A — must NOT be renamed)
+	// Line 1: for %%a in (1 2 3) do echo %%a  (FOR var %%a — rename to %%b)
+	src := "set A=world\nfor %%a in (1 2 3) do echo %%a\n"
+	uri := "file:///test.bat"
+	ws := map[string]*Document{
+		uri: {Content: src, Analysis: Analyze(src)},
+	}
+	// Cursor inside %%a in "echo %%a" on line 1: 'a' is at col 29
+	edits, err := RenameAt(ws, uri, 1, 29, "b")
+	if err != nil {
+		t.Fatalf("RenameAt returned error: %v", err)
+	}
+	fileEdits, ok := edits[uri]
+	if !ok || len(fileEdits) == 0 {
+		t.Fatal("expected edits for uri")
+	}
+	// Verify that line 0 (the SET A=world line) is NOT touched.
+	for _, e := range fileEdits {
+		if e.Line == 0 {
+			t.Errorf("RenameAt for FOR var %%a should not edit SET var on line 0: %+v", e)
+		}
+	}
+	// Verify that line 1 edits rename 'a' to 'B' (def uppercase) and to 'b' (ref lowercase).
+	var foundDef, foundRef bool
+	for _, e := range fileEdits {
+		if e.Line == 1 && e.NewText == "B" {
+			foundDef = true
+		}
+		if e.Line == 1 && e.NewText == "b" {
+			foundRef = true
+		}
+	}
+	if !foundDef {
+		t.Errorf("expected def rename (NewText=B) on line 1, edits: %+v", fileEdits)
+	}
+	if !foundRef {
+		t.Errorf("expected ref rename (NewText=b) on line 1, edits: %+v", fileEdits)
+	}
+}
+
+// TestPrepareRenameForVar verifies that PrepareRenameAt succeeds for a FOR loop
+// variable and returns the correct range.
+func TestPrepareRenameForVar(t *testing.T) {
+	src := "for %%a in (1 2 3) do echo %%a\n"
+	// "for %%a ..." → 'a' is at col 6
+	loc, ok := PrepareRenameAt(src, 0, 6)
+	if !ok {
+		t.Fatal("PrepareRenameAt returned false for FOR var %%a")
+	}
+	if loc.Line != 0 {
+		t.Errorf("expected line 0, got %d", loc.Line)
+	}
+}
+
+// TestPrepareRenameForVarOutOfScope verifies that PrepareRenameAt fails when
+// the cursor is on a FOR variable letter but outside the loop scope.
+func TestPrepareRenameForVarOutOfScope(t *testing.T) {
+	// Line 0: for %%a in (...) do echo %%a — scope ends at line 0
+	// Line 1: set A=oops — not in loop; PrepareRename at 'A' here is a SET context, not FOR
+	src := "for %%a in (1 2 3) do echo %%a\necho A\n"
+	// Cursor on 'A' in "echo A" on line 1, col 5 — no %% prefix so it's CompleteCommand context
+	_, ok := PrepareRenameAt(src, 1, 5)
+	if ok {
+		t.Error("PrepareRenameAt should return false for bare 'A' outside FOR scope")
+	}
+}

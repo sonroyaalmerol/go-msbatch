@@ -823,43 +823,38 @@ func DefinitionAt(workspace map[string]*Document, uri string, line, col int) (Lo
 		lineBefore = src[:col]
 	}
 
-	// Helper to search workspace for a variable definition.
-	// Scope-aware: FOR loop vars (ScopeEnd >= 0) only match when line is within
-	// [v.Line, v.ScopeEnd]; they are never returned from other documents.
-	findVarDef := func(word string) (Loc, bool) {
-		// word is just the text, e.g. "MYVAR" or "I"
-		wordWithPercent := "%" + word
-
-		// varLoc converts a VarDef to a Loc whose Col/EndCol span the identifier
-		// letter(s) only — no sigil prefix:
-		//   %%I  → Col points to 'I', EndCol = Col+1  (Name="%I", but Col already at letter)
-		//   %FOO% → Col points to 'F', EndCol = Col+len("FOO")
-		varLoc := func(v VarDef, docURI string) Loc {
-			if strings.HasPrefix(v.Name, "%") {
-				// FOR loop var: Col already points to the letter; identifier is 1 char.
-				return Loc{URI: docURI, Line: v.Line, Col: v.Col, EndCol: v.Col + 1}
-			}
-			return Loc{URI: docURI, Line: v.Line, Col: v.Col, EndCol: v.Col + len(v.Name)}
+	// varLoc converts a VarDef to a Loc spanning just the identifier (no sigils).
+	varLoc := func(v VarDef, docURI string) Loc {
+		if strings.HasPrefix(v.Name, "%") {
+			return Loc{URI: docURI, Line: v.Line, Col: v.Col, EndCol: v.Col + 1}
 		}
+		return Loc{URI: docURI, Line: v.Line, Col: v.Col, EndCol: v.Col + len(v.Name)}
+	}
 
-		// Search current document first
+	// findVarDef looks up a variable by its canonical name.
+	//   FOR vars  → name starts with "%", e.g. "%A"  — local file + scope only
+	//   SET vars  → bare name, e.g. "MYVAR"          — current file first, then called files
+	findVarDef := func(name string) (Loc, bool) {
+		isForVar := strings.HasPrefix(name, "%")
 		for _, v := range a.Vars {
-			if v.Name != word && v.Name != wordWithPercent {
+			if v.Name != name {
 				continue
 			}
-			// FOR loop vars: only match if cursor line is within the loop's scope
 			if v.ScopeEnd >= 0 && (line < v.Line || line > v.ScopeEnd) {
 				continue
 			}
 			return varLoc(v, uri), true
 		}
-		// Fallback to other documents: only for file-wide vars (FOR vars are never shared)
+		if isForVar {
+			return Loc{}, false // FOR vars never cross file boundaries
+		}
+		calledURIs := CalledDocURIs(a, workspace)
 		for otherUri, otherDoc := range workspace {
-			if otherUri == uri {
+			if otherUri == uri || !calledURIs[otherUri] {
 				continue
 			}
 			for _, v := range otherDoc.Analysis.Vars {
-				if (v.Name == word || v.Name == wordWithPercent) && v.ScopeEnd < 0 {
+				if v.Name == name && v.ScopeEnd < 0 {
 					return varLoc(v, otherUri), true
 				}
 			}
@@ -867,20 +862,27 @@ func DefinitionAt(workspace map[string]*Document, uri string, line, col int) (Lo
 		return Loc{}, false
 	}
 
-	// Prefer variable context when cursor is inside %...%, %%X, or !...!
+	// Dispatch based on cursor context to get the canonical variable name.
 	ctx := CompletionContextAt(lineBefore)
-	if ctx == CompleteVariable || ctx == CompleteForVariable || ctx == CompleteDelayedVariable {
-		word := strings.ToUpper(WordAtPosition(src, col))
+	word := strings.ToUpper(WordAtPosition(src, col))
+	switch ctx {
+	case CompleteForVariable:
+		return findVarDef("%" + word)
+	case CompleteVariable, CompleteDelayedVariable:
 		return findVarDef(word)
 	}
 
-	// Check if cursor is on a variable definition (SET or FOR)
+	// Check if cursor is on a variable definition line (SET or FOR).
+	// Use the VarDef's own Name as the canonical form so we never conflate
+	// a SET var "A" with a FOR var "%A".
 	lowerSrc := strings.ToLower(strings.TrimSpace(src))
 	if strings.HasPrefix(lowerSrc, "set ") || strings.HasPrefix(lowerSrc, "for ") {
-		word := strings.ToUpper(WordAtPosition(src, col))
 		for _, v := range a.Vars {
-			if (v.Name == word || v.Name == "%"+word) && v.Line == line {
-				return findVarDef(word)
+			if v.Line != line {
+				continue
+			}
+			if v.Name == word || v.Name == "%"+word {
+				return findVarDef(v.Name)
 			}
 		}
 	}
@@ -904,7 +906,7 @@ func DefinitionAt(workspace map[string]*Document, uri string, line, col int) (Lo
 	}
 
 	// Label context (local to document)
-	word := strings.ToLower(WordAtPosition(src, col))
+	word = strings.ToLower(WordAtPosition(src, col))
 	if word == "" {
 		return Loc{}, false
 	}
@@ -933,47 +935,66 @@ func ReferencesAt(workspace map[string]*Document, uri string, line, col int, inc
 		lineBefore = src[:col]
 	}
 
-	// Check if we are on a variable usage or definition
+	// Resolve the canonical variable name from cursor context.
+	//   CompleteForVariable     → "%A"  (FOR var, local file + scope only)
+	//   CompleteVariable /
+	//   CompleteDelayedVariable → "FOO" (SET var, current + called files)
+	//   VarDef line             → use v.Name directly (exact canonical form)
 	word := strings.ToUpper(WordAtPosition(src, col))
-	wordWithPercent := "%" + word
-	isVar := false
-
+	var targetName string
 	refCtx := CompletionContextAt(lineBefore)
-	if refCtx == CompleteVariable || refCtx == CompleteForVariable || refCtx == CompleteDelayedVariable {
-		isVar = true
-	} else {
+	switch refCtx {
+	case CompleteForVariable:
+		targetName = "%" + word
+	case CompleteVariable, CompleteDelayedVariable:
+		targetName = word
+	default:
 		lowerSrc := strings.ToLower(strings.TrimSpace(src))
 		if strings.HasPrefix(lowerSrc, "set ") || strings.HasPrefix(lowerSrc, "for ") {
 			for _, v := range a.Vars {
-				if (v.Name == word || v.Name == wordWithPercent) && v.Line == line {
-					isVar = true
+				if v.Line != line {
+					continue
+				}
+				if v.Name == word || v.Name == "%"+word {
+					targetName = v.Name
 					break
 				}
 			}
 		}
 	}
+	isVar := targetName != ""
+	isForVar := strings.HasPrefix(targetName, "%")
 
 	// Variable references
 	if isVar {
-		if word == "" {
-			return nil
-		}
-
-		// Find the VarDef that covers the cursor position (scope-aware).
-		// FOR loop vars may have multiple definitions (nested loops); pick the
-		// innermost one whose scope contains the cursor line.
+		// Find the enclosing VarDef (scope-aware for FOR vars).
 		var scopedVar *VarDef
 		for i := range a.Vars {
 			v := &a.Vars[i]
-			if v.Name != word && v.Name != wordWithPercent {
+			if v.Name != targetName {
 				continue
 			}
 			if v.ScopeEnd >= 0 && (line < v.Line || line > v.ScopeEnd) {
-				continue // cursor outside this loop's scope
+				continue
 			}
 			scopedVar = v
 			break
 		}
+
+		// For FOR vars we need a scopedVar to know the loop boundaries.
+		// If not found (e.g. cursor on def line itself, scope check excluded it),
+		// relax to any definition in this file with matching name.
+		if isForVar && scopedVar == nil {
+			for i := range a.Vars {
+				v := &a.Vars[i]
+				if v.Name == targetName {
+					scopedVar = v
+					break
+				}
+			}
+		}
+
+		calledURIs := CalledDocURIs(a, workspace)
 
 		var locs []Loc
 		seenLocs := make(map[string]bool)
@@ -986,26 +1007,38 @@ func ReferencesAt(workspace map[string]*Document, uri string, line, col int, inc
 		}
 
 		for wUri, wDoc := range workspace {
+			// FOR vars are strictly local — never cross file boundaries.
+			if isForVar && wUri != uri {
+				continue
+			}
+			// SET vars: only current file and explicitly called files.
+			if !isForVar && wUri != uri && !calledURIs[wUri] {
+				continue
+			}
+
 			for _, ref := range wDoc.Analysis.VarRefs {
-				if ref.Name != word && ref.Name != wordWithPercent {
+				if ref.Name != targetName {
 					continue
 				}
-				// FOR loop vars: restrict to this loop's scope (current doc only)
-				if scopedVar != nil && scopedVar.ScopeEnd >= 0 {
-					if wUri != uri || ref.Line < scopedVar.Line || ref.Line > scopedVar.ScopeEnd {
+				// FOR vars: restrict to this loop's scope.
+				if isForVar && scopedVar != nil {
+					if ref.Line < scopedVar.Line || ref.Line > scopedVar.ScopeEnd {
 						continue
 					}
 				}
-				addLoc(Loc{URI: wUri, Line: ref.Line, Col: ref.Col, EndCol: ref.Col + len(ref.Name)})
+				endCol := ref.Col + len(ref.Name)
+				if isForVar {
+					endCol = ref.Col + 1 // only the letter, not the "%" prefix in Name
+				}
+				addLoc(Loc{URI: wUri, Line: ref.Line, Col: ref.Col, EndCol: endCol})
 			}
 			if includeDecl {
 				for _, v := range wDoc.Analysis.Vars {
-					if v.Name != word && v.Name != wordWithPercent {
+					if v.Name != targetName {
 						continue
 					}
-					// FOR loop vars: only include the specific definition we matched
-					if v.ScopeEnd >= 0 {
-						if scopedVar == nil || wUri != uri || v.Line != scopedVar.Line {
+					if isForVar {
+						if scopedVar == nil || v.Line != scopedVar.Line {
 							continue
 						}
 					}
@@ -1460,6 +1493,58 @@ func RenameAt(workspace map[string]*Document, uri string, line, col int, newName
 
 	// Variable context
 	renameCtx := CompletionContextAt(lineBefore)
+
+	// FOR loop variable rename: local file + scope only.
+	if renameCtx == CompleteForVariable {
+		word := strings.ToUpper(WordAtPosition(src, col))
+		if word == "" {
+			return nil, fmt.Errorf("no renameable symbol at cursor")
+		}
+		targetName := "%" + word
+		// Find the enclosing scope
+		var scopedVar *VarDef
+		for i := range a.Vars {
+			v := &a.Vars[i]
+			if v.Name != targetName {
+				continue
+			}
+			if v.ScopeEnd >= 0 && (line < v.Line || line > v.ScopeEnd) {
+				continue
+			}
+			scopedVar = v
+			break
+		}
+		if scopedVar == nil {
+			return nil, fmt.Errorf("no renameable symbol at cursor")
+		}
+		newLetter := strings.ToLower(strings.TrimLeft(newName, "%"))
+		if newLetter == "" {
+			return nil, fmt.Errorf("new name must be a single letter")
+		}
+		newLetter = string([]rune(newLetter)[0])
+		var edits []TextEdit
+		// Rename the definition letter
+		edits = append(edits, TextEdit{
+			Line: scopedVar.Line, Col: scopedVar.Col, EndCol: scopedVar.Col + 1,
+			NewText: strings.ToUpper(newLetter),
+		})
+		// Rename all in-scope refs
+		for _, ref := range a.VarRefs {
+			if ref.Name != targetName {
+				continue
+			}
+			if ref.Line < scopedVar.Line || ref.Line > scopedVar.ScopeEnd {
+				continue
+			}
+			edits = append(edits, TextEdit{
+				Line: ref.Line, Col: ref.Col, EndCol: ref.Col + 1,
+				NewText: strings.ToLower(newLetter),
+			})
+		}
+		editsByURI := map[string][]TextEdit{uri: edits}
+		return editsByURI, nil
+	}
+
 	if renameCtx == CompleteVariable || renameCtx == CompleteDelayedVariable {
 		word := strings.ToUpper(WordAtPosition(src, col))
 		if word == "" {
@@ -1561,6 +1646,28 @@ func PrepareRenameAt(content string, line, col int) (Loc, bool) {
 	}
 
 	prepCtx := CompletionContextAt(lineBefore)
+
+	if prepCtx == CompleteForVariable {
+		word := strings.ToUpper(WordAtPosition(src, col))
+		if word == "" {
+			return Loc{}, false
+		}
+		targetName := "%" + word
+		for _, v := range a.Vars {
+			if v.Name == targetName && !(v.ScopeEnd >= 0 && (line < v.Line || line > v.ScopeEnd)) {
+				start, end := wordRangeAt(src, col)
+				return Loc{Line: line, Col: start, EndCol: end}, true
+			}
+		}
+		for _, ref := range a.VarRefs {
+			if ref.Name == targetName && ref.Line == line {
+				start, end := wordRangeAt(src, col)
+				return Loc{Line: line, Col: start, EndCol: end}, true
+			}
+		}
+		return Loc{}, false
+	}
+
 	if prepCtx == CompleteVariable || prepCtx == CompleteDelayedVariable {
 		word := strings.ToUpper(WordAtPosition(src, col))
 		if word == "" {
