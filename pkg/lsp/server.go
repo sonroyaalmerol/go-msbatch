@@ -387,13 +387,47 @@ func (s *Server) completion(_ *glsp.Context, params *protocol.CompletionParams) 
 			}
 		}
 
-	case CompleteVariable:
+	case CompleteForVariable:
+		// FOR loop vars only: %%X variables in scope at the cursor line.
+		// Only from the current document; label = "%%X" (with %% prefix).
+		cursorLine := int(params.Position.Line)
 		prefix := varPrefixFromLine(lineBefore)
-		// Return variables from the entire workspace
+		seenForVars := make(map[string]bool)
+		for _, v := range a.Vars {
+			if !strings.HasPrefix(v.Name, "%") {
+				continue // skip SET vars
+			}
+			// In scope: defined on or before cursor line, scope not yet ended.
+			if v.Line > cursorLine || (v.ScopeEnd >= 0 && cursorLine > v.ScopeEnd) {
+				continue
+			}
+			label := "%%" + v.Name[1:] // "%I" → "%%I"
+			if !seenForVars[label] && strings.HasPrefix(strings.ToUpper(label), strings.ToUpper("%%"+prefix)) {
+				seenForVars[label] = true
+				kind := protocol.CompletionItemKindVariable
+				items = append(items, protocol.CompletionItem{
+					Label: label,
+					Kind:  &kind,
+				})
+			}
+		}
+
+	case CompleteVariable:
+		// SET-style %VAR% vars only (Name does NOT start with %).
+		// Current doc always; other docs only if explicitly called by this file.
+		prefix := varPrefixFromLine(lineBefore)
 		s.mu.RLock()
+		calledURIs := CalledDocURIs(a, s.docs)
 		seenVars := make(map[string]bool)
-		for _, wDoc := range s.docs {
+		currentURI := string(params.TextDocument.URI)
+		for wUri, wDoc := range s.docs {
+			if wUri != currentURI && !calledURIs[wUri] {
+				continue
+			}
 			for _, v := range wDoc.Analysis.Vars {
+				if strings.HasPrefix(v.Name, "%") {
+					continue // skip FOR loop vars
+				}
 				if !seenVars[v.Name] && strings.HasPrefix(strings.ToUpper(v.Name), strings.ToUpper(prefix)) {
 					seenVars[v.Name] = true
 					kind := protocol.CompletionItemKindVariable

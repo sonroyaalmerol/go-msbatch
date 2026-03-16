@@ -17,10 +17,13 @@ type LabelDef struct {
 
 // VarDef is a SET variable definition found in the document.
 type VarDef struct {
-	Name  string
-	Value string
-	Line  int // 0-based
-	Col   int // 0-based column where the variable name starts (after 'set ')
+	Name     string
+	Value    string
+	Line     int // 0-based definition line
+	Col      int // 0-based column of the identifier (after 'set ' or after '%%')
+	ScopeEnd int // 0-based last line of scope; -1 means file-wide (SET vars)
+	// FOR loop vars (Name starts with "%") have ScopeEnd set to the last line
+	// of the DO body so completions are only offered inside the loop.
 }
 
 // LabelRef is a GOTO or CALL :label reference.
@@ -149,10 +152,11 @@ func Analyze(content string) Analysis {
 					trimmedAfterSet := strings.TrimLeft(afterSet, " \t")
 					varCol := indent + 3 + (len(afterSet) - len(trimmedAfterSet))
 					a.Vars = append(a.Vars, VarDef{
-						Name:  strings.ToUpper(name),
-						Value: value,
-						Line:  i,
-						Col:   varCol,
+						Name:     strings.ToUpper(name),
+						Value:    value,
+						Line:     i,
+						Col:      varCol,
+						ScopeEnd: -1,
 					})
 				}
 			}
@@ -170,8 +174,9 @@ func Analyze(content string) Analysis {
 					a.Vars = append(a.Vars, VarDef{
 						Name:  "%" + strings.ToUpper(string(char)),
 						Value: "",
-						Line:  i,
-						Col:   varCol,
+						Line:     i,
+						Col:      varCol,
+						ScopeEnd: forScopeEnd(lines, i),
 					})
 				}
 			}
@@ -337,15 +342,94 @@ func isWordChar(r rune) bool {
 		(r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.'
 }
 
+// forScopeEnd returns the 0-based last line of the body of a FOR loop whose
+// definition starts on forLine. For a single-line DO body it returns forLine;
+// for a block body ("do (…)") it scans forward for the matching ")".
+func forScopeEnd(lines []string, forLine int) int {
+	if forLine >= len(lines) {
+		return forLine
+	}
+	raw := strings.TrimRight(lines[forLine], "\r")
+	lower := strings.ToLower(raw)
+
+	// Find the last standalone "do" keyword in the line.
+	// Standalone means preceded by space/tab (or start-of-string) and
+	// followed by space/tab/'(' (or end-of-string).
+	doPos := -1
+	for i := 0; i <= len(lower)-2; i++ {
+		if lower[i] != 'd' || lower[i+1] != 'o' {
+			continue
+		}
+		before := i == 0 || lower[i-1] == ' ' || lower[i-1] == '\t'
+		var afterCh byte
+		if i+2 < len(lower) {
+			afterCh = lower[i+2]
+		}
+		after := afterCh == 0 || afterCh == ' ' || afterCh == '\t' || afterCh == '('
+		if before && after {
+			doPos = i // keep scanning — take the last occurrence
+		}
+	}
+	if doPos < 0 {
+		return forLine
+	}
+
+	// Check whether a '(' immediately follows "do" (optionally separated by spaces).
+	afterDo := strings.TrimLeft(raw[doPos+2:], " \t")
+	if !strings.HasPrefix(afterDo, "(") {
+		return forLine // single-line DO body
+	}
+
+	// Multi-line block: find the matching ')' by tracking parenthesis depth.
+	openOff := doPos + 2 + (len(raw[doPos+2:]) - len(afterDo)) // byte index of '('
+	depth := 0
+	for j := forLine; j < len(lines); j++ {
+		l := strings.TrimRight(lines[j], "\r")
+		start := 0
+		if j == forLine {
+			start = openOff
+		}
+		for k := start; k < len(l); k++ {
+			switch l[k] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 {
+					return j
+				}
+			}
+		}
+	}
+	return len(lines) - 1 // unclosed block — assume it reaches end of file
+}
+
+// CalledDocURIs returns the set of workspace document URIs that the given
+// analysis explicitly calls via "CALL <file>", reusing the FileRefs already
+// collected by Analyze.
+func CalledDocURIs(a Analysis, workspace map[string]*Document) map[string]bool {
+	called := make(map[string]bool)
+	for _, ref := range a.FileRefs {
+		lowerPath := strings.ToLower(ref.Path)
+		for uri := range workspace {
+			if strings.HasSuffix(strings.ToLower(uri), lowerPath) {
+				called[uri] = true
+			}
+		}
+	}
+	return called
+}
+
 // CompletionContext describes what kind of completion is appropriate at the
 // cursor position.
 type CompletionContext int
 
 const (
-	CompleteCommand  CompletionContext = iota // start of line / after pipe/& etc.
-	CompleteLabel                             // after GOTO or CALL :
-	CompleteVariable                          // inside %...
-	CompleteFile                              // generic path argument
+	CompleteCommand     CompletionContext = iota // start of line / after pipe/& etc.
+	CompleteLabel                                // after GOTO or CALL :
+	CompleteVariable                             // inside %VAR% (odd number of %)
+	CompleteForVariable                          // inside %%VAR (lineBefore ends with %%)
+	CompleteFile                                 // generic path argument
 )
 
 // CompletionContextAt determines the completion context from the text up to
@@ -354,10 +438,12 @@ func CompletionContextAt(lineBefore string) CompletionContext {
 	trimmed := strings.TrimLeft(lineBefore, " \t@")
 	lower := strings.ToLower(trimmed)
 
-	// Inside a %variable% reference: an odd number of '%' signs means the
-	// last '%' is an opening delimiter that has not yet been closed.
-	// We also consider %%I style for loop variables. If the string ends with %%, it's open.
-	if strings.Count(lineBefore, "%")%2 == 1 || strings.HasSuffix(lineBefore, "%%") {
+	// %%VAR style: lineBefore ends with "%%" → FOR loop variable context.
+	if strings.HasSuffix(lineBefore, "%%") {
+		return CompleteForVariable
+	}
+	// %VAR% style: odd number of '%' means the last '%' is an unclosed opener.
+	if strings.Count(lineBefore, "%")%2 == 1 {
 		return CompleteVariable
 	}
 
@@ -376,7 +462,7 @@ func CompletionContextAt(lineBefore string) CompletionContext {
 
 	// If we are on a FOR loop variable definition: "for %%I"
 	if strings.HasPrefix(lower, "for ") && strings.Contains(lower, "%%") && !strings.Contains(lower, " in ") {
-		return CompleteVariable
+		return CompleteForVariable
 	}
 
 	// If we are on the first word (no space yet) → command completion.
