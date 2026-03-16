@@ -48,6 +48,6 @@ A cross-platform Windows CMD/Batch interpreter written in Go.
 | `ROBOCOPY` | [robocopy.md](commands/robocopy.md) |
 | `WHERE`, `HOSTNAME`, `WHOAMI`, `TIMEOUT` | [utils.md](commands/utils.md) |
 
-## Passthrough Commands
+## External (Passthrough) Commands
 
-Commands forwarded to the host OS: [passthrough.md](commands/passthrough.md)
+Any unrecognised command is forwarded to the host OS automatically — no static list required: [passthrough.md](commands/passthrough.md)

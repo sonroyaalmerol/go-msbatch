@@ -1,57 +1,34 @@
-# Passthrough Commands
+# External (Passthrough) Commands
 
-These commands are registered in the command registry (so they appear in help/listing) but are not implemented natively. On execution they are forwarded to the host OS via `os/exec`.
-
-## List
-
-| Command | Notes |
-|---------|-------|
-| `ATTRIB` | File attribute management |
-| `CHCP` | Change code page |
-| `CHOICE` | Prompt user for Y/N choice |
-| `CLIP` | Copy stdin to clipboard |
-| `COMP` | Compare contents of two files |
-| `CURL` | Transfer data with URLs |
-| `DISKPART` | Disk partition utility |
-| `FC` | File compare |
-| `FINDSTR` | Search for strings with regex support |
-| `FORFILES` | Batch processing on files |
-| `GETMAC` | Display MAC addresses |
-| `GPUPDATE` | Refresh Group Policy settings |
-| `IPCONFIG` | Display network configuration |
-| `NET` | Network services |
-| `NETSTAT` | Display network connections |
-| `NSLOOKUP` | DNS lookup |
-| `PING` | Test network connectivity |
-| `REG` | Read/write Windows registry |
-| `SC` | Service control |
-| `SCHTASKS` | Task scheduler |
-| `SETX` | Set persistent environment variables |
-| `SHUTDOWN` | Shutdown or restart the computer |
-| `SSH` | OpenSSH client |
-| `SYSTEMINFO` | Display OS and hardware information |
-| `TAKEOWN` | Take ownership of files |
-| `TAR` | Archive utility |
-| `TASKKILL` | Kill running processes |
-| `TASKLIST` | List running processes |
-| `TRACERT` | Trace network route |
+Any command that is not a built-in or a natively-implemented tool is forwarded to the host OS via `os/exec`.  There is no static list — the fallback is unconditional.
 
 ## Behaviour
 
-When one of these commands is executed, the interpreter calls the host OS binary of the same name using `os/exec`. Arguments are forwarded verbatim.
-
-- Glob patterns in arguments are expanded by the interpreter before forwarding.
-- Windows-style paths in arguments are mapped to Unix paths before forwarding.
+- Arguments are forwarded verbatim after Windows-style path mapping and glob expansion.
 - The child process inherits a merged environment (host environment + interpreter's current variable snapshot).
 - `ERRORLEVEL` is set to the exit code returned by the child process.
+- `.bat` / `.cmd` files found on the path are executed in-process instead (see [architecture.md](../architecture.md)).
+
+## Common examples
+
+The following commands work out of the box on a typical system because the host binary is present in `PATH`.  They receive no special treatment — they are simply forwarded like any other unknown command.
+
+| Command | Notes |
+|---------|-------|
+| `CURL` | Transfer data with URLs |
+| `FINDSTR` | Search for strings with regex support |
+| `IPCONFIG` | Display network configuration |
+| `NET` | Network services |
+| `PING` | Test network connectivity |
+| `SSH` | OpenSSH client |
+| `TAR` | Archive utility |
+| `TASKKILL` / `TASKLIST` | Process management |
+
+This list is illustrative, not exhaustive.  Any executable on `PATH` can be invoked the same way.
 
 ## Caveats
 
-- **The command must be installed on the host.** If `ping` is not in `PATH`, the command fails with a "not recognized" error.
-- Many of these commands are Windows-only (`REG`, `DISKPART`, `GPUPDATE`, `SCHTASKS`, etc.). On Linux or macOS they will fail unless equivalent tools with the same name happen to be installed.
-- **Environment changes made by passthrough commands are not visible to the interpreter.** `SETX` for example writes to the Windows registry but those values will not appear in the interpreter's environment.
-- Passthrough commands run in a child process; the interpreter's working directory is set as the child's working directory.
-
-## Unregistered commands
-
-Any command not in the registry (neither built-in, native, nor passthrough) is also forwarded to the host OS the same way. Unregistered commands that resolve to a `.bat` or `.cmd` file are executed in-process (see [architecture.md](../architecture.md)).
+- **The command must be installed on the host.** If the binary is not in `PATH`, the command fails with a "not recognized" error.
+- Many Windows-specific commands (`REG`, `DISKPART`, `GPUPDATE`, `SCHTASKS`, etc.) will fail on Linux or macOS unless equivalent tools with the same name happen to be installed.
+- **Environment changes made by external commands are not visible to the interpreter.** A command like `SETX` writes to the Windows registry but those values will not appear in the interpreter's environment.
+- External commands run in a child process; the interpreter's working directory is passed as the child's working directory.
