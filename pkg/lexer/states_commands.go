@@ -216,29 +216,15 @@ func (bl *BatchLexer) stateIf() stateFn {
 		}
 	}
 
-	if bl.tryKeyword("not") {
-		bl.emit(TokenKeyword)
-		bl.skipWS()
+	for _, name := range ifModifiers {
+		if bl.tryKeyword(name) {
+			bl.emit(TokenKeyword)
+			bl.skipWS()
+			if next := keywordTable[name].ifNext(bl); next != nil {
+				return next
+			}
+		}
 	}
-
-	if bl.tryKeyword("exist") {
-		bl.emit(TokenKeyword)
-		bl.skipWS()
-		return bl.stateFollow
-	}
-
-	if bl.tryKeyword("defined") {
-		bl.emit(TokenKeyword)
-		bl.skipWS()
-		return bl.stateFollow
-	}
-
-	if bl.tryKeyword("errorlevel") {
-		bl.emit(TokenKeyword)
-		bl.skipWS()
-		return bl.stateFollow
-	}
-
 	return bl.stateFollow
 }
 
