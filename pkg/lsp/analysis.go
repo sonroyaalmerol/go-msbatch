@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/lexer"
@@ -11,6 +12,7 @@ import (
 type LabelDef struct {
 	Name string
 	Line int // 0-based
+	Col  int // 0-based column where the label name starts (after ':')
 }
 
 // VarDef is a SET variable definition found in the document.
@@ -18,6 +20,7 @@ type VarDef struct {
 	Name  string
 	Value string
 	Line  int // 0-based
+	Col   int // 0-based column where the variable name starts (after 'set ')
 }
 
 // LabelRef is a GOTO or CALL :label reference.
@@ -67,7 +70,9 @@ func Analyze(content string) Analysis {
 		if strings.HasPrefix(trimmed, ":") && !strings.HasPrefix(trimmed, "::") {
 			name := strings.Fields(trimmed[1:])[0]
 			if name != "" {
-				a.Labels = append(a.Labels, LabelDef{Name: strings.ToLower(name), Line: i})
+				indent := len(line) - len(strings.TrimLeft(line, " \t"))
+				labelCol := indent + 1 // position after the ':'
+				a.Labels = append(a.Labels, LabelDef{Name: strings.ToLower(name), Line: i, Col: labelCol})
 			}
 			continue
 		}
@@ -105,10 +110,16 @@ func Analyze(content string) Analysis {
 				if idx := strings.IndexByte(rest, '='); idx > 0 {
 					name := rest[:idx]
 					value := rest[idx+1:]
+					// compute col: find where the varname starts in the original line
+					indent := len(line) - len(strings.TrimLeft(line, " \t"))
+					afterSet := line[indent+3:] // after "set"
+					trimmedAfterSet := strings.TrimLeft(afterSet, " \t")
+					varCol := indent + 3 + (len(afterSet) - len(trimmedAfterSet))
 					a.Vars = append(a.Vars, VarDef{
 						Name:  strings.ToUpper(name),
 						Value: value,
 						Line:  i,
+						Col:   varCol,
 					})
 				}
 			}
@@ -382,6 +393,180 @@ func ReferencesAt(content string, line, col int, includeDecl bool) []Loc {
 		}
 	}
 	return locs
+}
+
+// ── Rename ────────────────────────────────────────────────────────────────────
+
+// TextEdit represents a single text replacement in the document.
+type TextEdit struct {
+	Line    int
+	Col     int
+	EndCol  int
+	NewText string
+}
+
+// wordRangeAt returns the start and end columns of the word at col in line.
+func wordRangeAt(line string, col int) (start, end int) {
+	if col > len(line) {
+		col = len(line)
+	}
+	start = col
+	for start > 0 && isWordChar(rune(line[start-1])) {
+		start--
+	}
+	end = col
+	for end < len(line) && isWordChar(rune(line[end])) {
+		end++
+	}
+	return start, end
+}
+
+// RenameAt returns all text edits required to rename the symbol at (line, col)
+// to newName. Returns an error if there is no renameable symbol at the cursor.
+func RenameAt(content string, line, col int, newName string) ([]TextEdit, error) {
+	src := lineAt(content, line)
+	a := Analyze(content)
+
+	lineBefore := src
+	if col <= len(src) {
+		lineBefore = src[:col]
+	}
+
+	// Variable context
+	if CompletionContextAt(lineBefore) == CompleteVariable {
+		word := strings.ToUpper(WordAtPosition(src, col))
+		if word == "" {
+			return nil, fmt.Errorf("no renameable symbol at cursor")
+		}
+		var edits []TextEdit
+		// Rename definition site
+		for _, v := range a.Vars {
+			if v.Name == word {
+				edits = append(edits, TextEdit{
+					Line:    v.Line,
+					Col:     v.Col,
+					EndCol:  v.Col + len(v.Name),
+					NewText: strings.ToUpper(newName),
+				})
+			}
+		}
+		// Rename all usage sites
+		for _, ref := range a.VarRefs {
+			if ref.Name == word {
+				edits = append(edits, TextEdit{
+					Line:    ref.Line,
+					Col:     ref.Col,
+					EndCol:  ref.Col + len(ref.Name),
+					NewText: strings.ToUpper(newName),
+				})
+			}
+		}
+		if len(edits) == 0 {
+			return nil, fmt.Errorf("no renameable symbol at cursor")
+		}
+		return edits, nil
+	}
+
+	// Label context
+	word := strings.ToLower(WordAtPosition(src, col))
+	if word == "" {
+		return nil, fmt.Errorf("no renameable symbol at cursor")
+	}
+	var edits []TextEdit
+	found := false
+	for _, lbl := range a.Labels {
+		if lbl.Name == word {
+			found = true
+			edits = append(edits, TextEdit{
+				Line:    lbl.Line,
+				Col:     lbl.Col,
+				EndCol:  lbl.Col + len(lbl.Name),
+				NewText: strings.ToLower(newName),
+			})
+		}
+	}
+	for _, ref := range a.GotoRefs {
+		if ref.Name == word {
+			found = true
+			edits = append(edits, TextEdit{
+				Line:    ref.Line,
+				Col:     ref.Col,
+				EndCol:  ref.Col + len(ref.Name),
+				NewText: strings.ToLower(newName),
+			})
+		}
+	}
+	for _, ref := range a.CallRefs {
+		if ref.Name == word {
+			found = true
+			edits = append(edits, TextEdit{
+				Line:    ref.Line,
+				Col:     ref.Col,
+				EndCol:  ref.Col + len(ref.Name),
+				NewText: strings.ToLower(newName),
+			})
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("no renameable symbol at cursor")
+	}
+	return edits, nil
+}
+
+// PrepareRenameAt returns the range of the symbol under cursor if renameable.
+// Returns Loc{} and false if there is nothing renameable at the cursor.
+func PrepareRenameAt(content string, line, col int) (Loc, bool) {
+	src := lineAt(content, line)
+	a := Analyze(content)
+
+	lineBefore := src
+	if col <= len(src) {
+		lineBefore = src[:col]
+	}
+
+	if CompletionContextAt(lineBefore) == CompleteVariable {
+		word := strings.ToUpper(WordAtPosition(src, col))
+		if word == "" {
+			return Loc{}, false
+		}
+		for _, v := range a.Vars {
+			if v.Name == word {
+				start, end := wordRangeAt(src, col)
+				return Loc{Line: line, Col: start, EndCol: end}, true
+			}
+		}
+		// also check if it's used (even if not defined)
+		for _, ref := range a.VarRefs {
+			if ref.Name == word && ref.Line == line {
+				start, end := wordRangeAt(src, col)
+				return Loc{Line: line, Col: start, EndCol: end}, true
+			}
+		}
+		return Loc{}, false
+	}
+
+	word := strings.ToLower(WordAtPosition(src, col))
+	if word == "" {
+		return Loc{}, false
+	}
+	for _, lbl := range a.Labels {
+		if lbl.Name == word {
+			start, end := wordRangeAt(src, col)
+			return Loc{Line: line, Col: start, EndCol: end}, true
+		}
+	}
+	// also allow renaming from a goto/call ref site if label is known
+	for _, ref := range a.GotoRefs {
+		if ref.Name == word && ref.Line == line {
+			for _, lbl := range a.Labels {
+				if lbl.Name == word {
+					start, end := wordRangeAt(src, col)
+					return Loc{Line: line, Col: start, EndCol: end}, true
+				}
+			}
+		}
+	}
+	return Loc{}, false
 }
 
 // parseNodes is a thin wrapper to lex+parse a content string.

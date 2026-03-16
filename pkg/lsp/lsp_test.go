@@ -629,3 +629,131 @@ func TestLineAtCRLF(t *testing.T) {
 		t.Errorf("expected CR stripped, got %q", got)
 	}
 }
+
+// ── Feature 1: Rename ─────────────────────────────────────────────────────────
+
+func TestLabelDefCol(t *testing.T) {
+	cases := []struct {
+		src     string
+		wantCol int
+	}{
+		{":start\n", 1},
+		{"  :start\n", 3},
+		{"\t:start\n", 2},
+	}
+	for _, tc := range cases {
+		a := Analyze(tc.src)
+		if len(a.Labels) != 1 {
+			t.Errorf("%q: expected 1 label, got %d", tc.src, len(a.Labels))
+			continue
+		}
+		if a.Labels[0].Col != tc.wantCol {
+			t.Errorf("%q: col=%d, want %d", tc.src, a.Labels[0].Col, tc.wantCol)
+		}
+	}
+}
+
+func TestVarDefCol(t *testing.T) {
+	cases := []struct {
+		src     string
+		wantCol int
+	}{
+		{"set FOO=bar\n", 4},
+		{"  set FOO=bar\n", 6},
+		{"set  FOO=bar\n", 5},
+	}
+	for _, tc := range cases {
+		a := Analyze(tc.src)
+		if len(a.Vars) != 1 {
+			t.Errorf("%q: expected 1 var, got %d", tc.src, len(a.Vars))
+			continue
+		}
+		if a.Vars[0].Col != tc.wantCol {
+			t.Errorf("%q: col=%d, want %d", tc.src, a.Vars[0].Col, tc.wantCol)
+		}
+	}
+}
+
+func TestRenameAtLabel(t *testing.T) {
+	src := ":start\ngoto start\n"
+	edits, err := RenameAt(src, 0, 2, "begin")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(edits) != 2 {
+		t.Fatalf("expected 2 edits, got %d: %v", len(edits), edits)
+	}
+	// definition edit
+	defEdit := edits[0]
+	if defEdit.Line != 0 || defEdit.NewText != "begin" {
+		t.Errorf("def edit unexpected: %+v", defEdit)
+	}
+	// goto ref edit
+	refEdit := edits[1]
+	if refEdit.Line != 1 || refEdit.NewText != "begin" {
+		t.Errorf("ref edit unexpected: %+v", refEdit)
+	}
+}
+
+func TestRenameAtLabelMultipleRefs(t *testing.T) {
+	src := ":loop\ngoto loop\ncall :loop\ngoto loop\n"
+	edits, err := RenameAt(src, 0, 2, "cycle")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 1 def + 2 goto + 1 call = 4
+	if len(edits) != 4 {
+		t.Fatalf("expected 4 edits, got %d", len(edits))
+	}
+}
+
+func TestRenameAtVariable(t *testing.T) {
+	src := "set FOO=bar\necho %FOO%\n"
+	// col 8 = inside %FOO%
+	edits, err := RenameAt(src, 1, 8, "BAR")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 1 def + 1 ref = 2
+	if len(edits) != 2 {
+		t.Fatalf("expected 2 edits, got %d", len(edits))
+	}
+}
+
+func TestRenameAtUnknown(t *testing.T) {
+	src := "echo hello\n"
+	_, err := RenameAt(src, 0, 7, "world")
+	if err == nil {
+		t.Error("expected error for non-symbol")
+	}
+}
+
+func TestPrepareRenameAtLabel(t *testing.T) {
+	src := ":start\ngoto start\n"
+	loc, ok := PrepareRenameAt(src, 0, 2)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if loc.Line != 0 || loc.Col != 1 || loc.EndCol != 6 {
+		t.Errorf("unexpected loc: %+v", loc)
+	}
+}
+
+func TestPrepareRenameAtVariable(t *testing.T) {
+	src := "set FOO=bar\necho %FOO%\n"
+	loc, ok := PrepareRenameAt(src, 1, 8)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if loc.Line != 1 || loc.Col != 6 || loc.EndCol != 9 {
+		t.Errorf("unexpected loc: %+v (want line=1 col=6 endCol=9)", loc)
+	}
+}
+
+func TestPrepareRenameAtUnknown(t *testing.T) {
+	src := "echo hello\n"
+	_, ok := PrepareRenameAt(src, 0, 7)
+	if ok {
+		t.Error("expected ok=false for non-symbol")
+	}
+}

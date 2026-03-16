@@ -53,6 +53,8 @@ func (s *Server) Run() error {
 		TextDocumentDocumentSymbol: s.documentSymbol,
 		TextDocumentDefinition:     s.definition,
 		TextDocumentReferences:     s.references,
+		TextDocumentPrepareRename:  s.prepareRename,
+		TextDocumentRename:         s.rename,
 	}
 	srv := server.NewServer(&handler, serverName, false)
 	return srv.RunStdio()
@@ -134,6 +136,7 @@ func (s *Server) initialize(_ *glsp.Context, _ *protocol.InitializeParams) (any,
 			DocumentSymbolProvider: true,
 			DefinitionProvider:     true,
 			ReferencesProvider:     true,
+			RenameProvider:         &protocol.RenameOptions{PrepareProvider: ptr(true)},
 		},
 		ServerInfo: &protocol.InitializeResultServerInfo{
 			Name:    serverName,
@@ -345,6 +348,48 @@ func (s *Server) references(_ *glsp.Context, params *protocol.ReferenceParams) (
 		}
 	}
 	return locs, nil
+}
+
+func (s *Server) prepareRename(_ *glsp.Context, params *protocol.PrepareRenameParams) (any, error) {
+	content, ok := s.load(string(params.TextDocument.URI))
+	if !ok {
+		return nil, nil
+	}
+	loc, found := PrepareRenameAt(content, int(params.Position.Line), int(params.Position.Character))
+	if !found {
+		return nil, nil
+	}
+	return &protocol.Range{
+		Start: protocol.Position{Line: uint32(loc.Line), Character: uint32(loc.Col)},
+		End:   protocol.Position{Line: uint32(loc.Line), Character: uint32(loc.EndCol)},
+	}, nil
+}
+
+func (s *Server) rename(_ *glsp.Context, params *protocol.RenameParams) (*protocol.WorkspaceEdit, error) {
+	content, ok := s.load(string(params.TextDocument.URI))
+	if !ok {
+		return nil, nil
+	}
+	edits, err := RenameAt(content, int(params.Position.Line), int(params.Position.Character), params.NewName)
+	if err != nil || len(edits) == 0 {
+		return nil, nil
+	}
+	lspEdits := make([]protocol.TextEdit, len(edits))
+	for i, e := range edits {
+		lspEdits[i] = protocol.TextEdit{
+			Range: protocol.Range{
+				Start: protocol.Position{Line: uint32(e.Line), Character: uint32(e.Col)},
+				End:   protocol.Position{Line: uint32(e.Line), Character: uint32(e.EndCol)},
+			},
+			NewText: e.NewText,
+		}
+	}
+	uri := params.TextDocument.URI
+	return &protocol.WorkspaceEdit{
+		Changes: map[protocol.DocumentUri][]protocol.TextEdit{
+			uri: lspEdits,
+		},
+	}, nil
 }
 
 // ── small utilities ───────────────────────────────────────────────────────────
