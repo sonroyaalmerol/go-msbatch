@@ -57,6 +57,7 @@ func (s *Server) Run() error {
 		TextDocumentRename:         s.rename,
 		TextDocumentCodeLens:            s.codeLens,
 		TextDocumentSemanticTokensFull:  s.semanticTokensFull,
+		TextDocumentFoldingRange:        s.foldingRange,
 	}
 	srv := server.NewServer(&handler, serverName, false)
 	return srv.RunStdio()
@@ -147,6 +148,7 @@ func (s *Server) initialize(_ *glsp.Context, _ *protocol.InitializeParams) (any,
 				},
 				Full: true,
 			},
+			FoldingRangeProvider: true,
 		},
 		ServerInfo: &protocol.InitializeResultServerInfo{
 			Name:    serverName,
@@ -358,6 +360,26 @@ func (s *Server) references(_ *glsp.Context, params *protocol.ReferenceParams) (
 		}
 	}
 	return locs, nil
+}
+
+func (s *Server) foldingRange(_ *glsp.Context, params *protocol.FoldingRangeParams) ([]protocol.FoldingRange, error) {
+	content, ok := s.load(string(params.TextDocument.URI))
+	if !ok {
+		return nil, nil
+	}
+	folds := FoldingRanges(content)
+	if len(folds) == 0 {
+		return nil, nil
+	}
+	result := make([]protocol.FoldingRange, len(folds))
+	for i, f := range folds {
+		result[i] = protocol.FoldingRange{
+			StartLine: uint32(f.StartLine),
+			EndLine:   uint32(f.EndLine),
+			Kind:      ptr(f.Kind),
+		}
+	}
+	return result, nil
 }
 
 func (s *Server) semanticTokensFull(_ *glsp.Context, params *protocol.SemanticTokensParams) (*protocol.SemanticTokens, error) {

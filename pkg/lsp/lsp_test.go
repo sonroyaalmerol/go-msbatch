@@ -900,6 +900,57 @@ func TestSemanticTokensGotoRef(t *testing.T) {
 	}
 }
 
+// ── Feature 4: Folding Ranges ─────────────────────────────────────────────────
+
+func TestFoldingRangesEmpty(t *testing.T) {
+	folds := FoldingRanges("echo hello\ngoto missing\n")
+	if len(folds) != 0 {
+		t.Errorf("expected 0 folds, got %d", len(folds))
+	}
+}
+
+func TestFoldingRangesSingleLabel(t *testing.T) {
+	src := ":start\necho hi\necho bye\n"
+	folds := FoldingRanges(src)
+	if len(folds) != 1 {
+		t.Fatalf("expected 1 fold, got %d", len(folds))
+	}
+	if folds[0].StartLine != 0 {
+		t.Errorf("expected StartLine=0, got %d", folds[0].StartLine)
+	}
+	if folds[0].EndLine != 2 {
+		t.Errorf("expected EndLine=2, got %d", folds[0].EndLine)
+	}
+	if folds[0].Kind != "region" {
+		t.Errorf("expected kind=region, got %q", folds[0].Kind)
+	}
+}
+
+func TestFoldingRangesMultipleLabels(t *testing.T) {
+	src := ":a\necho a\n:b\necho b\necho b2\n"
+	folds := FoldingRanges(src)
+	if len(folds) != 2 {
+		t.Fatalf("expected 2 folds, got %d", len(folds))
+	}
+	// first section: :a (line 0) to just before :b (line 1)
+	if folds[0].StartLine != 0 || folds[0].EndLine != 1 {
+		t.Errorf("fold[0]: start=%d end=%d, want 0..1", folds[0].StartLine, folds[0].EndLine)
+	}
+	// second section: :b (line 2) to end (line 4)
+	if folds[1].StartLine != 2 || folds[1].EndLine != 4 {
+		t.Errorf("fold[1]: start=%d end=%d, want 2..4", folds[1].StartLine, folds[1].EndLine)
+	}
+}
+
+func TestFoldingRangesSmallSection(t *testing.T) {
+	// Section with only 1 line of content after label → still folds
+	src := ":only\necho hi\n"
+	folds := FoldingRanges(src)
+	if len(folds) != 1 {
+		t.Errorf("expected 1 fold for section with 1 content line, got %d", len(folds))
+	}
+}
+
 func TestSemanticTokensEncoding(t *testing.T) {
 	// Two tokens on different lines: keyword on line 0, variable on line 1
 	src := "echo hi\necho %VAR%\n"

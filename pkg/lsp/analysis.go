@@ -395,6 +395,60 @@ func ReferencesAt(content string, line, col int, includeDecl bool) []Loc {
 	return locs
 }
 
+// ── Folding Ranges ────────────────────────────────────────────────────────────
+
+// FoldRange represents a collapsible region in the document.
+type FoldRange struct {
+	StartLine int
+	EndLine   int
+	Kind      string // "region" for label sections
+}
+
+// FoldingRanges returns folding ranges for the document.
+// Each label section (from :label to just before the next :label or end of file)
+// becomes a fold if it has more than 1 line.
+func FoldingRanges(content string) []FoldRange {
+	lines := strings.Split(content, "\n")
+	total := len(lines)
+
+	// Find label definition lines
+	var labelLines []int
+	for i, raw := range lines {
+		line := strings.TrimRight(raw, "\r")
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, ":") && !strings.HasPrefix(trimmed, "::") {
+			labelLines = append(labelLines, i)
+		}
+	}
+
+	if len(labelLines) == 0 {
+		return nil
+	}
+
+	var folds []FoldRange
+	for i, start := range labelLines {
+		var end int
+		if i+1 < len(labelLines) {
+			end = labelLines[i+1] - 1
+		} else {
+			end = total - 1
+			// skip trailing empty lines
+			for end > start && strings.TrimSpace(strings.TrimRight(lines[end], "\r")) == "" {
+				end--
+			}
+		}
+		// Only fold if there is at least 1 line of content after the label line
+		if end > start {
+			folds = append(folds, FoldRange{
+				StartLine: start,
+				EndLine:   end,
+				Kind:      "region",
+			})
+		}
+	}
+	return folds
+}
+
 // ── Semantic Tokens ───────────────────────────────────────────────────────────
 
 // SemTokenTypes is the ordered legend sent in initialize.
