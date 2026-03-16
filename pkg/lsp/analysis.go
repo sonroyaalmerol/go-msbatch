@@ -395,6 +395,222 @@ func ReferencesAt(content string, line, col int, includeDecl bool) []Loc {
 	return locs
 }
 
+// ── Semantic Tokens ───────────────────────────────────────────────────────────
+
+// SemTokenTypes is the ordered legend sent in initialize.
+var SemTokenTypes = []string{"keyword", "variable", "function", "comment", "string", "operator"}
+
+// SemTokenModifiers is the ordered modifier legend.
+var SemTokenModifiers = []string{"declaration", "readonly"}
+
+// Token type indices
+const (
+	semKeyword  = uint32(0)
+	semVariable = uint32(1)
+	semFunction = uint32(2) // used for labels
+	semComment  = uint32(3)
+	semString   = uint32(4)
+	semOperator = uint32(5)
+)
+
+const semDeclaration = uint32(1 << 0) // bitmask
+
+// SemToken represents one semantic token.
+type SemToken struct {
+	Line      int
+	Col       int
+	Len       int
+	TokenType uint32
+	Modifiers uint32
+}
+
+// batchKeywords is the set of known batch command names for keyword highlighting.
+var batchKeywords = map[string]bool{
+	"echo": true, "set": true, "goto": true, "call": true, "if": true,
+	"for": true, "rem": true, "cd": true, "dir": true, "copy": true,
+	"move": true, "del": true, "mkdir": true, "rmdir": true, "cls": true,
+	"ver": true, "pause": true, "exit": true, "setlocal": true, "endlocal": true,
+	"pushd": true, "popd": true, "start": true, "mklink": true, "color": true,
+	"title": true, "path": true, "prompt": true, "more": true, "assoc": true,
+	"ftype": true, "find": true, "sort": true, "tree": true, "xcopy": true,
+	"robocopy": true, "timeout": true, "where": true, "hostname": true,
+	"whoami": true, "type": true, "not": true, "defined": true, "exist": true,
+	"errorlevel": true, "else": true, "do": true, "in": true,
+}
+
+// SemanticTokens returns semantic tokens for the document, sorted by position.
+func SemanticTokens(content string) []SemToken {
+	a := Analyze(content)
+	lines := strings.Split(content, "\n")
+
+	// Build lookup sets for goto/call refs by (line,col)
+	type lineCol struct{ line, col int }
+	gotoRefSet := make(map[lineCol]int)
+	for _, ref := range a.GotoRefs {
+		gotoRefSet[lineCol{ref.Line, ref.Col}] = len(ref.Name)
+	}
+	callRefSet := make(map[lineCol]int)
+	for _, ref := range a.CallRefs {
+		callRefSet[lineCol{ref.Line, ref.Col}] = len(ref.Name)
+	}
+
+	var tokens []SemToken
+
+	for i, raw := range lines {
+		line := strings.TrimRight(raw, "\r")
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+
+		// Comment line: :: or rem
+		if strings.HasPrefix(trimmed, "::") || strings.HasPrefix(lower, "rem ") || lower == "rem" {
+			tokens = append(tokens, SemToken{
+				Line:      i,
+				Col:       indent,
+				Len:       len(trimmed),
+				TokenType: semComment,
+			})
+			continue
+		}
+
+		// Label definition line: starts with ':'
+		if strings.HasPrefix(trimmed, ":") {
+			name := trimmed[1:]
+			if fields := strings.Fields(name); len(fields) > 0 {
+				name = fields[0]
+			}
+			if name != "" {
+				tokens = append(tokens, SemToken{
+					Line:      i,
+					Col:       indent + 1,
+					Len:       len(name),
+					TokenType: semFunction,
+					Modifiers: semDeclaration,
+				})
+			}
+			continue
+		}
+
+		// First word keyword detection
+		if trimmed != "" {
+			// strip leading '@' from trimmed
+			stripped := strings.TrimLeft(trimmed, "@")
+			firstWord := strings.ToLower(strings.Fields(stripped)[0])
+			if batchKeywords[firstWord] {
+				// find actual col: skip indent and '@' chars
+				kwCol := indent + (len(trimmed) - len(stripped))
+				tokens = append(tokens, SemToken{
+					Line:      i,
+					Col:       kwCol,
+					Len:       len(firstWord),
+					TokenType: semKeyword,
+				})
+			}
+		}
+
+		// Scan for goto/call label refs on this line
+		for lc, nameLen := range gotoRefSet {
+			if lc.line == i {
+				tokens = append(tokens, SemToken{
+					Line:      i,
+					Col:       lc.col,
+					Len:       nameLen,
+					TokenType: semFunction,
+				})
+			}
+		}
+		for lc, nameLen := range callRefSet {
+			if lc.line == i {
+				tokens = append(tokens, SemToken{
+					Line:      i,
+					Col:       lc.col,
+					Len:       nameLen,
+					TokenType: semFunction,
+				})
+			}
+		}
+
+		// Scan for %VAR% occurrences
+		rest := line
+		offset := 0
+		for {
+			pct := strings.Index(rest, "%")
+			if pct < 0 {
+				break
+			}
+			after := rest[pct+1:]
+			end := strings.Index(after, "%")
+			if end < 0 {
+				break
+			}
+			name := after[:end]
+			if name != "" && (name[0] < '0' || name[0] > '9') {
+				tokens = append(tokens, SemToken{
+					Line:      i,
+					Col:       offset + pct + 1,
+					Len:       len(name),
+					TokenType: semVariable,
+				})
+			}
+			advance := pct + 1 + end + 1
+			offset += advance
+			rest = rest[advance:]
+		}
+
+		// Scan for quoted strings "..."
+		inStr := false
+		strStart := 0
+		for ci, ch := range line {
+			if ch == '"' {
+				if !inStr {
+					inStr = true
+					strStart = ci
+				} else {
+					// end of string
+					tokens = append(tokens, SemToken{
+						Line:      i,
+						Col:       strStart,
+						Len:       ci - strStart + 1,
+						TokenType: semString,
+					})
+					inStr = false
+				}
+			}
+		}
+	}
+
+	// Sort tokens by (Line, Col)
+	for i := 1; i < len(tokens); i++ {
+		for j := i; j > 0; j-- {
+			a, b := tokens[j-1], tokens[j]
+			if a.Line > b.Line || (a.Line == b.Line && a.Col > b.Col) {
+				tokens[j-1], tokens[j] = tokens[j], tokens[j-1]
+			} else {
+				break
+			}
+		}
+	}
+
+	return tokens
+}
+
+// EncodeSemanticTokens converts SemToken slice to the LSP flat uint32 format.
+func EncodeSemanticTokens(tokens []SemToken) []uint32 {
+	data := make([]uint32, 0, len(tokens)*5)
+	prevLine, prevCol := 0, 0
+	for _, t := range tokens {
+		deltaLine := t.Line - prevLine
+		deltaCol := t.Col
+		if deltaLine == 0 {
+			deltaCol = t.Col - prevCol
+		}
+		data = append(data, uint32(deltaLine), uint32(deltaCol), uint32(t.Len), t.TokenType, t.Modifiers)
+		prevLine = t.Line
+		prevCol = t.Col
+	}
+	return data
+}
+
 // ── Code Lens ─────────────────────────────────────────────────────────────────
 
 // CodeLensData holds data for a single code lens annotation on a label definition.

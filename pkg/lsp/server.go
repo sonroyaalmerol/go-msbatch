@@ -55,7 +55,8 @@ func (s *Server) Run() error {
 		TextDocumentReferences:     s.references,
 		TextDocumentPrepareRename:  s.prepareRename,
 		TextDocumentRename:         s.rename,
-		TextDocumentCodeLens:       s.codeLens,
+		TextDocumentCodeLens:            s.codeLens,
+		TextDocumentSemanticTokensFull:  s.semanticTokensFull,
 	}
 	srv := server.NewServer(&handler, serverName, false)
 	return srv.RunStdio()
@@ -139,6 +140,13 @@ func (s *Server) initialize(_ *glsp.Context, _ *protocol.InitializeParams) (any,
 			ReferencesProvider:     true,
 			RenameProvider:         &protocol.RenameOptions{PrepareProvider: ptr(true)},
 			CodeLensProvider:       &protocol.CodeLensOptions{},
+			SemanticTokensProvider: &protocol.SemanticTokensOptions{
+				Legend: protocol.SemanticTokensLegend{
+					TokenTypes:     SemTokenTypes,
+					TokenModifiers: SemTokenModifiers,
+				},
+				Full: true,
+			},
 		},
 		ServerInfo: &protocol.InitializeResultServerInfo{
 			Name:    serverName,
@@ -350,6 +358,16 @@ func (s *Server) references(_ *glsp.Context, params *protocol.ReferenceParams) (
 		}
 	}
 	return locs, nil
+}
+
+func (s *Server) semanticTokensFull(_ *glsp.Context, params *protocol.SemanticTokensParams) (*protocol.SemanticTokens, error) {
+	content, ok := s.load(string(params.TextDocument.URI))
+	if !ok {
+		return nil, nil
+	}
+	tokens := SemanticTokens(content)
+	data := EncodeSemanticTokens(tokens)
+	return &protocol.SemanticTokens{Data: data}, nil
 }
 
 func (s *Server) codeLens(_ *glsp.Context, params *protocol.CodeLensParams) ([]protocol.CodeLens, error) {

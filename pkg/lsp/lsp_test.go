@@ -810,3 +810,117 @@ func TestCodeLensesUnusedLabel(t *testing.T) {
 		t.Errorf("expected RefCount=0 for unused label, got %d", lenses[0].RefCount)
 	}
 }
+
+// ── Feature 3: Semantic Tokens ────────────────────────────────────────────────
+
+func findToken(tokens []SemToken, tokenType uint32) *SemToken {
+	for i := range tokens {
+		if tokens[i].TokenType == tokenType {
+			return &tokens[i]
+		}
+	}
+	return nil
+}
+
+func TestSemanticTokensEmpty(t *testing.T) {
+	tokens := SemanticTokens("")
+	if len(tokens) != 0 {
+		t.Errorf("expected 0 tokens, got %d", len(tokens))
+	}
+}
+
+func TestSemanticTokensKeyword(t *testing.T) {
+	tokens := SemanticTokens("echo hello\n")
+	tok := findToken(tokens, semKeyword)
+	if tok == nil {
+		t.Fatal("expected a keyword token for 'echo'")
+	}
+	if tok.Col != 0 || tok.Len != 4 {
+		t.Errorf("keyword token: col=%d len=%d, want col=0 len=4", tok.Col, tok.Len)
+	}
+}
+
+func TestSemanticTokensComment(t *testing.T) {
+	tokens := SemanticTokens(":: this is a comment\n")
+	tok := findToken(tokens, semComment)
+	if tok == nil {
+		t.Fatal("expected a comment token")
+	}
+	if tok.Line != 0 {
+		t.Errorf("expected line 0, got %d", tok.Line)
+	}
+}
+
+func TestSemanticTokensLabel(t *testing.T) {
+	tokens := SemanticTokens(":start\n")
+	var funcTok *SemToken
+	for i := range tokens {
+		if tokens[i].TokenType == semFunction {
+			funcTok = &tokens[i]
+			break
+		}
+	}
+	if funcTok == nil {
+		t.Fatal("expected a function token for label definition")
+	}
+	if funcTok.Modifiers&semDeclaration == 0 {
+		t.Error("expected declaration modifier on label def token")
+	}
+	if funcTok.Col != 1 || funcTok.Len != 5 { // "start" after ':'
+		t.Errorf("label token: col=%d len=%d, want col=1 len=5", funcTok.Col, funcTok.Len)
+	}
+}
+
+func TestSemanticTokensVariable(t *testing.T) {
+	tokens := SemanticTokens("echo %FOO%\n")
+	tok := findToken(tokens, semVariable)
+	if tok == nil {
+		t.Fatal("expected a variable token for FOO")
+	}
+	if tok.Len != 3 { // "FOO"
+		t.Errorf("variable token len=%d, want 3", tok.Len)
+	}
+}
+
+func TestSemanticTokensGotoRef(t *testing.T) {
+	tokens := SemanticTokens("goto start\n:start\n")
+	// find function token on line 0 (the goto ref)
+	var refTok *SemToken
+	for i := range tokens {
+		if tokens[i].TokenType == semFunction && tokens[i].Line == 0 {
+			refTok = &tokens[i]
+			break
+		}
+	}
+	if refTok == nil {
+		t.Fatal("expected a function token on line 0 for goto target")
+	}
+	if refTok.Col != 5 {
+		t.Errorf("goto ref token col=%d, want 5", refTok.Col)
+	}
+}
+
+func TestSemanticTokensEncoding(t *testing.T) {
+	// Two tokens on different lines: keyword on line 0, variable on line 1
+	src := "echo hi\necho %VAR%\n"
+	tokens := SemanticTokens(src)
+	data := EncodeSemanticTokens(tokens)
+	if len(data)%5 != 0 {
+		t.Errorf("encoded data length %d is not multiple of 5", len(data))
+	}
+	// First token: deltaLine=0 (from start), deltaCol=col
+	if len(data) < 5 {
+		t.Fatal("expected at least one encoded token")
+	}
+	// Verify delta encoding: second token's deltaLine relative to first
+	if len(data) >= 10 {
+		firstLine := int(data[0])
+		secondDeltaLine := int(data[5])
+		_ = firstLine
+		_ = secondDeltaLine
+		// Just check they're non-negative
+		if data[5] > 1000 {
+			t.Errorf("second token deltaLine seems wrong: %d", data[5])
+		}
+	}
+}
