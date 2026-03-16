@@ -1157,3 +1157,271 @@ func singleDocWorkspace(uri, content string) map[string]*Document {
 		},
 	}
 }
+
+func multiDocWorkspace(docs map[string]string) map[string]*Document {
+	ws := make(map[string]*Document, len(docs))
+	for uri, content := range docs {
+		ws[uri] = &Document{Content: content, Analysis: Analyze(content)}
+	}
+	return ws
+}
+
+// ── forScopeEnd ───────────────────────────────────────────────────────────────
+
+func TestForScopeEndSingleLine(t *testing.T) {
+	lines := []string{"for %%i in (1 2 3) do echo %%i"}
+	got := forScopeEnd(lines, 0)
+	if got != 0 {
+		t.Errorf("single-line DO: expected 0, got %d", got)
+	}
+}
+
+func TestForScopeEndBlock(t *testing.T) {
+	lines := []string{
+		"for %%i in (1 2 3) do (",
+		"  echo %%i",
+		")",
+	}
+	got := forScopeEnd(lines, 0)
+	if got != 2 {
+		t.Errorf("block DO: expected 2 (closing paren line), got %d", got)
+	}
+}
+
+func TestForScopeEndNestedParens(t *testing.T) {
+	lines := []string{
+		"for %%i in (1 2) do (",
+		"  if exist foo (",
+		"    echo %%i",
+		"  )",
+		")",
+	}
+	got := forScopeEnd(lines, 0)
+	if got != 4 {
+		t.Errorf("nested parens: expected 4, got %d", got)
+	}
+}
+
+func TestForScopeEndOutOfBounds(t *testing.T) {
+	lines := []string{"echo hi"}
+	got := forScopeEnd(lines, 5) // beyond slice
+	if got != 5 {
+		t.Errorf("out-of-bounds: expected 5, got %d", got)
+	}
+}
+
+// ── VarDef.ScopeEnd ───────────────────────────────────────────────────────────
+
+func TestAnalyzeSetVarScopeEnd(t *testing.T) {
+	a := Analyze("set FOO=bar\n")
+	if len(a.Vars) != 1 {
+		t.Fatalf("expected 1 var, got %d", len(a.Vars))
+	}
+	if a.Vars[0].ScopeEnd != -1 {
+		t.Errorf("SET var ScopeEnd: want -1 (file-wide), got %d", a.Vars[0].ScopeEnd)
+	}
+}
+
+func TestAnalyzeForVarScopeEndSingleLine(t *testing.T) {
+	a := Analyze("for %%f in (*.txt) do echo %%f\n")
+	if len(a.Vars) != 1 {
+		t.Fatalf("expected 1 var, got %d", len(a.Vars))
+	}
+	v := a.Vars[0]
+	if v.Name != "%F" {
+		t.Errorf("expected Name=%%F, got %q", v.Name)
+	}
+	// Single-line DO body: scope ends on the FOR line itself (line 0).
+	if v.ScopeEnd != 0 {
+		t.Errorf("FOR var ScopeEnd: want 0 (same line), got %d", v.ScopeEnd)
+	}
+}
+
+func TestAnalyzeForVarScopeEndBlock(t *testing.T) {
+	src := "for %%i in (1 2) do (\n  echo %%i\n)\n"
+	a := Analyze(src)
+	if len(a.Vars) != 1 {
+		t.Fatalf("expected 1 var, got %d", len(a.Vars))
+	}
+	if a.Vars[0].ScopeEnd != 2 {
+		t.Errorf("FOR var block ScopeEnd: want 2, got %d", a.Vars[0].ScopeEnd)
+	}
+}
+
+// ── CompletionContextAt (ForVariable) ─────────────────────────────────────────
+
+func TestCompletionContextAtDoublePercent(t *testing.T) {
+	cases := []struct {
+		line string
+		want CompletionContext
+	}{
+		{"echo %%", CompleteForVariable},
+		{"for %%", CompleteForVariable},
+		{"echo %%I", CompleteForVariable}, // partial letter after %%
+	}
+	for _, tc := range cases {
+		got := CompletionContextAt(tc.line)
+		if got != tc.want {
+			t.Errorf("CompletionContextAt(%q) = %v, want %v", tc.line, got, tc.want)
+		}
+	}
+}
+
+// ── CalledDocURIs ─────────────────────────────────────────────────────────────
+
+func TestCalledDocURIs(t *testing.T) {
+	a := Analyze("call helper.bat\n")
+	ws := multiDocWorkspace(map[string]string{
+		"file:///helper.bat": "echo hi\n",
+		"file:///other.bat":  "echo bye\n",
+	})
+	called := CalledDocURIs(a, ws)
+	if !called["file:///helper.bat"] {
+		t.Error("expected helper.bat to be in called set")
+	}
+	if called["file:///other.bat"] {
+		t.Error("other.bat should not be in called set")
+	}
+}
+
+func TestCalledDocURIsEmpty(t *testing.T) {
+	a := Analyze("echo hello\n")
+	ws := multiDocWorkspace(map[string]string{
+		"file:///other.bat": "echo bye\n",
+	})
+	called := CalledDocURIs(a, ws)
+	if len(called) != 0 {
+		t.Errorf("expected empty called set, got %v", called)
+	}
+}
+
+// ── Scoped DefinitionAt (FOR vars) ────────────────────────────────────────────
+
+func TestDefinitionAtForVarInScope(t *testing.T) {
+	// Block FOR: %%i defined on line 0, scope ends at closing ) on line 2.
+	// Usage on line 1 is within scope → should resolve to line 0.
+	//   line 0: for %%i in (1 2) do (   → %%i at col 6
+	//   line 1:   echo %%i              → %%i at col 9 (letter 'i')
+	//   line 2: )
+	src := "for %%i in (1 2) do (\n  echo %%i\n)\n"
+	loc, ok := DefinitionAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 1, 9)
+	if !ok {
+		t.Fatal("expected definition inside FOR scope")
+	}
+	if loc.Line != 0 {
+		t.Errorf("expected definition on line 0, got %d", loc.Line)
+	}
+}
+
+func TestDefinitionAtForVarOutOfScope(t *testing.T) {
+	// %%i used on line 3 which is after the closing ) on line 2 → no definition.
+	//   line 3: echo %%i  → %%i letter 'i' at col 7
+	src := "for %%i in (1 2) do (\n  echo %%i\n)\necho %%i\n"
+	_, ok := DefinitionAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 3, 7)
+	if ok {
+		t.Error("expected no definition outside FOR scope")
+	}
+}
+
+// ── Scoped ReferencesAt (FOR vars) ───────────────────────────────────────────
+
+func TestReferencesAtForVarScope(t *testing.T) {
+	// %%i used on lines 0 (FOR line), 1, 2 inside scope and line 4 outside.
+	// Cursor on line 1 → only refs within [0, 3] returned.
+	src := "for %%i in (1 2) do (\n  echo %%i\n  echo %%i\n)\necho %%i\n"
+	// line 0: for %%i … → VarRef col 6 (the letter i)
+	// line 1:   echo %%i → VarRef col 9
+	// line 2:   echo %%i → VarRef col 9
+	// line 3: )           → no VarRef
+	// line 4: echo %%i   → VarRef col 7 — outside scope
+	locs := ReferencesAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 1, 9, false)
+	// Lines 0, 1, 2 are in scope; line 4 is not.
+	if len(locs) != 3 {
+		t.Errorf("expected 3 refs in scope, got %d: %v", len(locs), locs)
+	}
+	for _, l := range locs {
+		if l.Line == 4 {
+			t.Error("line 4 ref is outside FOR scope and should not be returned")
+		}
+	}
+}
+
+func TestReferencesAtForVarIncludeDecl(t *testing.T) {
+	src := "for %%i in (1 2) do (\n  echo %%i\n)\n"
+	// Cursor on %%i usage at line 1, includeDecl=true → should include line 0 def
+	locs := ReferencesAt(singleDocWorkspace("file:///a.bat", src), "file:///a.bat", 1, 9, true)
+	hasLine0 := false
+	for _, l := range locs {
+		if l.Line == 0 {
+			hasLine0 = true
+		}
+	}
+	if !hasLine0 {
+		t.Errorf("includeDecl: expected line 0 (FOR definition) in results, got %v", locs)
+	}
+}
+
+// ── Diagnostics: undefined variables ─────────────────────────────────────────
+
+func TestDiagnosticsUndefinedForVar(t *testing.T) {
+	// %%X used but no FOR loop defines it → warning
+	diags := Diagnostics("echo %%X\n")
+	var found bool
+	for _, d := range diags {
+		if d.Sev == SevWarning && strings.Contains(d.Message, "Undefined FOR loop variable") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected SevWarning for undefined FOR loop variable, got %v", diags)
+	}
+}
+
+func TestDiagnosticsForVarOutOfScope(t *testing.T) {
+	// %%i used after single-line FOR loop body → warning
+	src := "for %%i in (1) do echo done\necho %%i\n"
+	diags := Diagnostics(src)
+	var found bool
+	for _, d := range diags {
+		if d.Sev == SevWarning && strings.Contains(d.Message, "Undefined FOR loop variable") && d.Line == 1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected out-of-scope FOR var warning on line 1, got %v", diags)
+	}
+}
+
+func TestDiagnosticsForVarInScope(t *testing.T) {
+	// %%i used on the same single-line FOR → no warning
+	diags := Diagnostics("for %%i in (1 2 3) do echo %%i\n")
+	for _, d := range diags {
+		if d.Sev == SevWarning && strings.Contains(d.Message, "%I") {
+			t.Errorf("unexpected FOR var warning for in-scope usage: %v", d)
+		}
+	}
+}
+
+func TestDiagnosticsUndefinedSetVar(t *testing.T) {
+	// %MISSING% used but never SET in the file → hint
+	diags := Diagnostics("echo %MISSING%\n")
+	var found bool
+	for _, d := range diags {
+		if d.Sev == SevHint && strings.Contains(d.Message, "MISSING") && strings.Contains(d.Message, "not defined") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected SevHint for undefined SET var, got %v", diags)
+	}
+}
+
+func TestDiagnosticsSetVarDefined(t *testing.T) {
+	// %FOO% is set in the file → no "not defined" hint
+	diags := Diagnostics("set FOO=bar\necho %FOO%\n")
+	for _, d := range diags {
+		if strings.Contains(d.Message, "not defined") && strings.Contains(d.Message, "FOO") {
+			t.Errorf("unexpected 'not defined' hint for SET variable: %v", d)
+		}
+	}
+}

@@ -388,9 +388,12 @@ func (s *Server) completion(_ *glsp.Context, params *protocol.CompletionParams) 
 		}
 
 	case CompleteForVariable:
-		// User typed "%%". Insert just the letter so the result is "%%X".
+		// User typed "%%[partial]". Replace the entire "%%[partial]" with "%%X".
 		cursorLine := int(params.Position.Line)
 		prefix := varPrefixFromLine(lineBefore) // text after last %
+		// The first % of %% is at: col - 2 - len(prefix)
+		replaceStart := uint32(col - 2 - len(prefix))
+		replaceEnd := uint32(col)
 		seenForVars := make(map[string]bool)
 		for _, v := range a.Vars {
 			if !strings.HasPrefix(v.Name, "%") {
@@ -400,23 +403,31 @@ func (s *Server) completion(_ *glsp.Context, params *protocol.CompletionParams) 
 				continue
 			}
 			label := "%%" + v.Name[1:]
-			letter := v.Name[1:]
-			if !seenForVars[label] && strings.HasPrefix(strings.ToUpper(letter), strings.ToUpper(prefix)) {
+			if !seenForVars[label] && strings.HasPrefix(strings.ToUpper(v.Name[1:]), strings.ToUpper(prefix)) {
 				seenForVars[label] = true
 				kind := protocol.CompletionItemKindVariable
 				items = append(items, protocol.CompletionItem{
-					Label:      label,
-					Kind:       &kind,
-					InsertText: ptr(letter),
+					Label: label,
+					Kind:  &kind,
+					TextEdit: protocol.TextEdit{
+						Range: protocol.Range{
+							Start: protocol.Position{Line: params.Position.Line, Character: replaceStart},
+							End:   protocol.Position{Line: params.Position.Line, Character: replaceEnd},
+						},
+						NewText: label,
+					},
 				})
 			}
 		}
 
 	case CompleteVariable:
-		// User typed "%". Insert text for SET vars includes the closing "%".
-		// FOR loop vars in scope are also offered: insert text adds the second "%" and letter.
+		// User typed "%[partial]". Replace the entire "%[partial]" with the full token.
+		// SET vars → "%MYVAR%"; FOR loop vars in scope → "%%X".
 		cursorLine := int(params.Position.Line)
 		prefix := varPrefixFromLine(lineBefore)
+		// The % is at: col - 1 - len(prefix)
+		replaceStart := uint32(col - 1 - len(prefix))
+		replaceEnd := uint32(col)
 		s.mu.RLock()
 		calledURIs := CalledDocURIs(a, s.docs)
 		seenVars := make(map[string]bool)
@@ -433,16 +444,22 @@ func (s *Server) completion(_ *glsp.Context, params *protocol.CompletionParams) 
 					seenVars[v.Name] = true
 					kind := protocol.CompletionItemKindVariable
 					items = append(items, protocol.CompletionItem{
-						Label:      v.Name,
-						Kind:       &kind,
-						Detail:     ptr(v.Value),
-						InsertText: ptr(v.Name + "%"),
+						Label:  v.Name,
+						Kind:   &kind,
+						Detail: ptr(v.Value),
+						TextEdit: protocol.TextEdit{
+							Range: protocol.Range{
+								Start: protocol.Position{Line: params.Position.Line, Character: replaceStart},
+								End:   protocol.Position{Line: params.Position.Line, Character: replaceEnd},
+							},
+							NewText: "%" + v.Name + "%",
+						},
 					})
 				}
 			}
 		}
 		s.mu.RUnlock()
-		// FOR loop vars in scope: label "%%X", insert text "%X" (first % already typed).
+		// FOR loop vars in scope: replace the opening "%" with "%%X".
 		for _, v := range a.Vars {
 			if !strings.HasPrefix(v.Name, "%") {
 				continue
@@ -455,9 +472,15 @@ func (s *Server) completion(_ *glsp.Context, params *protocol.CompletionParams) 
 				seenVars[label] = true
 				kind := protocol.CompletionItemKindVariable
 				items = append(items, protocol.CompletionItem{
-					Label:      label,
-					Kind:       &kind,
-					InsertText: ptr("%" + v.Name[1:]),
+					Label: label,
+					Kind:  &kind,
+					TextEdit: protocol.TextEdit{
+						Range: protocol.Range{
+							Start: protocol.Position{Line: params.Position.Line, Character: replaceStart},
+							End:   protocol.Position{Line: params.Position.Line, Character: replaceEnd},
+						},
+						NewText: label,
+					},
 				})
 			}
 		}

@@ -287,13 +287,64 @@ func Diagnostics(content string) []Diag {
 	}
 	for _, v := range a.Vars {
 		if !varUsed[v.Name] {
+			endCol := v.Col + len(v.Name)
+			if strings.HasPrefix(v.Name, "%") {
+				endCol = v.Col + 1 // FOR var: Col points to letter, identifier is 1 char
+			}
 			diags = append(diags, Diag{
 				Line:    v.Line,
 				Col:     v.Col,
-				EndCol:  v.Col + len(v.Name),
+				EndCol:  endCol,
 				Message: "Variable defined but never used: " + v.Name,
 				Sev:     SevHint,
 			})
+		}
+	}
+
+	// Build lookup: defined SET vars (file-wide) and FOR vars with their scopes.
+	type forScope struct{ start, end int }
+	forScopes := make(map[string][]forScope) // Name → list of scopes
+	setDefined := make(map[string]bool)
+	for _, v := range a.Vars {
+		if strings.HasPrefix(v.Name, "%") {
+			forScopes[v.Name] = append(forScopes[v.Name], forScope{v.Line, v.ScopeEnd})
+		} else {
+			setDefined[v.Name] = true
+		}
+	}
+
+	// Variables used but never defined.
+	for _, ref := range a.VarRefs {
+		if strings.HasPrefix(ref.Name, "%") {
+			// FOR-style %%X: must have a VarDef whose scope contains ref.Line.
+			inScope := false
+			for _, s := range forScopes[ref.Name] {
+				if ref.Line >= s.start && (s.end < 0 || ref.Line <= s.end) {
+					inScope = true
+					break
+				}
+			}
+			if !inScope {
+				diags = append(diags, Diag{
+					Line:    ref.Line,
+					Col:     ref.Col - 2, // ref.Col points to letter; token starts at %%
+					EndCol:  ref.Col + 1,
+					Message: "Undefined FOR loop variable: " + ref.Name,
+					Sev:     SevWarning,
+				})
+			}
+		} else {
+			// SET-style %VAR%: warn if not defined anywhere in this file.
+			// Lower severity (hint) since the variable might come from the environment.
+			if !setDefined[ref.Name] {
+				diags = append(diags, Diag{
+					Line:    ref.Line,
+					Col:     ref.Col,
+					EndCol:  ref.Col + len(ref.Name),
+					Message: "Variable not defined in this file: " + ref.Name,
+					Sev:     SevHint,
+				})
+			}
 		}
 	}
 
@@ -438,9 +489,19 @@ func CompletionContextAt(lineBefore string) CompletionContext {
 	trimmed := strings.TrimLeft(lineBefore, " \t@")
 	lower := strings.ToLower(trimmed)
 
-	// %%VAR style: lineBefore ends with "%%" → FOR loop variable context.
-	if strings.HasSuffix(lineBefore, "%%") {
-		return CompleteForVariable
+	// %%VAR style: lineBefore has "%%" followed only by word chars to end of input.
+	if idx := strings.LastIndex(lineBefore, "%%"); idx >= 0 {
+		rest := lineBefore[idx+2:]
+		allWord := true
+		for _, c := range rest {
+			if !isWordChar(c) {
+				allWord = false
+				break
+			}
+		}
+		if allWord {
+			return CompleteForVariable
+		}
 	}
 	// %VAR% style: odd number of '%' means the last '%' is an unclosed opener.
 	if strings.Count(lineBefore, "%")%2 == 1 {
