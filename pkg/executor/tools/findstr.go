@@ -103,7 +103,7 @@ func parseFindstrArgs(args []string) (*findstrOptions, error) {
 		case strings.HasPrefix(upper, "/F:") || strings.HasPrefix(upper, "-F:"):
 			opts.fileList = arg[3:]
 		case strings.HasPrefix(upper, "/C:") || strings.HasPrefix(upper, "-C:"):
-			opts.patterns = append(opts.patterns, arg[3:])
+			opts.patterns = append(opts.patterns, stripOuterQuotes(arg[3:]))
 		case strings.HasPrefix(upper, "/D:") || strings.HasPrefix(upper, "-D:"):
 			for d := range strings.SplitSeq(arg[3:], ",") {
 				if d != "" {
@@ -122,7 +122,7 @@ func parseFindstrArgs(args []string) (*findstrOptions, error) {
 					opts.patterns = append(opts.patterns, word)
 				}
 			} else {
-				opts.files = append(opts.files, processor.MapPath(arg))
+				opts.files = append(opts.files, processor.MapPath(stripOuterQuotes(arg)))
 			}
 		}
 	}

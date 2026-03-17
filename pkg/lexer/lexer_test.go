@@ -749,6 +749,28 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenNewline, "\n"},
 			},
 		},
+		// %~f0 inside a double-quoted string must not consume the closing ".
+		// Previously lexPercent's %~ acceptRun consumed the closing " causing
+		// the rest of the file to be tokenized inside the string context.
+		{
+			"tilde_var_inside_double_quoted_string",
+			`"%~f0"`,
+			[]tok{
+				{TokenStringDouble, `"`},
+				{TokenNameVariable, `%~f0`},
+				{TokenStringDouble, `"`},
+			},
+		},
+		// %~dp0 with multiple modifiers inside double quotes
+		{
+			"tilde_var_multiple_mods_in_quotes",
+			`"%~dp0"`,
+			[]tok{
+				{TokenStringDouble, `"`},
+				{TokenNameVariable, `%~dp0`},
+				{TokenStringDouble, `"`},
+			},
+		},
 	}
 
 	for _, c := range cases {
