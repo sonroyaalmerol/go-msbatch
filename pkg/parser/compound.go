@@ -9,9 +9,10 @@ import (
 
 // parseBlock parses a parenthesised command block: ( cmd... ).
 func (p *Parser) parseBlock() *Block {
+	open := p.peek()
 	p.consume() // consume "("
 	p.compoundDepth++
-	block := &Block{}
+	block := &Block{Line: open.Line, Col: open.Col, EndLine: open.Line}
 	for p.pos < len(p.tokens) {
 		p.skipWS()
 		t := p.peek()
@@ -19,6 +20,7 @@ func (p *Parser) parseBlock() *Block {
 			break
 		}
 		if t.Type == lexer.TokenPunctuation && val(t) == ")" {
+			block.EndLine = t.Line
 			p.consume()
 			break
 		}
@@ -34,8 +36,9 @@ func (p *Parser) parseBlock() *Block {
 
 // parseIf parses an IF statement.
 func (p *Parser) parseIf() *IfNode {
+	ifTok := p.peek()
 	p.consume() // consume "if"
-	n := &IfNode{}
+	n := &IfNode{Line: ifTok.Line, Col: ifTok.Col}
 
 	p.skipWS()
 	if p.peekKeyword("/i") {
@@ -125,8 +128,9 @@ func (p *Parser) parseCondition() Condition {
 
 // parseFor parses a FOR statement.
 func (p *Parser) parseFor(_ bool) *ForNode {
+	forTok := p.peek()
 	p.consume() // consume "for"
-	n := &ForNode{}
+	n := &ForNode{Line: forTok.Line, Col: forTok.Col}
 
 	p.skipWS()
 	t := p.peek()
@@ -163,15 +167,27 @@ func (p *Parser) parseFor(_ bool) *ForNode {
 	}
 
 	if p.peek().Type == lexer.TokenNameVariable || p.peek().Type == lexer.TokenWord || p.peek().Type == lexer.TokenText {
-		n.Variable = stripForVarPercents(val(p.consume()))
+		varTok := p.peek()
+		raw := val(p.consume())
+		n.Variable = stripForVarPercents(raw)
+		// VarCol points to the letter: skip any leading %%
+		leadingPercents := len(raw) - len(strings.TrimLeft(raw, "%"))
+		n.VarLine = varTok.Line
+		n.VarCol = varTok.Col + leadingPercents
 		p.skipWS()
 	} else if p.peek().Type == lexer.TokenStringEscape {
 		// Fallback: %%X emitted as TokenStringEscape("%%") + TokenWord("X")
+		escTok := p.peek()
 		esc := val(p.consume())
 		if p.peek().Type == lexer.TokenWord || p.peek().Type == lexer.TokenText || p.peek().Type == lexer.TokenNameVariable {
+			letterTok := p.peek()
 			n.Variable = stripForVarPercents(esc + val(p.consume()))
+			n.VarLine = letterTok.Line
+			n.VarCol = letterTok.Col
 		} else {
 			n.Variable = stripForVarPercents(esc)
+			n.VarLine = escTok.Line
+			n.VarCol = escTok.Col + len([]rune(esc))
 		}
 		p.skipWS()
 	}

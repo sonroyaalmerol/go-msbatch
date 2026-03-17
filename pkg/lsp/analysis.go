@@ -6,6 +6,7 @@ import (
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/executor"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/lexer"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
@@ -41,7 +42,7 @@ type VarRef struct {
 	Col       int  // 0-based start column of the name (the char after the opening sigil)
 	IsDelayed bool // true when this is a !VAR! delayed-expansion reference
 	ExprLen   int  // length of the full expression between sigils when a :modifier is present
-	           // (e.g. len("STR:~0,5") for %STR:~0,5%); 0 means same as len(Name)
+	// (e.g. len("STR:~0,5") for %STR:~0,5%); 0 means same as len(Name)
 }
 
 // Loc is a compact source range returned by DefinitionAt / ReferencesAt.
@@ -78,178 +79,292 @@ type Analysis struct {
 }
 
 // Analyze parses the document content and extracts structural information.
-// Position data (line numbers) comes from a text scan so the parser does not
-// need to track positions itself.
+// The AST (built from per-line lexer invocations with correct line numbers) drives
+// label/variable/reference discovery. Variable-usage scanning (%VAR%, !VAR!, %%X)
+// remains text-based because the lexer's stateGoto emits %VAR% inside GOTO targets
+// as TokenNameLabel rather than TokenNameVariable.
 func Analyze(content string) Analysis {
 	var a Analysis
 	lines := strings.Split(content, "\n")
 
-	// --- text-based pass: collect positions ---
+	// Lex each line with its 0-based line number so every emitted token
+	// carries accurate Line/Col fields.
+	var allTokens []lexer.Item
+	for i, raw := range lines {
+		lineText := strings.TrimRight(raw, "\r")
+		bl := lexer.NewWithLine(lineText, i)
+		for {
+			t := bl.NextItem()
+			if t.Type == lexer.TokenEOF || (t.Type == 0 && len(t.Value) == 0) {
+				break
+			}
+			allTokens = append(allTokens, t)
+		}
+		// Inject explicit newline between lines so the parser can detect statement
+		// boundaries (it relies on TokenNewline to delimit commands).
+		allTokens = append(allTokens, lexer.Item{Line: i, Type: lexer.TokenNewline, Value: []rune{'\n'}})
+	}
+
+	// Parse the full token stream into an AST.
+	nodes := parser.NewFromTokens(allTokens).Parse()
+
+	// Walk the AST to collect labels, variable definitions, and references.
+	for _, node := range nodes {
+		analyzeNode(&a, node, lines)
+	}
+
+	// Text pass: collect %VAR% / !VAR! / %%X usages.
+	// This must stay text-based: stateGoto swallows %VAR% as TokenNameLabel so
+	// a purely token-driven pass would miss variable refs inside GOTO targets.
 	for i, raw := range lines {
 		line := strings.TrimRight(raw, "\r")
 		trimmed := strings.TrimSpace(line)
-		lower := strings.ToLower(trimmed)
-
-		// Skip comment lines: no labels, vars, or var-refs live inside comments.
 		stripped := strings.TrimLeft(trimmed, "@")
 		strippedLower := strings.ToLower(stripped)
+		// Skip comment lines — no variable refs live inside comments.
 		if strings.HasPrefix(trimmed, "::") || strings.HasPrefix(strippedLower, "rem ") || strippedLower == "rem" {
 			continue
 		}
-
-		// SETLOCAL ENABLEDELAYEDEXPANSION detection
-		if strings.HasPrefix(strippedLower, "setlocal") {
-			rest := strings.TrimSpace(strippedLower[8:])
-			if strings.Contains(rest, "enabledelayedexpansion") {
-				a.DelayedExpansionEnabled = true
-			}
-		}
-
-		// Label definition: line starts with ':'
+		// Skip label-definition lines — var refs on ':label' lines are meaningless.
 		if strings.HasPrefix(trimmed, ":") && !strings.HasPrefix(trimmed, "::") {
-			name := strings.Fields(trimmed[1:])[0]
-			if name != "" {
-				indent := len(line) - len(strings.TrimLeft(line, " \t"))
-				labelCol := indent + 1 // position after the ':'
-				a.Labels = append(a.Labels, LabelDef{Name: strings.ToLower(name), Line: i, Col: labelCol})
-			}
 			continue
 		}
-
-		// GOTO: "goto label" or "goto :label"
-		if strings.HasPrefix(lower, "goto ") || lower == "goto" {
-			target := strings.TrimSpace(trimmed[4:])
-			target = strings.TrimPrefix(target, ":")
-			targetLower := strings.ToLower(target)
-			if target != "" && targetLower != "eof" {
-				col := labelColAfterKeyword(line, 4) // "goto" = 4 chars
-				a.GotoRefs = append(a.GotoRefs, LabelRef{Name: targetLower, Line: i, Col: col})
-				if strings.Contains(target, "%") {
-					a.HasDynamicJumps = true
-				}
-			}
-			// Don't continue, scan for %VAR% in the same line
-		} else if strings.HasPrefix(lower, "call ") {
-			// CALL <something>
-			rest := strings.TrimSpace(trimmed[5:]) // after "call "
-			if strings.HasPrefix(rest, ":") {
-				// Subroutine call
-				fields := strings.Fields(rest)
-				if len(fields) > 0 {
-					name := strings.TrimPrefix(fields[0], ":")
-					nameLower := strings.ToLower(name)
-					if name != "" && nameLower != "eof" {
-						col := labelColAfterKeyword(line, 4) // "call" = 4 chars
-						a.CallRefs = append(a.CallRefs, LabelRef{Name: nameLower, Line: i, Col: col})
-						if strings.Contains(name, "%") {
-							a.HasDynamicJumps = true
-						}
-					}
-				}
-			} else {
-				// File call or external command
-				fields := strings.Fields(rest)
-				if len(fields) > 0 {
-					path := fields[0]
-					if strings.HasSuffix(strings.ToLower(path), ".bat") || strings.HasSuffix(strings.ToLower(path), ".cmd") {
-						col := labelColAfterKeyword(line, 4)
-						a.FileRefs = append(a.FileRefs, FileRef{Path: path, Line: i, Col: col})
-					}
-				}
-			}
-			// Don't continue, scan for %VAR% in the same line
-		} else if strings.HasPrefix(lower, "set ") {
-			// SET: "set varname=value" or "set /a ..." or "set /p ..."
-			rest := strings.TrimSpace(trimmed[3:])
-			restLower := strings.ToLower(rest)
-			indent := len(line) - len(strings.TrimLeft(line, " \t"))
-			afterSet := line[indent+3:] // after "set"
-			trimmedAfterSet := strings.TrimLeft(afterSet, " \t")
-			baseCol := indent + 3 + (len(afterSet) - len(trimmedAfterSet))
-			if strings.HasPrefix(restLower, "/a") {
-				// SET /A: arithmetic — extract all assigned variable names.
-				expr := strings.TrimSpace(rest[2:])
-				for _, name := range extractSetAVars(expr) {
-					a.Vars = append(a.Vars, VarDef{
-						Name:     name,
-						Value:    "",
-						Line:     i,
-						Col:      baseCol,
-						ScopeEnd: -1,
-					})
-				}
-			} else if strings.HasPrefix(restLower, "/p") {
-				// SET /P: prompt — variable name before '='.
-				promptPart := strings.TrimSpace(rest[2:])
-				if idx := strings.IndexByte(promptPart, '='); idx > 0 {
-					a.Vars = append(a.Vars, VarDef{
-						Name:     strings.ToUpper(promptPart[:idx]),
-						Value:    "",
-						Line:     i,
-						Col:      baseCol,
-						ScopeEnd: -1,
-					})
-				}
-			} else {
-				if idx := strings.IndexByte(rest, '='); idx > 0 {
-					name := rest[:idx]
-					value := rest[idx+1:]
-					a.Vars = append(a.Vars, VarDef{
-						Name:     strings.ToUpper(name),
-						Value:    value,
-						Line:     i,
-						Col:      baseCol,
-						ScopeEnd: -1,
-					})
-				}
-			}
-		} else if strings.HasPrefix(lower, "for ") {
-			// Find the variable like %%I
-			rest := trimmed[4:]
-			idx := strings.Index(rest, "%%")
-			if idx >= 0 && idx+2 < len(rest) {
-				char := rest[idx+2]
-				// FOR loop variables must be letters; %%0-%%9 are escaped positional args.
-				if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') {
-					indent := len(line) - len(strings.TrimLeft(line, " \t"))
-					// +2 skips the %% sigil so Col points to the letter, consistent
-					// with how %FOO% vars store Col at the first letter after %.
-					varCol := indent + 4 + idx + 2
-					scopeEnd := forScopeEnd(lines, i)
-					a.Vars = append(a.Vars, VarDef{
-						Name:     "%" + strings.ToUpper(string(char)),
-						Value:    "",
-						Line:     i,
-						Col:      varCol,
-						ScopeEnd: scopeEnd,
-					})
-					// FOR /F with tokens= can capture multiple values into
-					// successive letters. Add implicit VarDefs for each.
-					if tokenSpec := extractForFTokensSpec(trimmed); tokenSpec != "" {
-						nTokens := countForFTokens(tokenSpec)
-						for k := 1; k < nTokens; k++ {
-							nextChar := char + byte(k)
-							if !((nextChar >= 'a' && nextChar <= 'z') || (nextChar >= 'A' && nextChar <= 'Z')) {
-								break
-							}
-							a.Vars = append(a.Vars, VarDef{
-								Name:     "%" + strings.ToUpper(string(nextChar)),
-								Value:    "",
-								Line:     i,
-								Col:      varCol,
-								ScopeEnd: scopeEnd,
-							})
-						}
-					}
-				}
-			}
-		}
-
-		// %VARIABLE% usages on this line.
 		a.VarRefs = appendVarRefs(a.VarRefs, line, i)
 	}
 
 	return a
+}
+
+// analyzeNode recursively walks an AST node and populates a.
+func analyzeNode(a *Analysis, node parser.Node, lines []string) {
+	if node == nil {
+		return
+	}
+	switch n := node.(type) {
+	case *parser.LabelNode:
+		if n.Name != "" {
+			a.Labels = append(a.Labels, LabelDef{
+				Name: strings.ToLower(n.Name),
+				Line: n.Line,
+				Col:  n.Col,
+			})
+		}
+
+	case *parser.CommentNode:
+		// No structural information in comments.
+
+	case *parser.SimpleCommand:
+		analyzeSimpleCmd(a, n, lines)
+
+	case *parser.IfNode:
+		analyzeNode(a, n.Then, lines)
+		analyzeNode(a, n.Else, lines)
+
+	case *parser.ForNode:
+		analyzeForNode(a, n, lines)
+
+	case *parser.Block:
+		for _, child := range n.Body {
+			analyzeNode(a, child, lines)
+		}
+
+	case *parser.PipeNode:
+		analyzeNode(a, n.Left, lines)
+		analyzeNode(a, n.Right, lines)
+
+	case *parser.BinaryNode:
+		analyzeNode(a, n.Left, lines)
+		analyzeNode(a, n.Right, lines)
+	}
+}
+
+// analyzeSimpleCmd handles SET, GOTO, CALL, SETLOCAL simple commands.
+func analyzeSimpleCmd(a *Analysis, cmd *parser.SimpleCommand, lines []string) {
+	if cmd.Line >= len(lines) {
+		return
+	}
+	line := lines[cmd.Line]
+	cmdLower := strings.ToLower(cmd.Name)
+
+	switch cmdLower {
+	case "setlocal":
+		for _, arg := range cmd.Args {
+			if strings.EqualFold(arg, "enabledelayedexpansion") {
+				a.DelayedExpansionEnabled = true
+			}
+		}
+
+	case "goto":
+		if len(cmd.Args) == 0 {
+			return
+		}
+		target := strings.TrimPrefix(cmd.Args[0], ":")
+		targetLower := strings.ToLower(target)
+		if target != "" && targetLower != "eof" {
+			col := labelColAfterKeyword(line, len(cmd.Name))
+			a.GotoRefs = append(a.GotoRefs, LabelRef{Name: targetLower, Line: cmd.Line, Col: col})
+			if strings.Contains(target, "%") {
+				a.HasDynamicJumps = true
+			}
+		}
+
+	case "call":
+		if len(cmd.Args) == 0 {
+			return
+		}
+		arg0 := cmd.Args[0]
+		if strings.HasPrefix(arg0, ":") {
+			name := arg0[1:]
+			nameLower := strings.ToLower(name)
+			if name != "" && nameLower != "eof" {
+				col := labelColAfterKeyword(line, len(cmd.Name))
+				a.CallRefs = append(a.CallRefs, LabelRef{Name: nameLower, Line: cmd.Line, Col: col})
+				if strings.Contains(name, "%") {
+					a.HasDynamicJumps = true
+				}
+			}
+		} else {
+			pathLower := strings.ToLower(arg0)
+			if strings.HasSuffix(pathLower, ".bat") || strings.HasSuffix(pathLower, ".cmd") {
+				col := labelColAfterKeyword(line, len(cmd.Name))
+				a.FileRefs = append(a.FileRefs, FileRef{Path: arg0, Line: cmd.Line, Col: col})
+			}
+		}
+
+	case "set":
+		analyzeSetCmd(a, cmd, line)
+	}
+}
+
+// analyzeSetCmd extracts variable definitions from a SET command node.
+func analyzeSetCmd(a *Analysis, cmd *parser.SimpleCommand, line string) {
+	if len(cmd.Args) == 0 {
+		return
+	}
+	// Compute the column where the argument begins (after "set " and optional spaces).
+	afterSet := line[cmd.Col+len(cmd.Name):]
+	trimmedAfterSet := strings.TrimLeft(afterSet, " \t")
+	baseCol := cmd.Col + len(cmd.Name) + (len(afterSet) - len(trimmedAfterSet))
+
+	// cmd.Args[0] is the first whitespace-delimited token after "set".
+	arg0 := cmd.Args[0]
+	arg0Lower := strings.ToLower(arg0)
+
+	switch {
+	case strings.HasPrefix(arg0Lower, "/a"):
+		// SET /A: arithmetic — extract all assigned variable names.
+		expr := strings.TrimSpace(arg0[2:])
+		if expr == "" && len(cmd.Args) > 1 {
+			expr = strings.Join(cmd.Args[1:], " ")
+		}
+		for _, name := range extractSetAVars(expr) {
+			a.Vars = append(a.Vars, VarDef{Name: name, Line: cmd.Line, Col: baseCol, ScopeEnd: -1})
+		}
+
+	case strings.HasPrefix(arg0Lower, "/p"):
+		// SET /P: prompt — variable name before '='.
+		promptPart := strings.TrimSpace(arg0[2:])
+		if promptPart == "" && len(cmd.Args) > 1 {
+			promptPart = cmd.Args[1]
+		}
+		if idx := strings.IndexByte(promptPart, '='); idx > 0 {
+			a.Vars = append(a.Vars, VarDef{
+				Name: strings.ToUpper(promptPart[:idx]), Line: cmd.Line, Col: baseCol, ScopeEnd: -1,
+			})
+		}
+
+	default:
+		// Plain SET: "VAR=value"
+		if idx := strings.IndexByte(arg0, '='); idx > 0 {
+			name := arg0[:idx]
+			value := arg0[idx+1:]
+			// Append any further args (spaces inside value are re-joined).
+			if len(cmd.Args) > 1 {
+				value += " " + strings.Join(cmd.Args[1:], " ")
+			}
+			a.Vars = append(a.Vars, VarDef{
+				Name: strings.ToUpper(name), Value: value, Line: cmd.Line, Col: baseCol, ScopeEnd: -1,
+			})
+		}
+	}
+}
+
+// analyzeForNode extracts a FOR loop variable definition and recurses into Do.
+func analyzeForNode(a *Analysis, n *parser.ForNode, lines []string) {
+	if n.Variable == "" {
+		analyzeNode(a, n.Do, lines)
+		return
+	}
+
+	char := n.Variable[0]
+	// FOR loop variables must be letters.
+	if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z')) {
+		analyzeNode(a, n.Do, lines)
+		return
+	}
+
+	// Scope ends at the last line covered by the Do body.
+	scopeEnd := max(nodeLastLine(n.Do), n.Line)
+
+	a.Vars = append(a.Vars, VarDef{
+		Name:     "%" + strings.ToUpper(string(char)),
+		Line:     n.VarLine,
+		Col:      n.VarCol,
+		ScopeEnd: scopeEnd,
+	})
+
+	// FOR /F with tokens= can capture multiple values into successive letters.
+	if n.Variant == parser.ForF && n.VarLine < len(lines) {
+		rawLine := strings.TrimRight(lines[n.Line], "\r")
+		if tokenSpec := extractForFTokensSpec(rawLine); tokenSpec != "" {
+			nTokens := countForFTokens(tokenSpec)
+			for k := 1; k < nTokens; k++ {
+				nextChar := char + byte(k)
+				if !((nextChar >= 'a' && nextChar <= 'z') || (nextChar >= 'A' && nextChar <= 'Z')) {
+					break
+				}
+				a.Vars = append(a.Vars, VarDef{
+					Name:     "%" + strings.ToUpper(string(nextChar)),
+					Line:     n.VarLine,
+					Col:      n.VarCol,
+					ScopeEnd: scopeEnd,
+				})
+			}
+		}
+	}
+
+	analyzeNode(a, n.Do, lines)
+}
+
+// nodeLastLine returns the last source line covered by a parser node.
+// Used to compute the scope end of FOR loop bodies.
+func nodeLastLine(node parser.Node) int {
+	if node == nil {
+		return 0
+	}
+	switch n := node.(type) {
+	case *parser.SimpleCommand:
+		return n.Line
+	case *parser.LabelNode:
+		return n.Line
+	case *parser.CommentNode:
+		return n.Line
+	case *parser.IfNode:
+		if n.Else != nil {
+			return nodeLastLine(n.Else)
+		}
+		return nodeLastLine(n.Then)
+	case *parser.ForNode:
+		return nodeLastLine(n.Do)
+	case *parser.Block:
+		// EndLine tracks the closing ')' line, which is the true scope boundary.
+		return n.EndLine
+	case *parser.PipeNode:
+		return nodeLastLine(n.Right)
+	case *parser.BinaryNode:
+		return nodeLastLine(n.Right)
+	}
+	return 0
 }
 
 // Diagnostics returns a list of issues found in the document.
@@ -525,7 +640,7 @@ func extractForFTokensSpec(forLine string) string {
 // Examples: "2,3" → 2, "1-3" → 3, "1,2,3" → 3, "*" → 1.
 func countForFTokens(spec string) int {
 	count := 0
-	for _, part := range strings.Split(spec, ",") {
+	for part := range strings.SplitSeq(spec, ",") {
 		part = strings.TrimSpace(part)
 		if part == "*" {
 			count++
@@ -561,7 +676,7 @@ func countForFTokens(spec string) int {
 // Handles comma-separated multiple expressions: "A=1, B=2, C=A+B".
 func extractSetAVars(expr string) []string {
 	var names []string
-	for _, part := range strings.Split(expr, ",") {
+	for part := range strings.SplitSeq(expr, ",") {
 		part = strings.TrimSpace(part)
 		eqIdx := strings.IndexByte(part, '=')
 		if eqIdx <= 0 {
@@ -576,66 +691,64 @@ func extractSetAVars(expr string) []string {
 	return names
 }
 
-// forScopeEnd returns the 0-based last line of the body of a FOR loop whose
-// definition starts on forLine. For a single-line DO body it returns forLine;
-// for a block body ("do (…)") it scans forward for the matching ")".
+// forScopeEnd returns the 0-based last line of the body of a FOR loop starting
+// on forLine. It uses the parser so that scope boundaries come from the AST
+// rather than manual parenthesis counting. Kept as an exported-to-test helper.
 func forScopeEnd(lines []string, forLine int) int {
 	if forLine >= len(lines) {
 		return forLine
 	}
-	raw := strings.TrimRight(lines[forLine], "\r")
-	lower := strings.ToLower(raw)
-
-	// Find the last standalone "do" keyword in the line.
-	// Standalone means preceded by space/tab (or start-of-string) and
-	// followed by space/tab/'(' (or end-of-string).
-	doPos := -1
-	for i := 0; i <= len(lower)-2; i++ {
-		if lower[i] != 'd' || lower[i+1] != 'o' {
-			continue
+	var allTokens []lexer.Item
+	for i, raw := range lines {
+		lineText := strings.TrimRight(raw, "\r")
+		bl := lexer.NewWithLine(lineText, i)
+		for {
+			t := bl.NextItem()
+			if t.Type == lexer.TokenEOF || (t.Type == 0 && len(t.Value) == 0) {
+				break
+			}
+			allTokens = append(allTokens, t)
 		}
-		before := i == 0 || lower[i-1] == ' ' || lower[i-1] == '\t'
-		var afterCh byte
-		if i+2 < len(lower) {
-			afterCh = lower[i+2]
-		}
-		after := afterCh == 0 || afterCh == ' ' || afterCh == '\t' || afterCh == '('
-		if before && after {
-			doPos = i // keep scanning — take the last occurrence
-		}
+		allTokens = append(allTokens, lexer.Item{Line: i, Type: lexer.TokenNewline, Value: []rune{'\n'}})
 	}
-	if doPos < 0 {
-		return forLine
-	}
-
-	// Check whether a '(' immediately follows "do" (optionally separated by spaces).
-	afterDo := strings.TrimLeft(raw[doPos+2:], " \t")
-	if !strings.HasPrefix(afterDo, "(") {
-		return forLine // single-line DO body
-	}
-
-	// Multi-line block: find the matching ')' by tracking parenthesis depth.
-	openOff := doPos + 2 + (len(raw[doPos+2:]) - len(afterDo)) // byte index of '('
-	depth := 0
-	for j := forLine; j < len(lines); j++ {
-		l := strings.TrimRight(lines[j], "\r")
-		start := 0
-		if j == forLine {
-			start = openOff
-		}
-		for k := start; k < len(l); k++ {
-			switch l[k] {
-			case '(':
-				depth++
-			case ')':
-				depth--
-				if depth == 0 {
-					return j
+	nodes := parser.NewFromTokens(allTokens).Parse()
+	// Find the ForNode on forLine and return its scope end.
+	var findFor func([]parser.Node) int
+	findFor = func(ns []parser.Node) int {
+		for _, node := range ns {
+			switch n := node.(type) {
+			case *parser.ForNode:
+				if n.Line == forLine {
+					return nodeLastLine(n.Do)
+				}
+				// recurse into Do
+				if result := findFor([]parser.Node{n.Do}); result >= 0 {
+					return result
+				}
+			case *parser.Block:
+				if result := findFor(n.Body); result >= 0 {
+					return result
+				}
+			case *parser.IfNode:
+				if result := findFor([]parser.Node{n.Then, n.Else}); result >= 0 {
+					return result
+				}
+			case *parser.BinaryNode:
+				if result := findFor([]parser.Node{n.Left, n.Right}); result >= 0 {
+					return result
+				}
+			case *parser.PipeNode:
+				if result := findFor([]parser.Node{n.Left, n.Right}); result >= 0 {
+					return result
 				}
 			}
 		}
+		return -1
 	}
-	return len(lines) - 1 // unclosed block — assume it reaches end of file
+	if result := findFor(nodes); result >= 0 {
+		return result
+	}
+	return forLine
 }
 
 // CalledDocURIs returns the set of workspace document URIs that the given
@@ -1755,4 +1868,3 @@ func PrepareRenameAt(content string, line, col int) (Loc, bool) {
 	}
 	return Loc{}, false
 }
-

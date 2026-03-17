@@ -6,11 +6,12 @@ package lexer
 // BatchLexer tokenises a Windows batch script.
 type BatchLexer struct {
 	// engine state
-	input []rune
-	start int
-	pos   int
-	state stateFn
-	items chan Item
+	input      []rune
+	start      int
+	pos        int
+	state      stateFn
+	items      chan Item
+	lineOffset int // 0-based line number stamped on all emitted Items
 	// batch-specific state
 	compoundDepth int
 }
@@ -22,6 +23,15 @@ func New(src string) *BatchLexer {
 		items: make(chan Item, 10),
 	}
 	bl.state = bl.stateRoot
+	return bl
+}
+
+// NewWithLine creates a BatchLexer that stamps line on every emitted Item.
+// Use this when lexing a single line of a multi-line document so that
+// Item.Line reflects the actual source line number.
+func NewWithLine(src string, line int) *BatchLexer {
+	bl := New(src)
+	bl.lineOffset = line
 	return bl
 }
 
@@ -83,6 +93,7 @@ func (bl *BatchLexer) ignore() {
 // emit sends the current buffer as a token of type t and advances start.
 func (bl *BatchLexer) emit(t TokenType) {
 	bl.items <- Item{
+		Line:  bl.lineOffset,
 		Col:   bl.start,
 		Type:  t,
 		Value: bl.input[bl.start:bl.pos],

@@ -24,6 +24,13 @@ func New(src *lexer.BatchLexer) *Parser {
 	return &Parser{tokens: tokens}
 }
 
+// NewFromTokens creates a Parser from a pre-collected token slice.
+// Use this when tokens have been assembled from multiple per-line lexer
+// invocations (e.g. with NewWithLine) so that Item.Line values are correct.
+func NewFromTokens(tokens []lexer.Item) *Parser {
+	return &Parser{tokens: tokens}
+}
+
 // Parse returns all top-level nodes, processing the entire token stream.
 func (p *Parser) Parse() []Node {
 	var nodes []Node

@@ -42,6 +42,8 @@ type Redirect struct {
 
 // SimpleCommand is a leaf command: name, arguments, and redirections.
 type SimpleCommand struct {
+	Line       int  // 0-based source line of the command name token
+	Col        int  // 0-based source column of the command name token
 	Suppressed bool // true when preceded by @
 	Name       string
 	Args       []string
@@ -52,7 +54,10 @@ func (c *SimpleCommand) Kind() NodeKind { return NodeSimpleCommand }
 
 // Block is a parenthesised sequence of commands: ( cmd1 \n cmd2 ).
 type Block struct {
-	Body []Node
+	Line    int // 0-based source line of the opening '('
+	Col     int // 0-based source column of the opening '('
+	EndLine int // 0-based source line of the closing ')'; same as Line if unclosed
+	Body    []Node
 }
 
 func (b *Block) Kind() NodeKind { return NodeBlock }
@@ -94,6 +99,8 @@ type Condition struct {
 
 // IfNode represents an IF statement.
 type IfNode struct {
+	Line            int  // 0-based source line of the "if" keyword
+	Col             int  // 0-based source column of the "if" keyword
 	CaseInsensitive bool
 	Cond            Condition
 	Then            Node
@@ -115,6 +122,10 @@ const (
 
 // ForNode represents a FOR loop.
 type ForNode struct {
+	Line     int      // 0-based source line of the "for" keyword
+	Col      int      // 0-based source column of the "for" keyword
+	VarLine  int      // 0-based source line of the loop variable token
+	VarCol   int      // 0-based source column of the loop variable letter
 	Variant  ForKind
 	Options  string   // FOR /F option string (content of quotes, single-quotes, or backticks)
 	Variable string   // loop variable name, e.g. "i" for %%i
@@ -126,6 +137,8 @@ func (n *ForNode) Kind() NodeKind { return NodeFor }
 
 // PipeNode represents cmd1 | cmd2.
 type PipeNode struct {
+	Line  int // 0-based source line of the left operand
+	Col   int // 0-based source column of the left operand
 	Left  Node
 	Right Node
 }
@@ -134,6 +147,8 @@ func (n *PipeNode) Kind() NodeKind { return NodePipe }
 
 // BinaryNode handles &&, ||, &.
 type BinaryNode struct {
+	Line  int      // 0-based source line of the left operand
+	Col   int      // 0-based source column of the left operand
 	Op    NodeKind // NodeConcat, NodeOrElse, NodeAndThen
 	Left  Node
 	Right Node
@@ -143,6 +158,8 @@ func (n *BinaryNode) Kind() NodeKind { return n.Op }
 
 // LabelNode is a label definition (:name).
 type LabelNode struct {
+	Line int    // 0-based source line of the ':' token
+	Col  int    // 0-based source column of the label name (after ':')
 	Name string
 }
 
@@ -150,6 +167,8 @@ func (n *LabelNode) Kind() NodeKind { return NodeLabel }
 
 // CommentNode holds a REM comment or :: comment.
 type CommentNode struct {
+	Line int    // 0-based source line
+	Col  int    // 0-based source column of the comment token
 	Text string
 }
 

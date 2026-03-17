@@ -73,18 +73,19 @@ func (p *Parser) parsePrimary() Node {
 	// :: comment
 	if t.Type == lexer.TokenComment {
 		p.consume()
-		return &CommentNode{Text: val(t)}
+		return &CommentNode{Line: t.Line, Col: t.Col, Text: val(t)}
 	}
 
 	// Label definition :name
 	if t.Type == lexer.TokenPunctuation && val(t) == ":" {
+		colonLine, colonCol := t.Line, t.Col
 		p.consume()
 		lt := p.peek()
 		if lt.Type == lexer.TokenNameLabel {
 			p.consume()
-			return &LabelNode{Name: val(lt)}
+			return &LabelNode{Line: colonLine, Col: lt.Col, Name: val(lt)}
 		}
-		return &LabelNode{}
+		return &LabelNode{Line: colonLine, Col: colonCol}
 	}
 
 	// Keyword-dispatch
@@ -102,7 +103,7 @@ func (p *Parser) parsePrimary() Node {
 	// Bare label name token (seen after : in some lexer paths)
 	if t.Type == lexer.TokenNameLabel {
 		p.consume()
-		return &LabelNode{Name: val(t)}
+		return &LabelNode{Line: t.Line, Col: t.Col, Name: val(t)}
 	}
 
 	// Everything else is a simple command
@@ -120,7 +121,7 @@ func (p *Parser) parseSimpleCommand(suppressed bool) *SimpleCommand {
 	if t.Type == lexer.TokenEOF || t.Type == lexer.TokenPunctuation || t.Type == lexer.TokenNewline {
 		return nil
 	}
-	cmd := &SimpleCommand{Suppressed: suppressed}
+	cmd := &SimpleCommand{Suppressed: suppressed, Line: t.Line, Col: t.Col}
 	cmd.Name = val(p.consume())
 	p.collectArgs(cmd)
 	return cmd
@@ -242,7 +243,7 @@ func extractFD(token, op string, defaultFD int) int {
 
 // parseRem consumes "rem" and its comment body.
 func (p *Parser) parseRem() Node {
-	p.consume() // "rem" keyword
+	remTok := p.consume() // "rem" keyword
 	var sb strings.Builder
 	for p.pos < len(p.tokens) {
 		t := p.peek()
@@ -255,5 +256,5 @@ func (p *Parser) parseRem() Node {
 		}
 		p.consume()
 	}
-	return &CommentNode{Text: sb.String()}
+	return &CommentNode{Line: remTok.Line, Col: remTok.Col, Text: sb.String()}
 }
