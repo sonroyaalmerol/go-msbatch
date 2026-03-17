@@ -319,6 +319,9 @@ func (p *Parser) collectQuotedString() string {
 	var sb strings.Builder
 	t := p.consume()
 	sb.WriteString(val(t))
+	if len(val(t)) == 0 {
+		return sb.String()
+	}
 	quoteChar := val(t)[0]
 
 	if len(val(t)) > 1 && strings.HasSuffix(val(t), string(quoteChar)) {
