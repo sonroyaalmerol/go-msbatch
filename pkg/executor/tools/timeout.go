@@ -2,7 +2,6 @@ package tools
 
 import (
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -22,11 +21,6 @@ TIMEOUT /T seconds [/NOBREAK]
 
 func Timeout(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// TIMEOUT /T <seconds> [/NOBREAK]
-	if slices.Contains(cmd.Args, "/?") {
-		fmt.Fprint(p.Stdout, timeoutHelp)
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	}
 	seconds := 0
 	args := cmd.Args
 	for i, arg := range args {
@@ -41,13 +35,13 @@ func Timeout(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 	if seconds < 0 {
 		// /T -1 means wait indefinitely for a keypress — stub: skip
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 		return nil
 	}
 	if seconds > 0 {
 		fmt.Fprintf(p.Stdout, "Waiting for %d seconds, press a key to continue ...\n", seconds)
 		time.Sleep(time.Duration(seconds) * time.Second)
 	}
-	p.Env.Set("ERRORLEVEL", "0")
+	p.Success()
 	return nil
 }

@@ -78,17 +78,7 @@ type Analysis struct {
 	DelayedExpansionEnabled bool // true when SETLOCAL ENABLEDELAYEDEXPANSION is present
 }
 
-// Analyze parses the document content and extracts structural information.
-// The AST (built from per-line lexer invocations with correct line numbers) drives
-// label/variable/reference discovery. Variable-usage scanning (%VAR%, !VAR!, %%X)
-// remains text-based because the lexer's stateGoto emits %VAR% inside GOTO targets
-// as TokenNameLabel rather than TokenNameVariable.
-func Analyze(content string) Analysis {
-	var a Analysis
-	lines := strings.Split(content, "\n")
-
-	// Lex each line with its 0-based line number so every emitted token
-	// carries accurate Line/Col fields.
+func collectTokens(lines []string) []lexer.Item {
 	var allTokens []lexer.Item
 	for i, raw := range lines {
 		lineText := strings.TrimRight(raw, "\r")
@@ -104,6 +94,21 @@ func Analyze(content string) Analysis {
 		// boundaries (it relies on TokenNewline to delimit commands).
 		allTokens = append(allTokens, lexer.Item{Line: i, Type: lexer.TokenNewline, Value: []rune{'\n'}})
 	}
+	return allTokens
+}
+
+// Analyze parses the document content and extracts structural information.
+// The AST (built from per-line lexer invocations with correct line numbers) drives
+// label/variable/reference discovery. Variable-usage scanning (%VAR%, !VAR!, %%X)
+// remains text-based because the lexer's stateGoto emits %VAR% inside GOTO targets
+// as TokenNameLabel rather than TokenNameVariable.
+func Analyze(content string) Analysis {
+	var a Analysis
+	lines := strings.Split(content, "\n")
+
+	// Lex each line with its 0-based line number so every emitted token
+	// carries accurate Line/Col fields.
+	allTokens := collectTokens(lines)
 
 	// Parse the full token stream into an AST.
 	nodes := parser.NewFromTokens(allTokens).Parse()
@@ -247,8 +252,7 @@ func analyzeSetCmd(a *Analysis, cmd *parser.SimpleCommand, line string) {
 	baseCol := cmd.Col + len(cmd.Name) + (len(afterSet) - len(trimmedAfterSet))
 
 	// Reconstruct the raw argument string after "set "
-	fullArg := strings.Join(cmd.RawArgs, "")
-	fullArg = strings.TrimLeft(fullArg, " \t\v\f\xa0,;=")
+	fullArg := processor.ExtractRawArgString(cmd.RawArgs)
 
 	fullArgLower := strings.ToLower(fullArg)
 
@@ -765,19 +769,7 @@ func forScopeEnd(lines []string, forLine int) int {
 	if forLine >= len(lines) {
 		return forLine
 	}
-	var allTokens []lexer.Item
-	for i, raw := range lines {
-		lineText := strings.TrimRight(raw, "\r")
-		bl := lexer.NewWithLine(lineText, i)
-		for {
-			t := bl.NextItem()
-			if t.Type == lexer.TokenEOF || (t.Type == 0 && len(t.Value) == 0) {
-				break
-			}
-			allTokens = append(allTokens, t)
-		}
-		allTokens = append(allTokens, lexer.Item{Line: i, Type: lexer.TokenNewline, Value: []rune{'\n'}})
-	}
+	allTokens := collectTokens(lines)
 	nodes := parser.NewFromTokens(allTokens).Parse()
 	// Find the ForNode on forLine and return its scope end.
 	var findFor func([]parser.Node) int

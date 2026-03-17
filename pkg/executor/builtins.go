@@ -17,14 +17,13 @@ func cmdEcho(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	output, stateChanged := p.HandleEchoBuiltin(cmd.RawArgs)
 	if strings.ToLower(cmd.Name) == "echo." && len(cmd.RawArgs) == 0 {
 		fmt.Fprintln(p.Stdout)
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 		return nil
 	}
 	if !stateChanged {
 		fmt.Fprintln(p.Stdout, output)
 	}
-	p.Env.Set("ERRORLEVEL", "0")
-	return nil
+	return p.Success()
 }
 
 func cmdSet(p *processor.Processor, cmd *parser.SimpleCommand) error {
@@ -32,25 +31,22 @@ func cmdSet(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		for k, v := range p.Env.Snapshot() {
 			fmt.Fprintf(p.Stdout, "%s=%s\n", k, v)
 		}
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 		return nil
 	}
 
 	// Join raw args to preserve spacing, then trim exactly one leading delimiter run
-	arg := strings.Join(cmd.RawArgs, "")
-	arg = strings.TrimLeft(arg, " \t\v\f\xa0,;=")
+	arg := processor.ExtractRawArgString(cmd.RawArgs)
 
-	if strings.HasPrefix(arg, "\"") && strings.HasSuffix(arg, "\"") {
-		arg = arg[1 : len(arg)-1]
-	}
+	arg = processor.StripQuotes(arg)
 
 	if strings.HasPrefix(strings.ToLower(arg), "/a") {
 		_, err := p.EvalArithmetic(arg[2:])
 		if err != nil {
 			fmt.Fprintf(p.Stderr, "Invalid number.\n")
-			p.Env.Set("ERRORLEVEL", "1073741819")
+			p.FailureWithCode(1073741819)
 		} else {
-			p.Env.Set("ERRORLEVEL", "0")
+			p.Success()
 		}
 		return nil
 	}
@@ -63,7 +59,7 @@ func cmdSet(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			fmt.Fscanln(p.Stdin, &input)
 			p.HandleSetBuiltin(strings.TrimSpace(before), input)
 		}
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 		return nil
 	}
 
@@ -80,12 +76,11 @@ func cmdSet(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 		if !found {
 			fmt.Fprintf(p.Stderr, "Environment variable %s not defined\n", arg)
-			p.Env.Set("ERRORLEVEL", "1")
+			p.Failure()
 			return nil
 		}
 	}
-	p.Env.Set("ERRORLEVEL", "0")
-	return nil
+	return p.Success()
 }
 
 func cmdCd(p *processor.Processor, cmd *parser.SimpleCommand) error {
@@ -97,14 +92,14 @@ func cmdCd(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	if len(args) == 0 {
 		pwd, _ := os.Getwd()
 		fmt.Fprintln(p.Stdout, pwd)
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 		return nil
 	}
 	if err := os.Chdir(processor.MapPath(args[0])); err != nil {
 		fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
-		p.Env.Set("ERRORLEVEL", "1")
+		p.Failure()
 	} else {
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 	}
 	return nil
 }
@@ -121,31 +116,27 @@ func cmdType(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		fmt.Fprint(p.Stdout, string(content))
 	}
 	if failed {
-		p.Env.Set("ERRORLEVEL", "1")
+		p.Failure()
 	} else {
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 	}
 	return nil
 }
 
 func cmdCls(p *processor.Processor, _ *parser.SimpleCommand) error {
 	fmt.Fprint(p.Stdout, "\033[2J\033[H")
-	p.Env.Set("ERRORLEVEL", "0")
-	return nil
+	return p.Success()
 }
 
 func cmdTitle(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	arg := strings.Join(cmd.RawArgs, "")
-	arg = strings.TrimLeft(arg, " \t\v\f\xa0,;=")
+	arg := processor.ExtractRawArgString(cmd.RawArgs)
 	fmt.Fprintf(p.Stdout, "\033]0;%s\a", arg)
-	p.Env.Set("ERRORLEVEL", "0")
-	return nil
+	return p.Success()
 }
 
 func cmdVer(p *processor.Processor, _ *parser.SimpleCommand) error {
 	fmt.Fprintln(p.Stdout, VersionString())
-	p.Env.Set("ERRORLEVEL", "0")
-	return nil
+	return p.Success()
 }
 
 func cmdPause(p *processor.Processor, _ *parser.SimpleCommand) error {
@@ -169,8 +160,7 @@ func cmdPause(p *processor.Processor, _ *parser.SimpleCommand) error {
 		io.ReadFull(p.Stdin, make([]byte, 1)) //nolint:errcheck
 	}
 	fmt.Fprintln(p.Stdout)
-	p.Env.Set("ERRORLEVEL", "0")
-	return nil
+	return p.Success()
 }
 
 func cmdColor(p *processor.Processor, cmd *parser.SimpleCommand) error {
@@ -196,8 +186,7 @@ func cmdColor(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	} else {
 		fmt.Fprint(p.Stdout, "\033[0m")
 	}
-	p.Env.Set("ERRORLEVEL", "0")
-	return nil
+	return p.Success()
 }
 
 func cmdPushd(p *processor.Processor, cmd *parser.SimpleCommand) error {
@@ -207,12 +196,11 @@ func cmdPushd(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		if err := os.Chdir(processor.MapPath(cmd.Args[0])); err != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
 			p.DirStack = p.DirStack[:len(p.DirStack)-1]
-			p.Env.Set("ERRORLEVEL", "1")
+			p.Failure()
 			return nil
 		}
 	}
-	p.Env.Set("ERRORLEVEL", "0")
-	return nil
+	return p.Success()
 }
 
 func cmdPopd(p *processor.Processor, _ *parser.SimpleCommand) error {
@@ -221,12 +209,11 @@ func cmdPopd(p *processor.Processor, _ *parser.SimpleCommand) error {
 		p.DirStack = p.DirStack[:len(p.DirStack)-1]
 		if err := os.Chdir(dir); err != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
-			p.Env.Set("ERRORLEVEL", "1")
+			p.Failure()
 			return nil
 		}
 	}
-	p.Env.Set("ERRORLEVEL", "0")
-	return nil
+	return p.Success()
 }
 
 func cmdMkdir(p *processor.Processor, cmd *parser.SimpleCommand) error {
@@ -236,12 +223,11 @@ func cmdMkdir(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 		if err := os.MkdirAll(processor.MapPath(arg), 0755); err != nil {
 			fmt.Fprintf(p.Stderr, "A subdirectory or file %s already exists.\n", arg)
-			p.Env.Set("ERRORLEVEL", "1")
+			p.Failure()
 			return nil
 		}
 	}
-	p.Env.Set("ERRORLEVEL", "0")
-	return nil
+	return p.Success()
 }
 
 func cmdRmdir(p *processor.Processor, cmd *parser.SimpleCommand) error {
@@ -266,12 +252,11 @@ func cmdRmdir(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 		if err != nil {
 			fmt.Fprintf(p.Stderr, "The directory is not empty.\n")
-			p.Env.Set("ERRORLEVEL", "1")
+			p.Failure()
 			return nil
 		}
 	}
-	p.Env.Set("ERRORLEVEL", "0")
-	return nil
+	return p.Success()
 }
 
 func cmdDel(p *processor.Processor, cmd *parser.SimpleCommand) error {
@@ -311,13 +296,12 @@ func cmdDel(p *processor.Processor, cmd *parser.SimpleCommand) error {
 				}
 			} else if os.Remove(mapped) != nil {
 				fmt.Fprintf(p.Stderr, "Could Not Find %s\n", pat)
-				p.Env.Set("ERRORLEVEL", "1")
+				p.Failure()
 				return nil
 			}
 		}
 	}
-	p.Env.Set("ERRORLEVEL", "0")
-	return nil
+	return p.Success()
 }
 
 func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
@@ -332,7 +316,7 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 	if len(rawArgs) < 1 {
 		fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")
-		p.Env.Set("ERRORLEVEL", "1")
+		p.Failure()
 		return nil
 	}
 
@@ -396,7 +380,7 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 
 	if len(srcs) == 0 {
 		fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")
-		p.Env.Set("ERRORLEVEL", "1")
+		p.Failure()
 		return nil
 	}
 
@@ -415,7 +399,7 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			}
 			if err := copyFile(src, target); err != nil {
 				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
-				p.Env.Set("ERRORLEVEL", "1")
+				p.Failure()
 				return nil
 			}
 			count++
@@ -424,7 +408,7 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	case !hasPlus:
 		if err := copyFile(srcs[0], dstTarget); err != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
-			p.Env.Set("ERRORLEVEL", "1")
+			p.Failure()
 			return nil
 		}
 		fmt.Fprintf(p.Stdout, "        1 file(s) copied.\n")
@@ -435,20 +419,19 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			data, err := os.ReadFile(src)
 			if err != nil {
 				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
-				p.Env.Set("ERRORLEVEL", "1")
+				p.Failure()
 				return nil
 			}
 			buf.Write(data)
 		}
 		if err := os.WriteFile(dstTarget, buf.Bytes(), 0666); err != nil {
 			fmt.Fprintf(p.Stderr, "Access is denied.\n")
-			p.Env.Set("ERRORLEVEL", "1")
+			p.Failure()
 			return nil
 		}
 		fmt.Fprintf(p.Stdout, "        1 file(s) copied.\n")
 	}
-	p.Env.Set("ERRORLEVEL", "0")
-	return nil
+	return p.Success()
 }
 
 func cmdMove(p *processor.Processor, cmd *parser.SimpleCommand) error {
@@ -463,7 +446,7 @@ func cmdMove(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 	if len(args) < 2 {
 		fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")
-		p.Env.Set("ERRORLEVEL", "1")
+		p.Failure()
 		return nil
 	}
 	src := processor.MapPath(args[0])
@@ -473,12 +456,11 @@ func cmdMove(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 	if err := os.Rename(src, dst); err != nil {
 		fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
-		p.Env.Set("ERRORLEVEL", "1")
+		p.Failure()
 		return nil
 	}
 	fmt.Fprintf(p.Stdout, "        1 file(s) moved.\n")
-	p.Env.Set("ERRORLEVEL", "0")
-	return nil
+	return p.Success()
 }
 
 func cmdDir(p *processor.Processor, cmd *parser.SimpleCommand) error {
@@ -492,7 +474,7 @@ func cmdDir(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		fmt.Fprintf(p.Stderr, "File Not Found\n")
-		p.Env.Set("ERRORLEVEL", "1")
+		p.Failure()
 		return nil
 	}
 	abs, _ := filepath.Abs(dirPath)
@@ -511,8 +493,7 @@ func cmdDir(p *processor.Processor, cmd *parser.SimpleCommand) error {
 				t.Format("01/02/2006"), t.Format("03:04 PM"), info.Size(), e.Name())
 		}
 	}
-	p.Env.Set("ERRORLEVEL", "0")
-	return nil
+	return p.Success()
 }
 
 // copyFile copies src to dst, creating or truncating dst.

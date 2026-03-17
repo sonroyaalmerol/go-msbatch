@@ -251,7 +251,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 				code, _ = strconv.Atoi(filteredArgs[0])
 			}
 		}
-		p.Env.Set("ERRORLEVEL", strconv.Itoa(code))
+		p.FailureWithCode(code)
 		if isLocal {
 			if p.CallDepth > 0 {
 				return fmt.Errorf("EXIT_LOCAL")
@@ -308,17 +308,8 @@ func (p *Processor) executeIf(n *parser.IfNode) error {
 		left := p.ProcessLine(cond.Left)
 		right := p.ProcessLine(cond.Right)
 
-		unquote := func(s string) string {
-			if len(s) >= 2 {
-				q := s[0]
-				if (q == '"' || q == '\'' || q == '`') && s[len(s)-1] == q {
-					return s[1 : len(s)-1]
-				}
-			}
-			return s
-		}
-		left = unquote(left)
-		right = unquote(right)
+		left = StripQuotes(left)
+		right = StripQuotes(right)
 
 		isNumeric := false
 		var lVal, rVal int

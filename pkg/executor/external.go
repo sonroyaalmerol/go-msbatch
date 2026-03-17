@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
@@ -98,7 +97,7 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		prefix := exePrefix()
 		if len(prefix) == 0 {
 			fmt.Fprintf(p.Stderr, "cannot execute '%s': no exe prefix configured (set MSBATCH_EXE_PREFIX, e.g. MSBATCH_EXE_PREFIX=wine)\n", cmd.Name)
-			p.Env.Set("ERRORLEVEL", "9009")
+			p.FailureWithCode(9009)
 			return nil
 		}
 		// Pass the original Windows path (cmd.Name) to the prefix tool, NOT the
@@ -222,13 +221,13 @@ func runOSCommand(p *processor.Processor, name string, args []string, displayNam
 
 	if err := c.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			p.Env.Set("ERRORLEVEL", strconv.Itoa(exitErr.ExitCode()))
+			p.SetErrorLevel(exitErr.ExitCode())
 		} else {
 			fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command, operable program or batch file.\n", displayName)
-			p.Env.Set("ERRORLEVEL", "9009")
+			p.FailureWithCode(9009)
 		}
 	} else {
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 	}
 	return nil
 }
@@ -295,7 +294,7 @@ func runBatchFile(p *processor.Processor, batPath string, args []string) error {
 	content, err := os.ReadFile(batPath)
 	if err != nil {
 		fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command, operable program or batch file.\n", batPath)
-		p.Env.Set("ERRORLEVEL", "9009")
+		p.FailureWithCode(9009)
 		return nil
 	}
 
@@ -349,7 +348,7 @@ func runBatchFile(p *processor.Processor, batPath string, args []string) error {
 	// ERRORLEVEL, but do not propagate.
 	if execErr != nil {
 		fmt.Fprintf(p.Stderr, "%v\n", execErr)
-		p.Env.Set("ERRORLEVEL", "1")
+		p.Failure()
 	}
 
 	return nil

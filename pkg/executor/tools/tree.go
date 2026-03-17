@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
@@ -20,11 +19,6 @@ TREE [path]
 `
 
 func Tree(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	if slices.Contains(cmd.Args, "/?") {
-		fmt.Fprint(p.Stdout, treeHelp)
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	}
 	root := "."
 	for _, arg := range cmd.Args {
 		// Only treat as a flag if it looks like a short Windows-style flag
@@ -38,7 +32,7 @@ func Tree(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 	fmt.Fprintln(p.Stdout, root)
 	printTree(p.Stdout, root, "")
-	p.Env.Set("ERRORLEVEL", "0")
+	p.Success()
 	return nil
 }
 

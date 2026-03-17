@@ -52,6 +52,24 @@ func Phase0ReadLine(src string) string {
 	return strings.Join(result, "\n")
 }
 
+func resolveVariable(rawName string, env *Environment) (string, bool) {
+	val, ok := env.Get(rawName)
+	if !ok {
+		varName, manipulation := SplitVarModifier(rawName)
+		val, ok = env.Get(varName)
+		if ok && manipulation != "" {
+			if strings.HasPrefix(manipulation, "~") {
+				val = applySlicing(val, manipulation[1:])
+			} else if strings.Contains(manipulation, "=") {
+				if before, after, ok := strings.Cut(manipulation, "="); ok {
+					val = applySubstitution(val, before, after)
+				}
+			}
+		}
+	}
+	return val, ok
+}
+
 // Phase1PercentExpand performs phase-1 percent expansion on src.
 func Phase1PercentExpand(src string, env *Environment, args []string) string {
 	runes := []rune(src)
@@ -191,20 +209,7 @@ func Phase1PercentExpand(src string, env *Environment, args []string) string {
 			rawName := string(runes[i+1 : end])
 			i = end + 1
 
-			val, ok := env.Get(rawName)
-			if !ok {
-				varName, manipulation := SplitVarModifier(rawName)
-				val, ok = env.Get(varName)
-				if ok && manipulation != "" {
-					if strings.HasPrefix(manipulation, "~") {
-						val = applySlicing(val, manipulation[1:])
-					} else if strings.Contains(manipulation, "=") {
-						if before, after, ok := strings.Cut(manipulation, "="); ok {
-							val = applySubstitution(val, before, after)
-						}
-					}
-				}
-			}
+			val, ok := resolveVariable(rawName, env)
 
 			if !ok {
 				if !env.BatchMode() {
@@ -498,20 +503,7 @@ func Phase5DelayedExpand(src string, env *Environment) string {
 		rawName := string(runes[i+1 : end])
 		i = end + 1
 
-		val, ok := env.Get(rawName)
-		if !ok {
-			varName, manipulation := SplitVarModifier(rawName)
-			val, ok = env.Get(varName)
-			if ok && manipulation != "" {
-				if strings.HasPrefix(manipulation, "~") {
-					val = applySlicing(val, manipulation[1:])
-				} else if strings.Contains(manipulation, "=") {
-					if before, after, ok := strings.Cut(manipulation, "="); ok {
-						val = applySubstitution(val, before, after)
-					}
-				}
-			}
-		}
+		val, ok := resolveVariable(rawName, env)
 
 		if !ok {
 			if !env.BatchMode() {

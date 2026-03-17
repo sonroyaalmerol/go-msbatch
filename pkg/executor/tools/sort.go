@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"sort"
 	"strings"
 
@@ -24,11 +23,6 @@ SORT [/R] [[path]filename]
 
 func Sort(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// SORT [/R] [/+n] [file]
-	if slices.Contains(cmd.Args, "/?") {
-		fmt.Fprint(p.Stdout, sortHelp)
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	}
 	reverse := false
 	var reader io.Reader
 	if p.Stdin != nil {
@@ -46,7 +40,7 @@ func Sort(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			f, err := os.Open(processor.MapPath(arg))
 			if err != nil {
 				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
-				p.Env.Set("ERRORLEVEL", "1")
+				p.Failure()
 				return nil
 			}
 			defer f.Close()
@@ -67,6 +61,6 @@ func Sort(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	for _, line := range lines {
 		fmt.Fprintln(p.Stdout, line)
 	}
-	p.Env.Set("ERRORLEVEL", "0")
+	p.Success()
 	return nil
 }

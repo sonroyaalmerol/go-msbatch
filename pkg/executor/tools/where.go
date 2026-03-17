@@ -3,7 +3,6 @@ package tools
 import (
 	"fmt"
 	"os/exec"
-	"slices"
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
@@ -20,14 +19,9 @@ WHERE [/Q] name
 
 func Where(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// WHERE [/Q] <name>
-	if slices.Contains(cmd.Args, "/?") {
-		fmt.Fprint(p.Stdout, whereHelp)
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	}
 	if len(cmd.Args) == 0 {
 		fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")
-		p.Env.Set("ERRORLEVEL", "1")
+		p.Failure()
 		return nil
 	}
 	quiet := false
@@ -44,12 +38,12 @@ func Where(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		if !quiet {
 			fmt.Fprintf(p.Stderr, "INFO: Could not find files for the given pattern(s).\n")
 		}
-		p.Env.Set("ERRORLEVEL", "1")
+		p.Failure()
 		return nil
 	}
 	if !quiet {
 		fmt.Fprintln(p.Stdout, path)
 	}
-	p.Env.Set("ERRORLEVEL", "0")
+	p.Success()
 	return nil
 }

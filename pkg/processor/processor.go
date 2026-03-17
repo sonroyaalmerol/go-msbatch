@@ -1,6 +1,7 @@
 package processor
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -146,6 +147,42 @@ func (p *Processor) HandleEchoBuiltin(args []string) (output string, stateChange
 	return full, false
 }
 
+// SetErrorLevel updates the ERRORLEVEL variable in the environment.
+func (p *Processor) SetErrorLevel(code int) {
+	p.Env.SetErrorLevel(code)
+}
+
+// Success is shorthand for SetErrorLevel(0).
+func (p *Processor) Success() error {
+	p.SetErrorLevel(0)
+	return nil
+}
+
+// Failure is shorthand for SetErrorLevel(1).
+func (p *Processor) Failure() error {
+	p.SetErrorLevel(1)
+	return nil
+}
+
+// FailureWithCode sets the ERRORLEVEL to code and returns nil.
+func (p *Processor) FailureWithCode(code int) error {
+	p.SetErrorLevel(code)
+	return nil
+}
+
+// ShowHelp checks if "/?" or "-?" is present in cmd.Args. If so, it prints helpText,
+// sets ERRORLEVEL to 0, and returns true.
+func (p *Processor) ShowHelp(cmd *parser.SimpleCommand, helpText string) bool {
+	for _, arg := range cmd.Args {
+		if arg == "/?" || arg == "-?" {
+			fmt.Fprint(p.Stdout, helpText)
+			p.Success()
+			return true
+		}
+	}
+	return false
+}
+
 // HandleSetBuiltin parses and applies a SET command.
 // src is the raw text after "set " (i.e. "NAME=value" or "/a expr").
 func (p *Processor) HandleSetBuiltin(name, value string) {
@@ -156,6 +193,32 @@ func (p *Processor) HandleSetBuiltin(name, value string) {
 			p.Env.Set(name, value)
 		}
 	}
+}
+
+// ExtractRawArgString joins all raw arguments into a single string and trims
+// the initial CMD-style delimiter characters (Space, Tab, Comma, Semicolon,
+// Equal, or 0xA0). This is used by built-in commands that need to process
+// the entire remaining command line as a single literal string (like SET or
+// ECHO).
+func ExtractRawArgString(args []string) string {
+	full := strings.Join(args, "")
+	if len(full) > 0 {
+		// CMD's parser skips exactly one leading delimiter run
+		trimmed := strings.TrimLeft(full, " \t\v\f\xa0,;=")
+		return trimmed
+	}
+	return ""
+}
+
+// StripQuotes removes a single layer of surrounding quotes (", ', or `) from s.
+func StripQuotes(s string) string {
+	if len(s) >= 2 {
+		q := s[0]
+		if (q == '"' || q == '\'' || q == '`') && s[len(s)-1] == q {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
 }
 
 // ExpandPrompt expands all $X codes in a PROMPT string.

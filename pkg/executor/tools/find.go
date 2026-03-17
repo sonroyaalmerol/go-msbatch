@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
@@ -29,14 +28,9 @@ If a filename is not specified, FIND searches text piped from another command.
 
 func Find(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// FIND [/V] [/C] [/N] [/I] "string" [file...]
-	if slices.Contains(cmd.Args, "/?") {
-		fmt.Fprint(p.Stdout, findHelp)
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	}
 	if len(cmd.Args) == 0 {
 		fmt.Fprintf(p.Stderr, "Required parameter missing\n")
-		p.Env.Set("ERRORLEVEL", "2")
+		p.FailureWithCode(2)
 		return nil
 	}
 	ignoreCase := false
@@ -71,7 +65,7 @@ func Find(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 	if searchStr == "" {
 		fmt.Fprintf(p.Stderr, "Required parameter missing\n")
-		p.Env.Set("ERRORLEVEL", "2")
+		p.FailureWithCode(2)
 		return nil
 	}
 
@@ -118,7 +112,7 @@ func Find(p *processor.Processor, cmd *parser.SimpleCommand) error {
 
 	if len(files) == 0 {
 		if p.Stdin == nil {
-			p.Env.Set("ERRORLEVEL", "1")
+			p.Failure()
 			return nil
 		}
 		scan(p.Stdin, "")
@@ -144,9 +138,9 @@ func Find(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 
 	if found {
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 	} else {
-		p.Env.Set("ERRORLEVEL", "1")
+		p.Failure()
 	}
 	return nil
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -84,21 +83,16 @@ XCOPY source [destination] [/A | /M] [/D[:date]] [/P] [/S [/E]] [/V] [/W]
 
 // Xcopy implements the XCOPY command.
 func Xcopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	if slices.Contains(cmd.Args, "/?") {
-		fmt.Fprint(p.Stdout, xcopyHelp)
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	}
 	if len(cmd.Args) == 0 {
 		fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")
-		p.Env.Set("ERRORLEVEL", "4")
+		p.FailureWithCode(4)
 		return nil
 	}
 
 	opts, srcArg, dstArg, err := parseXcopyArgs(cmd.Args)
 	if err != nil {
 		fmt.Fprintf(p.Stderr, "%v\n", err)
-		p.Env.Set("ERRORLEVEL", "4")
+		p.FailureWithCode(4)
 		return nil
 	}
 
@@ -125,7 +119,7 @@ func Xcopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		matches, err := filepath.Glob(mappedSrc)
 		if err != nil || len(matches) == 0 {
 			fmt.Fprintf(p.Stderr, "File not found - %s\n", srcArg)
-			p.Env.Set("ERRORLEVEL", "1")
+			p.Failure()
 			return nil
 		}
 		srcPaths = matches
@@ -206,11 +200,11 @@ func Xcopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		fmt.Fprintf(p.Stdout, "%d File(s) copied\n", count)
 	}
 	if failed > 0 {
-		p.Env.Set("ERRORLEVEL", "5")
+		p.FailureWithCode(5)
 	} else if count == 0 {
-		p.Env.Set("ERRORLEVEL", "1")
+		p.Failure()
 	} else {
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 	}
 	return nil
 }

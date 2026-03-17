@@ -103,15 +103,13 @@ func parseFindstrArgs(args []string) (*findstrOptions, error) {
 		case strings.HasPrefix(upper, "/F:") || strings.HasPrefix(upper, "-F:"):
 			opts.fileList = arg[3:]
 		case strings.HasPrefix(upper, "/C:") || strings.HasPrefix(upper, "-C:"):
-			opts.patterns = append(opts.patterns, stripOuterQuotes(arg[3:]))
+			opts.patterns = append(opts.patterns, processor.StripQuotes(arg[3:]))
 		case strings.HasPrefix(upper, "/D:") || strings.HasPrefix(upper, "-D:"):
 			for d := range strings.SplitSeq(arg[3:], ",") {
 				if d != "" {
 					opts.dirList = append(opts.dirList, d)
 				}
 			}
-		case upper == "/?" || upper == "-?":
-			return nil, nil
 		default:
 			if (strings.HasPrefix(arg, "/") || strings.HasPrefix(arg, "-")) &&
 				len(arg) == 2 {
@@ -129,7 +127,7 @@ func parseFindstrArgs(args []string) (*findstrOptions, error) {
 					}
 				}
 			} else {
-				opts.files = append(opts.files, processor.MapPath(stripOuterQuotes(arg)))
+				opts.files = append(opts.files, processor.MapPath(processor.StripQuotes(arg)))
 			}
 		}
 	}
@@ -240,27 +238,17 @@ func lineMatchesFindstr(line string, regexes []*regexp.Regexp) bool {
 }
 
 func Findstr(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	if slices.Contains(cmd.Args, "/?") || slices.Contains(cmd.Args, "-?") {
-		fmt.Fprint(p.Stdout, findstrHelp)
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	}
 
 	if len(cmd.Args) == 0 {
 		fmt.Fprintf(p.Stderr, "FINDSTR: required parameter missing\n")
-		p.Env.Set("ERRORLEVEL", "2")
+		p.FailureWithCode(2)
 		return nil
 	}
 
 	opts, err := parseFindstrArgs(cmd.Args)
 	if err != nil {
 		fmt.Fprintf(p.Stderr, "FINDSTR: %v\n", err)
-		p.Env.Set("ERRORLEVEL", "2")
-		return nil
-	}
-	if opts == nil {
-		fmt.Fprint(p.Stdout, findstrHelp)
-		p.Env.Set("ERRORLEVEL", "0")
+		p.FailureWithCode(2)
 		return nil
 	}
 
@@ -269,7 +257,7 @@ func Findstr(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		lines, err := readLines(path)
 		if err != nil {
 			fmt.Fprintf(p.Stderr, "FINDSTR: cannot open %s\n", opts.stringsFile)
-			p.Env.Set("ERRORLEVEL", "2")
+			p.FailureWithCode(2)
 			return nil
 		}
 		opts.patterns = append(opts.patterns, lines...)
@@ -277,14 +265,14 @@ func Findstr(p *processor.Processor, cmd *parser.SimpleCommand) error {
 
 	if len(opts.patterns) == 0 {
 		fmt.Fprintf(p.Stderr, "FINDSTR: required parameter missing\n")
-		p.Env.Set("ERRORLEVEL", "2")
+		p.FailureWithCode(2)
 		return nil
 	}
 
 	regexes, err := buildFindstrRegexes(opts)
 	if err != nil {
 		fmt.Fprintf(p.Stderr, "FINDSTR: %v\n", err)
-		p.Env.Set("ERRORLEVEL", "2")
+		p.FailureWithCode(2)
 		return nil
 	}
 
@@ -293,7 +281,7 @@ func Findstr(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		lines, err := readLines(path)
 		if err != nil {
 			fmt.Fprintf(p.Stderr, "FINDSTR: cannot open %s\n", opts.fileList)
-			p.Env.Set("ERRORLEVEL", "2")
+			p.FailureWithCode(2)
 			return nil
 		}
 		for _, l := range lines {
@@ -354,7 +342,7 @@ func Findstr(p *processor.Processor, cmd *parser.SimpleCommand) error {
 
 	if len(opts.files) == 0 && len(opts.dirList) == 0 {
 		if p.Stdin == nil {
-			p.Env.Set("ERRORLEVEL", "1")
+			p.Failure()
 			return nil
 		}
 		scan(p.Stdin, "", false)
@@ -415,9 +403,9 @@ func Findstr(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 
 	if found {
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 	} else {
-		p.Env.Set("ERRORLEVEL", "1")
+		p.Failure()
 	}
 	return nil
 }

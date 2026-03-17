@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -240,14 +239,9 @@ Exit codes (bitwise OR):
 `
 
 func Robocopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	if slices.Contains(cmd.Args, "/?") {
-		fmt.Fprint(p.Stdout, robocopyHelp)
-		p.Env.Set("ERRORLEVEL", "0")
-		return nil
-	}
 	if len(cmd.Args) < 2 {
 		fmt.Fprintf(p.Stderr, "ERROR: Invalid number of parameters.\n")
-		p.Env.Set("ERRORLEVEL", "16")
+		p.FailureWithCode(16)
 		return nil
 	}
 
@@ -265,12 +259,12 @@ func Robocopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	srcInfo, err := os.Stat(src)
 	if err != nil || !srcInfo.IsDir() {
 		fmt.Fprintf(p.Stderr, "ERROR: Source directory %q not found or is not a directory.\n", src)
-		p.Env.Set("ERRORLEVEL", "16")
+		p.FailureWithCode(16)
 		return nil
 	}
 	if filepath.Clean(src) == filepath.Clean(dst) {
 		fmt.Fprintf(p.Stderr, "ERROR: Source and Destination must be different.\n")
-		p.Env.Set("ERRORLEVEL", "16")
+		p.FailureWithCode(16)
 		return nil
 	}
 
@@ -323,7 +317,7 @@ func Robocopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		code |= 1
 	}
 
-	p.Env.Set("ERRORLEVEL", strconv.Itoa(code))
+	p.FailureWithCode(code)
 	return nil
 }
 

@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -23,21 +22,21 @@ var (
 
 func cmdBreak(p *processor.Processor, _ *parser.SimpleCommand) error {
 	// BREAK historically toggled extended Ctrl+C checking; it is now a no-op.
-	p.Env.Set("ERRORLEVEL", "0")
+	p.Success()
 	return nil
 }
 
 func cmdDate(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// /T — display only (default behaviour here; setting the system date is unsupported).
 	fmt.Fprintf(p.Stdout, "The current date is: %s\n", time.Now().Format("Mon 01/02/2006"))
-	p.Env.Set("ERRORLEVEL", "0")
+	p.Success()
 	return nil
 }
 
 func cmdTime(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// /T — display only (setting the system time is unsupported).
 	fmt.Fprintf(p.Stdout, "The current time is: %s\n", time.Now().Format("15:04:05.00"))
-	p.Env.Set("ERRORLEVEL", "0")
+	p.Success()
 	return nil
 }
 
@@ -45,17 +44,16 @@ func cmdPath(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	if len(cmd.Args) == 0 {
 		path, _ := p.Env.Get("PATH")
 		fmt.Fprintf(p.Stdout, "PATH=%s\n", path)
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 		return nil
 	}
-	arg := strings.Join(cmd.RawArgs, "")
-	arg = strings.TrimLeft(arg, " \t\v\f\xa0,;=")
+	arg := processor.ExtractRawArgString(cmd.RawArgs)
 	if arg == ";" {
 		p.Env.Set("PATH", "")
 	} else {
 		p.Env.Set("PATH", arg)
 	}
-	p.Env.Set("ERRORLEVEL", "0")
+	p.Success()
 	return nil
 }
 
@@ -63,11 +61,10 @@ func cmdPrompt(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	if len(cmd.Args) == 0 {
 		p.Env.Set("PROMPT", "$P$G") // restore default
 	} else {
-		arg := strings.Join(cmd.RawArgs, "")
-		arg = strings.TrimLeft(arg, " \t\v\f\xa0,;=")
+		arg := processor.ExtractRawArgString(cmd.RawArgs)
 		p.Env.Set("PROMPT", arg)
 	}
-	p.Env.Set("ERRORLEVEL", "0")
+	p.Success()
 	return nil
 }
 
@@ -78,7 +75,7 @@ func cmdVerify(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			state = "OFF"
 		}
 		fmt.Fprintf(p.Stdout, "VERIFY is %s\n", state)
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 		return nil
 	}
 	switch strings.ToUpper(cmd.Args[0]) {
@@ -88,10 +85,10 @@ func cmdVerify(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		p.Env.Set("__VERIFY__", "OFF")
 	default:
 		fmt.Fprintf(p.Stderr, "You must specify ON or OFF.\n")
-		p.Env.Set("ERRORLEVEL", "1")
+		p.Failure()
 		return nil
 	}
-	p.Env.Set("ERRORLEVEL", "0")
+	p.Success()
 	return nil
 }
 
@@ -103,7 +100,7 @@ func cmdVol(p *processor.Processor, _ *parser.SimpleCommand) error {
 	}
 	fmt.Fprintf(p.Stdout, " Volume in drive %s has no label.\n", drive)
 	fmt.Fprintf(p.Stdout, " Volume Serial Number is 0000-0000\n")
-	p.Env.Set("ERRORLEVEL", "0")
+	p.Success()
 	return nil
 }
 
@@ -112,11 +109,10 @@ func cmdAssoc(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		for ext, ft := range fileAssoc {
 			fmt.Fprintf(p.Stdout, "%s=%s\n", ext, ft)
 		}
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 		return nil
 	}
-	arg := strings.Join(cmd.RawArgs, "")
-	arg = strings.TrimLeft(arg, " \t\v\f\xa0,;=")
+	arg := processor.ExtractRawArgString(cmd.RawArgs)
 	if before, after, ok := strings.Cut(arg, "="); ok {
 		ext := strings.ToLower(strings.TrimSpace(before))
 		if after == "" {
@@ -129,12 +125,12 @@ func cmdAssoc(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		ft, ok := fileAssoc[ext]
 		if !ok {
 			fmt.Fprintf(p.Stderr, "File association not found for extension %s\n", arg)
-			p.Env.Set("ERRORLEVEL", "1")
+			p.Failure()
 			return nil
 		}
 		fmt.Fprintf(p.Stdout, "%s=%s\n", ext, ft)
 	}
-	p.Env.Set("ERRORLEVEL", "0")
+	p.Success()
 	return nil
 }
 
@@ -143,11 +139,10 @@ func cmdFtype(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		for ft, openCmd := range fileTypes {
 			fmt.Fprintf(p.Stdout, "%s=%s\n", ft, openCmd)
 		}
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 		return nil
 	}
-	arg := strings.Join(cmd.RawArgs, "")
-	arg = strings.TrimLeft(arg, " \t\v\f\xa0,;=")
+	arg := processor.ExtractRawArgString(cmd.RawArgs)
 	if before, after, ok := strings.Cut(arg, "="); ok {
 		ft := strings.TrimSpace(before)
 		if after == "" {
@@ -160,12 +155,12 @@ func cmdFtype(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		openCmd, ok := fileTypes[ft]
 		if !ok {
 			fmt.Fprintf(p.Stderr, "File type '%s' not found or no open command associated with it.\n", arg)
-			p.Env.Set("ERRORLEVEL", "1")
+			p.Failure()
 			return nil
 		}
 		fmt.Fprintf(p.Stdout, "%s=%s\n", ft, openCmd)
 	}
-	p.Env.Set("ERRORLEVEL", "0")
+	p.Success()
 	return nil
 }
 
@@ -189,7 +184,7 @@ func cmdMklink(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 	if linkName == "" || target == "" {
 		fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")
-		p.Env.Set("ERRORLEVEL", "1")
+		p.Failure()
 		return nil
 	}
 	linkPath := processor.MapPath(linkName)
@@ -202,7 +197,7 @@ func cmdMklink(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 	if err != nil {
 		fmt.Fprintf(p.Stderr, "Cannot create a file when that file already exists.\n")
-		p.Env.Set("ERRORLEVEL", "1")
+		p.Failure()
 		return nil
 	}
 	if isHard {
@@ -210,14 +205,14 @@ func cmdMklink(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	} else {
 		fmt.Fprintf(p.Stdout, "symbolic link created for %s <<===>> %s\n", linkName, target)
 	}
-	p.Env.Set("ERRORLEVEL", "0")
+	p.Success()
 	return nil
 }
 
 func cmdRen(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	if len(cmd.Args) < 2 {
 		fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")
-		p.Env.Set("ERRORLEVEL", "1")
+		p.Failure()
 		return nil
 	}
 	src := processor.MapPath(cmd.Args[0])
@@ -230,11 +225,11 @@ func cmdRen(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		dst := filepath.Join(filepath.Dir(m), newName)
 		if err := os.Rename(m, dst); err != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
-			p.Env.Set("ERRORLEVEL", "1")
+			p.Failure()
 			return nil
 		}
 	}
-	p.Env.Set("ERRORLEVEL", "0")
+	p.Success()
 	return nil
 }
 
@@ -242,7 +237,7 @@ func cmdMore(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// Stub: outputs without interactive paging.
 	if len(cmd.Args) == 0 {
 		io.Copy(p.Stdout, p.Stdin) //nolint:errcheck
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 		return nil
 	}
 	for _, arg := range cmd.Args {
@@ -252,19 +247,19 @@ func cmdMore(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		content, err := os.ReadFile(processor.MapPath(arg))
 		if err != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
-			p.Env.Set("ERRORLEVEL", "1")
+			p.Failure()
 			return nil
 		}
 		p.Stdout.Write(content) //nolint:errcheck
 	}
-	p.Env.Set("ERRORLEVEL", "0")
+	p.Success()
 	return nil
 }
 
 func cmdStart(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// START ["title"] [/B] [/WAIT] [/D path] [/MIN|/MAX|...] <command> [args...]
 	if len(cmd.Args) == 0 {
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 		return nil
 	}
 	wait := false
@@ -287,7 +282,7 @@ func cmdStart(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 	}
 	if len(cmdArgs) == 0 {
-		p.Env.Set("ERRORLEVEL", "0")
+		p.Success()
 		return nil
 	}
 	c := exec.Command(processor.MapPath(cmdArgs[0]), cmdArgs[1:]...)
@@ -295,15 +290,15 @@ func cmdStart(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	c.Stderr = p.Stderr
 	c.Stdin = p.Stdin
 	if wait {
-		if err := c.Run(); err != nil {
+		if err := c.Wait(); err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
-				p.Env.Set("ERRORLEVEL", strconv.Itoa(exitErr.ExitCode()))
+				p.FailureWithCode(exitErr.ExitCode())
 				return nil
 			}
 		}
 	} else {
 		c.Start() //nolint:errcheck
 	}
-	p.Env.Set("ERRORLEVEL", "0")
+	p.Success()
 	return nil
 }

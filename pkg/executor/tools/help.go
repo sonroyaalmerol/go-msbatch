@@ -5,6 +5,7 @@ import "strings"
 // ToolHelp maps lower-case tool names to their help text.
 var ToolHelp = map[string]string{
 	"find":     findHelp,
+	"findstr":  findstrHelp,
 	"sort":     sortHelp,
 	"tree":     treeHelp,
 	"xcopy":    xcopyHelp,

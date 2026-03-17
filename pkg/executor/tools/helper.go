@@ -8,16 +8,6 @@ import (
 	"os"
 )
 
-// stripOuterQuotes removes a single layer of surrounding double-quotes from s,
-// if present (e.g. `"foo"` → `foo`).  Used when a built-in receives an
-// argument that was originally quoted on the batch command line.
-func stripOuterQuotes(s string) string {
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		return s[1 : len(s)-1]
-	}
-	return s
-}
-
 // isDirEmpty reports whether the directory at path contains no entries.
 func isDirEmpty(path string) (bool, error) {
 	entries, err := os.ReadDir(path)

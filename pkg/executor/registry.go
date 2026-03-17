@@ -94,9 +94,16 @@ func (r *Registry) Names() []string {
 // ExecCommand looks up cmd.Name and calls the registered handler.
 // Falls through to the fallback executor when the name is not registered.
 func (r *Registry) ExecCommand(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	if h, ok := r.handlers[strings.ToLower(cmd.Name)]; ok {
-		return h.ExecCommand(p, cmd)
+	lowerName := strings.ToLower(cmd.Name)
+
+	// Automatic help support for all registered built-ins and tools.
+	if _, ok := r.handlers[lowerName]; ok {
+		if p.ShowHelp(cmd, CommandHelp(lowerName)) {
+			return nil
+		}
+		return r.handlers[lowerName].ExecCommand(p, cmd)
 	}
+
 	if r.fallback != nil {
 		return r.fallback.ExecCommand(p, cmd)
 	}

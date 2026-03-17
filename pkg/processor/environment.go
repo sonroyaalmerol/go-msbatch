@@ -5,6 +5,7 @@ package processor
 import (
 	"maps"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -29,8 +30,13 @@ func NewEnvironment(batchMode bool) *Environment {
 			e.vars[strings.ToUpper(before)] = after
 		}
 	}
-	e.vars["ERRORLEVEL"] = "0"
+	e.SetErrorLevel(0)
 	return e
+}
+
+// SetErrorLevel updates the ERRORLEVEL variable.
+func (e *Environment) SetErrorLevel(code int) {
+	e.Set("ERRORLEVEL", strconv.Itoa(code))
 }
 
 // BuiltinVarNames returns the set of variable names that exist in a freshly
@@ -54,7 +60,7 @@ func NewEmptyEnvironment(batchMode bool) *Environment {
 		vars:      make(map[string]string),
 		batchMode: batchMode,
 	}
-	e.vars["ERRORLEVEL"] = "0"
+	e.SetErrorLevel(0)
 	return e
 }
 
