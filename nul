@@ -1,1 +1,0 @@
-findstr /i /c:"THIS_WILL_NEVER_MATCH_123" "%~f0" >nul
