@@ -63,7 +63,7 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		// unquoted value (matching Windows CMD CALL semantics).
 		var batArgs []string
 		for _, arg := range cmd.Args {
-			mapped := stripExeArg(mapArg(arg))
+			mapped := mapArg(stripExeArg(arg))
 			if strings.ContainsAny(mapped, "*?[") {
 				if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
 					batArgs = append(batArgs, matches...)
@@ -91,7 +91,7 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// Native Unix command — map paths, expand globs, and strip CMD/CRT quoting.
 	var args []string
 	for _, arg := range cmd.Args {
-		mapped := stripExeArg(mapArg(arg))
+		mapped := mapArg(stripExeArg(arg))
 		if strings.ContainsAny(mapped, "*?[") {
 			if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
 				args = append(args, matches...)
