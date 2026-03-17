@@ -18,6 +18,11 @@ func Phase0ReadLine(src string) string {
 
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
+		hasCR := strings.HasSuffix(line, "\r")
+		if hasCR {
+			line = line[:len(line)-1]
+		}
+
 		for strings.HasSuffix(line, "^") {
 			// Check if the caret itself is escaped (e.g. ^^ at the end)
 			if strings.HasSuffix(line, "^^") {
@@ -26,10 +31,20 @@ func Phase0ReadLine(src string) string {
 			line = line[:len(line)-1]
 			if i+1 < len(lines) {
 				i++
-				line += strings.TrimLeft(lines[i], " \t")
+				nextLine := lines[i]
+				if strings.HasSuffix(nextLine, "\r") {
+					nextLine = nextLine[:len(nextLine)-1]
+					hasCR = true
+				} else {
+					hasCR = false
+				}
+				line += strings.TrimLeft(nextLine, " \t")
 			} else {
 				break
 			}
+		}
+		if hasCR {
+			line += "\r"
 		}
 		result = append(result, line)
 	}

@@ -88,6 +88,58 @@ func uncMount(server, share string) string {
 	return ""
 }
 
+func resolveCaseInsensitive(path string) string {
+	if _, err := os.Stat(path); err == nil {
+		return path
+	}
+
+	parts := strings.Split(path, "/")
+	if len(parts) == 0 {
+		return path
+	}
+
+	var currentPath string
+	if filepath.IsAbs(path) {
+		currentPath = "/"
+		parts = parts[1:]
+	} else {
+		currentPath = "."
+	}
+
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			currentPath = filepath.Join(currentPath, part)
+			continue
+		}
+
+		entries, err := os.ReadDir(currentPath)
+		if err != nil {
+			return path // fallback
+		}
+
+		matched := false
+		for _, entry := range entries {
+			if strings.EqualFold(entry.Name(), part) {
+				currentPath = filepath.Join(currentPath, entry.Name())
+				matched = true
+				break
+			}
+		}
+
+		if !matched {
+			return path // fallback
+		}
+	}
+
+	if strings.HasPrefix(path, "./") && !strings.HasPrefix(currentPath, "./") {
+		return "./" + currentPath
+	} else if !strings.HasPrefix(path, "./") && strings.HasPrefix(currentPath, ".") && currentPath != "." {
+		return strings.TrimPrefix(currentPath, "./")
+	}
+
+	return currentPath
+}
+
 // MapPath converts a Windows-style path to a platform-appropriate path.
 // On non-Windows platforms, it maps backslashes to forward slashes and
 // resolves drive letters and UNC paths using the MSBATCH_* environment
@@ -110,13 +162,13 @@ func MapPath(path string) string {
 			if mount == "" {
 				// No mapping configured — return the path unchanged so callers
 				// can decide how to handle it.
-				return filepath.Clean(p)
+				return resolveCaseInsensitive(filepath.Clean(p))
 			}
 			rest := ""
 			if len(parts) == 3 {
 				rest = "/" + parts[2]
 			}
-			return filepath.Clean(mount + rest)
+			return resolveCaseInsensitive(filepath.Clean(mount + rest))
 		}
 	}
 
@@ -126,5 +178,5 @@ func MapPath(path string) string {
 		p = mount + p[2:]
 	}
 
-	return filepath.Clean(p)
+	return resolveCaseInsensitive(filepath.Clean(p))
 }

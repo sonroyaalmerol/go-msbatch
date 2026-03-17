@@ -288,8 +288,13 @@ func (p *Processor) executeIf(n *parser.IfNode) error {
 	switch cond.Kind {
 	case parser.CondExist:
 		path := MapPath(p.ProcessLine(cond.Arg))
-		_, err := os.Stat(path)
-		conditionMet = (err == nil)
+		if strings.ContainsAny(path, "*?[") {
+			matches, err := filepath.Glob(path)
+			conditionMet = (err == nil && len(matches) > 0)
+		} else {
+			_, err := os.Stat(path)
+			conditionMet = (err == nil)
+		}
 	case parser.CondCompare:
 		left := p.ProcessLine(cond.Left)
 		right := p.ProcessLine(cond.Right)
