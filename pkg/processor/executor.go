@@ -311,24 +311,58 @@ func (p *Processor) executeIf(n *parser.IfNode) error {
 		left = unquote(left)
 		right = unquote(right)
 
-		if n.CaseInsensitive {
+		isNumeric := false
+		var lVal, rVal int
+		if l, err := strconv.Atoi(left); err == nil {
+			if r, err := strconv.Atoi(right); err == nil {
+				isNumeric = true
+				lVal = l
+				rVal = r
+			}
+		}
+
+		if n.CaseInsensitive && !isNumeric {
 			left = strings.ToLower(left)
 			right = strings.ToLower(right)
 		}
 
 		switch cond.Op {
 		case parser.OpEqual, parser.OpEqu:
-			conditionMet = (left == right)
+			if isNumeric {
+				conditionMet = (lVal == rVal)
+			} else {
+				conditionMet = (left == right)
+			}
 		case parser.OpNeq:
-			conditionMet = (left != right)
+			if isNumeric {
+				conditionMet = (lVal != rVal)
+			} else {
+				conditionMet = (left != right)
+			}
 		case parser.OpLss:
-			conditionMet = (left < right)
+			if isNumeric {
+				conditionMet = (lVal < rVal)
+			} else {
+				conditionMet = (left < right)
+			}
 		case parser.OpLeq:
-			conditionMet = (left <= right)
+			if isNumeric {
+				conditionMet = (lVal <= rVal)
+			} else {
+				conditionMet = (left <= right)
+			}
 		case parser.OpGtr:
-			conditionMet = (left > right)
+			if isNumeric {
+				conditionMet = (lVal > rVal)
+			} else {
+				conditionMet = (left > right)
+			}
 		case parser.OpGeq:
-			conditionMet = (left >= right)
+			if isNumeric {
+				conditionMet = (lVal >= rVal)
+			} else {
+				conditionMet = (left >= right)
+			}
 		}
 	case parser.CondDefined:
 		_, conditionMet = p.Env.Get(p.ProcessLine(cond.Arg))

@@ -149,6 +149,11 @@ func MapPath(path string) string {
 		return filepath.Clean(path)
 	}
 
+	// Strip outer quotes before processing the path.
+	if len(path) >= 2 && (path[0] == '"' || path[0] == '\'') && path[len(path)-1] == path[0] {
+		path = path[1 : len(path)-1]
+	}
+
 	// Replace backslashes with forward slashes.
 	p := strings.ReplaceAll(path, "\\", "/")
 

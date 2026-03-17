@@ -73,13 +73,27 @@ When **no UNC variable matches**, the path is passed through unchanged (with bac
 - Drive-relative paths (`C:foo` — relative to the current directory on drive C) are treated as absolute, which is incorrect in general.
 - The mapping only applies when `MapPath()` is called. Arguments that look like bare filenames are not mapped.
 
-## Running .exe Files (exe prefix)
+## Running .exe Files
 
-On non-Windows hosts, invoking a `.exe` binary (e.g. `program.exe` or `C:\Tools\app.exe`) requires a compatibility layer.  go-msbatch does **not** manage any such layer itself; it simply prepends whatever command you configure to every `.exe` invocation.
+On non-Windows hosts, invoking a `.exe` binary (e.g. `program.exe` or `C:\Tools\app.exe`) follows a two-step resolution process.
+
+### 1. Native Binary Lookup
+
+Before applying an execution prefix, `go-msbatch` checks if a "native" version of the requested command exists on the host system. It searches for a binary with the same name but **without** the `.exe` extension in:
+
+1. The directory containing the `.exe` (if a path was provided).
+2. The current working directory (if no path was provided).
+3. Every directory in the system `PATH`.
+
+For example, if you run `ls.exe` on Linux, `go-msbatch` will find `/usr/bin/ls` and execute it natively. This allows many scripts to run unchanged if the corresponding tools are installed on the host OS.
+
+### 2. Execution Prefix (Compatibility Layer)
+
+If no native counterpart is found, the command requires a compatibility layer. `go-msbatch` does **not** manage any such layer itself; it simply prepends whatever command you configure to every `.exe` invocation.
 
 [Wine](https://www.winehq.org/) is the most common choice, but anything that acts as a transparent prefix works (e.g. `box64 wine`, a custom wrapper script, a container entry-point, etc.).
 
-### Configuration
+#### Configuration
 
 Set the `MSBATCH_EXE_PREFIX` host environment variable to the executable (and any extra flags) you want prepended to every `.exe` invocation:
 

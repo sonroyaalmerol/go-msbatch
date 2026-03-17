@@ -55,6 +55,21 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// handling can be chosen correctly before we build the args slice.
 	isExe := runtime.GOOS != "windows" && strings.HasSuffix(strings.ToLower(cmdName), ".exe")
 
+	// On non-Windows, if we're asked to run "foo.exe", check first if a native
+	// "foo" exists in the same location or in PATH. If it does, we run that
+	// natively instead of using the exe prefix.
+	if isExe {
+		nativeName := cmdName[:len(cmdName)-4]
+		// Check current directory first for bare names (CMD behavior)
+		if !strings.ContainsAny(nativeName, "/\\") && fileExists(nativeName) {
+			isExe = false
+			cmdName = "./" + nativeName
+		} else if nativePath, err := exec.LookPath(nativeName); err == nil {
+			isExe = false
+			cmdName = nativePath
+		}
+	}
+
 	// Use Words() which groups RawArgs by true whitespace.
 	cmdWords := cmd.Words()
 

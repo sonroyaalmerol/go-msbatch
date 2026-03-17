@@ -31,6 +31,9 @@ func TestIntegration(t *testing.T) {
 				return
 			}
 
+			if batFile == "29_exe_mapping_path.bat" {
+				t.Setenv("MSBATCH_DRIVE_C", "/usr/")
+			}
 			env := processor.NewEnvironment(true)
 			var stdout bytes.Buffer
 			proc := processor.New(env, []string{batFile, "A", "B", "C"}, executor.New())

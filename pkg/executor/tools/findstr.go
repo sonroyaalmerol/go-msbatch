@@ -118,8 +118,15 @@ func parseFindstrArgs(args []string) (*findstrOptions, error) {
 				continue
 			}
 			if len(opts.patterns) == 0 && len(opts.files) == 0 && opts.stringsFile == "" {
-				for word := range strings.FieldsSeq(arg) {
-					opts.patterns = append(opts.patterns, word)
+				// If the pattern is quoted, treat it as a single pattern.
+				// Otherwise, split it into multiple space-separated patterns
+				// to match cmd.exe findstr behavior.
+				if len(arg) >= 2 && (arg[0] == '"' || arg[0] == '\'') && arg[len(arg)-1] == arg[0] {
+					opts.patterns = append(opts.patterns, arg[1:len(arg)-1])
+				} else {
+					for word := range strings.FieldsSeq(arg) {
+						opts.patterns = append(opts.patterns, word)
+					}
 				}
 			} else {
 				opts.files = append(opts.files, processor.MapPath(stripOuterQuotes(arg)))
