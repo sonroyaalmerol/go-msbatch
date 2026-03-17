@@ -368,9 +368,25 @@ func nodeLastLine(node parser.Node) int {
 }
 
 // Diagnostics returns a list of issues found in the document.
+// Diagnostics returns diagnostics for a batch script given only its content.
+// Use DiagnosticsWithContext when the workspace is available for accurate
+// cross-file scoping.
 func Diagnostics(content string) []Diag {
 	a := Analyze(content)
+	return diagnosticsFromAnalysis("", a, nil)
+}
 
+// DiagnosticsWithContext returns diagnostics for the document at uri using the
+// full workspace to resolve cross-file variable definitions and usages.
+func DiagnosticsWithContext(uri string, workspace map[string]*Document) []Diag {
+	doc, ok := workspace[uri]
+	if !ok {
+		return nil
+	}
+	return diagnosticsFromAnalysis(uri, doc.Analysis, workspace)
+}
+
+func diagnosticsFromAnalysis(uri string, a Analysis, workspace map[string]*Document) []Diag {
 	// Build a set of defined label names.
 	defined := make(map[string]bool, len(a.Labels))
 	for _, l := range a.Labels {
@@ -458,10 +474,26 @@ func Diagnostics(content string) []Diag {
 		}
 	}
 
+	// Resolve cross-file context when workspace is available.
+	var calledURIs, callerURIs map[string]bool
+	if workspace != nil && uri != "" {
+		calledURIs = CalledDocURIs(a, workspace)
+		callerURIs = CallerDocURIs(uri, workspace)
+	}
+
 	// Variables defined but never used: SET VAR=... but %VAR% / !VAR! never appears.
+	// A variable is considered "used" if it is referenced in this file OR in any
+	// file that this file calls (since batch inherits the environment on CALL).
 	varUsed := make(map[string]bool)
 	for _, ref := range a.VarRefs {
 		varUsed[ref.Name] = true
+	}
+	for calledURI := range calledURIs {
+		if calledDoc, ok := workspace[calledURI]; ok {
+			for _, ref := range calledDoc.Analysis.VarRefs {
+				varUsed[ref.Name] = true
+			}
+		}
 	}
 	// Delayed refs reference the same variable as their SET counterpart.
 	// varUsed already contains the name (no sigil) for delayed refs since
@@ -482,12 +514,9 @@ func Diagnostics(content string) []Diag {
 		}
 	}
 
-	// If the script makes any external CALL file.bat, those scripts can set
-	// arbitrary variables. Suppress "not defined in this file" hints in that case
-	// since we cannot statically know what the called script exports.
-	hasFileCalls := len(a.FileRefs) > 0
-
 	// Build lookup: defined SET vars (file-wide) and FOR vars with their scopes.
+	// Include SET vars from caller files (batch inherits env when called) and
+	// from called files (variables exported back by the called script).
 	type forScope struct{ start, end int }
 	forScopes := make(map[string][]forScope) // Name → list of scopes
 	setDefined := make(map[string]bool)
@@ -496,6 +525,47 @@ func Diagnostics(content string) []Diag {
 			forScopes[v.Name] = append(forScopes[v.Name], forScope{v.Line, v.ScopeEnd})
 		} else {
 			setDefined[v.Name] = true
+		}
+	}
+	for callerURI := range callerURIs {
+		if callerDoc, ok := workspace[callerURI]; ok {
+			for _, v := range callerDoc.Analysis.Vars {
+				if !strings.HasPrefix(v.Name, "%") && v.ScopeEnd < 0 {
+					setDefined[v.Name] = true
+				}
+			}
+		}
+	}
+	for calledURI := range calledURIs {
+		if calledDoc, ok := workspace[calledURI]; ok {
+			for _, v := range calledDoc.Analysis.Vars {
+				if !strings.HasPrefix(v.Name, "%") && v.ScopeEnd < 0 {
+					setDefined[v.Name] = true
+				}
+			}
+		}
+	}
+
+	// hasUnresolvableFileCalls: true when this file calls external scripts that are
+	// not present in the workspace — those may set arbitrary variables so we
+	// cannot safely warn about undefined variables in that case.
+	hasUnresolvableFileCalls := false
+	if workspace == nil {
+		hasUnresolvableFileCalls = len(a.FileRefs) > 0
+	} else {
+		for _, ref := range a.FileRefs {
+			lowerPath := strings.ToLower(ref.Path)
+			found := false
+			for wURI := range workspace {
+				if strings.HasSuffix(strings.ToLower(wURI), lowerPath) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				hasUnresolvableFileCalls = true
+				break
+			}
 		}
 	}
 
@@ -518,7 +588,7 @@ func Diagnostics(content string) []Diag {
 					Message: "Delayed expansion used but SETLOCAL ENABLEDELAYEDEXPANSION not found",
 					Sev:     SevWarning,
 				})
-			} else if !setDefined[ref.Name] && !cmdBuiltinVars[ref.Name] && !hasFileCalls {
+			} else if !setDefined[ref.Name] && !cmdBuiltinVars[ref.Name] && !hasUnresolvableFileCalls {
 				diags = append(diags, Diag{
 					Line:    ref.Line,
 					Col:     ref.Col - 1,
@@ -546,10 +616,10 @@ func Diagnostics(content string) []Diag {
 				})
 			}
 		} else {
-			// SET-style %VAR% (possibly with :modifier): hint if not defined anywhere in this file.
-			// Suppressed for built-in CMD vars and when the script makes external
-			// CALL file.bat references (those scripts can set any variable).
-			if !setDefined[ref.Name] && !cmdBuiltinVars[ref.Name] && !hasFileCalls {
+			// SET-style %VAR% (possibly with :modifier): hint if not defined in this
+			// file, any caller file, or any called file — and no unresolvable file
+			// calls exist that might define it.
+			if !setDefined[ref.Name] && !cmdBuiltinVars[ref.Name] && !hasUnresolvableFileCalls {
 				diags = append(diags, Diag{
 					Line:    ref.Line,
 					Col:     ref.Col,
@@ -765,6 +835,25 @@ func CalledDocURIs(a Analysis, workspace map[string]*Document) map[string]bool {
 		}
 	}
 	return called
+}
+
+// CallerDocURIs returns the set of workspace document URIs that explicitly
+// call the given URI via "CALL <file>".
+func CallerDocURIs(uri string, workspace map[string]*Document) map[string]bool {
+	callers := make(map[string]bool)
+	lowerURI := strings.ToLower(uri)
+	for wURI, doc := range workspace {
+		if wURI == uri {
+			continue
+		}
+		for _, ref := range doc.Analysis.FileRefs {
+			if strings.HasSuffix(lowerURI, strings.ToLower(ref.Path)) {
+				callers[wURI] = true
+				break
+			}
+		}
+	}
+	return callers
 }
 
 // CompletionContext describes what kind of completion is appropriate at the

@@ -101,8 +101,10 @@ func (s *Server) remove(uri string) {
 func ptr[T any](v T) *T { return &v }
 
 // publishDiagnostics sends textDocument/publishDiagnostics for uri.
-func (s *Server) publishDiagnostics(ctx *glsp.Context, uri, content string) {
-	diags := Diagnostics(content)
+func (s *Server) publishDiagnostics(ctx *glsp.Context, uri, _ string) {
+	s.mu.RLock()
+	diags := DiagnosticsWithContext(uri, s.docs)
+	s.mu.RUnlock()
 
 	lspDiags := make([]protocol.Diagnostic, 0, len(diags))
 	for _, d := range diags {
