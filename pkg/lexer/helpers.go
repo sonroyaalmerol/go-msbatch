@@ -38,7 +38,7 @@ func (bl *BatchLexer) isFollowPlain(r rune) bool {
 	if r == '=' {
 		return false
 	}
-	if r == ')' && bl.compoundDepth > 0 {
+	if r == ')' {
 		return false
 	}
 	return true

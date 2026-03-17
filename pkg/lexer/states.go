@@ -57,6 +57,7 @@ func (bl *BatchLexer) stateRoot() stateFn {
 		if isNL(r2) {
 			bl.ignore()
 		} else {
+			bl.start++ // skip '^'
 			bl.emit(TokenStringEscape)
 		}
 		return bl.stateRoot

@@ -131,9 +131,9 @@ func TestSingleTokens(t *testing.T) {
 		{"string_bt_unclosed", "`hello", []tok{{TokenStringBT, "`hello"}}},
 
 		// ── TokenStringEscape ─────────────────────────────────────────────
-		{"escape_caret_char", "^a", []tok{{TokenStringEscape, "^a"}}},
-		{"escape_caret_ampersand", "^&", []tok{{TokenStringEscape, "^&"}}},
-		{"escape_caret_gt", "^>", []tok{{TokenStringEscape, "^>"}}},
+		{"escape_caret_char", "^a", []tok{{TokenStringEscape, "a"}}},
+		{"escape_caret_ampersand", "^&", []tok{{TokenStringEscape, "&"}}},
+		{"escape_caret_gt", "^>", []tok{{TokenStringEscape, ">"}}},
 		// %% is the batch escape for a literal percent sign
 		{"escape_double_percent", "%%", []tok{{TokenStringEscape, "%%"}}},
 		// ^ at EOF emits an escape with just the caret
@@ -685,7 +685,7 @@ func TestTokenCombinations(t *testing.T) {
 			[]tok{
 				{TokenWord, "echo"},
 				{TokenWhitespace, " "},
-				{TokenStringEscape, "^&"},
+				{TokenStringEscape, "&"},
 				{TokenWhitespace, " "},
 				{TokenWord, "literal"},
 				{TokenNewline, "\n"},
