@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
@@ -141,24 +142,37 @@ func cmdVer(p *processor.Processor, _ *parser.SimpleCommand) error {
 
 func cmdPause(p *processor.Processor, _ *parser.SimpleCommand) error {
 	fmt.Fprint(p.Stdout, "Press any key to continue . . . ")
-	// When stdin is a real terminal, switch to raw mode so any key press
-	// (not just Enter) unblocks the read.  Fall back to line-buffered read
-	// when stdin is a pipe or redirected file.
-	if f, ok := p.Stdin.(*os.File); ok {
-		fd := int(f.Fd())
-		if term.IsTerminal(fd) {
-			if old, err := term.MakeRaw(fd); err == nil {
-				io.ReadFull(p.Stdin, make([]byte, 1)) //nolint:errcheck
-				term.Restore(fd, old)                //nolint:errcheck
-			} else {
-				io.ReadFull(p.Stdin, make([]byte, 1)) //nolint:errcheck
-			}
+
+	// CMD's PAUSE always interacts with the terminal, even if Stdin is redirected.
+	// On Unix, try /dev/tty first.
+	var input io.Reader = p.Stdin
+	var fd int = -1
+
+	if runtime.GOOS != "windows" {
+		if f, err := os.OpenFile("/dev/tty", os.O_RDONLY, 0); err == nil {
+			defer f.Close()
+			input = f
+			fd = int(f.Fd())
+		}
+	}
+
+	if fd == -1 {
+		if f, ok := input.(*os.File); ok {
+			fd = int(f.Fd())
+		}
+	}
+
+	if fd != -1 && term.IsTerminal(fd) {
+		if old, err := term.MakeRaw(fd); err == nil {
+			defer term.Restore(fd, old) //nolint:errcheck
+			io.ReadFull(input, make([]byte, 1)) //nolint:errcheck
 		} else {
-			io.ReadFull(p.Stdin, make([]byte, 1)) //nolint:errcheck
+			io.ReadFull(input, make([]byte, 1)) //nolint:errcheck
 		}
 	} else {
-		io.ReadFull(p.Stdin, make([]byte, 1)) //nolint:errcheck
+		io.ReadFull(input, make([]byte, 1)) //nolint:errcheck
 	}
+
 	fmt.Fprintln(p.Stdout)
 	return p.Success()
 }
