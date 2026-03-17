@@ -237,7 +237,7 @@ func (bl *BatchLexer) stateGoto() stateFn {
 		bl.next()
 		bl.emit(TokenPunctuation)
 	}
-	bl.acceptRun(func(r rune) bool { return !IsWS(r) && !isNL(r) && r != 0 })
+	bl.acceptRun(func(r rune) bool { return !IsWS(r) && !isNL(r) && !isPunct(r) && r != 0 })
 	bl.emit(TokenNameLabel)
 	return bl.stateRoot
 }
@@ -247,7 +247,7 @@ func (bl *BatchLexer) stateCall() stateFn {
 	if bl.check(func(r rune) bool { return r == ':' }) {
 		bl.next()
 		bl.emit(TokenPunctuation)
-		bl.acceptRun(func(r rune) bool { return !IsWS(r) && !isNL(r) && r != 0 })
+		bl.acceptRun(func(r rune) bool { return !IsWS(r) && !isNL(r) && !isPunct(r) && r != 0 })
 		bl.emit(TokenNameLabel)
 		return bl.stateFollow
 	}
