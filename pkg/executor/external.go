@@ -59,9 +59,11 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// (Batch files are never Wine candidates.)
 	if batPath, ok := resolveBatchFile(cmdName); ok {
 		// For batch files, map and glob-expand args as normal.
+		// Strip CMD/CRT quoting so %1 inside the called batch receives the
+		// unquoted value (matching Windows CMD CALL semantics).
 		var batArgs []string
 		for _, arg := range cmd.Args {
-			mapped := mapArg(arg)
+			mapped := stripExeArg(mapArg(arg))
 			if strings.ContainsAny(mapped, "*?[") {
 				if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
 					batArgs = append(batArgs, matches...)
@@ -86,10 +88,10 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		return runOSCommand(p, prefix[0], prefixArgs, cmd.Name)
 	}
 
-	// Native Unix command — map paths and expand globs in arguments.
+	// Native Unix command — map paths, expand globs, and strip CMD/CRT quoting.
 	var args []string
 	for _, arg := range cmd.Args {
-		mapped := mapArg(arg)
+		mapped := stripExeArg(mapArg(arg))
 		if strings.ContainsAny(mapped, "*?[") {
 			if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
 				args = append(args, matches...)
@@ -99,6 +101,41 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		args = append(args, mapped)
 	}
 	return runOSCommand(p, cmdName, args, cmd.Name)
+}
+
+// stripExeArg removes CMD/CRT-style quoting from an argument before it is
+// passed to an external process via exec.Command.  On Windows the CRT does
+// this automatically when building argv from the raw command line; on Linux
+// we must do it ourselves.
+//
+// Rules (matching the Windows CRT argv parser):
+//   - A '"' toggles quoting mode; quote characters themselves are dropped.
+//   - Inside a quoted section, '\"' is a literal '"' (not a closing quote).
+//   - Outside quoted sections characters are taken literally.
+func stripExeArg(s string) string {
+	var b strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == '"' {
+			i++ // consume opening "
+			for i < len(s) {
+				if s[i] == '\\' && i+1 < len(s) && s[i+1] == '"' {
+					b.WriteByte('"')
+					i += 2
+				} else if s[i] == '"' {
+					i++ // consume closing "
+					break
+				} else {
+					b.WriteByte(s[i])
+					i++
+				}
+			}
+		} else {
+			b.WriteByte(s[i])
+			i++
+		}
+	}
+	return b.String()
 }
 
 // mapArg applies MapPath to an argument only when it looks like a Windows path.

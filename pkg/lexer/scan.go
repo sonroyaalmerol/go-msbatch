@@ -101,6 +101,19 @@ func (bl *BatchLexer) lexStringDoubleBody(next stateFn) stateFn {
 					bl.emit(TokenStringDouble)
 					return nil
 				}
+			case '\\':
+				// Windows CRT (not CMD itself) treats \" as a literal " inside a
+				// double-quoted argument, which is how programs like gawk receive
+				// arguments on Windows.  Implement the same rule here so that
+				// batch files using \" to embed quotes in awk programs work on
+				// Linux as well.
+				r2 := bl.next()
+				if r2 == 0 {
+					bl.emit(TokenStringDouble)
+					return nil
+				}
+				// r2 is already consumed into the token buffer; whether it was '"'
+				// or something else, just continue scanning.
 			}
 		}
 	}
