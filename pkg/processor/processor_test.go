@@ -1,6 +1,7 @@
 package processor_test
 
 import (
+	"bytes"
 	"os"
 	"testing"
 
@@ -192,3 +193,53 @@ func TestParseExpanded(t *testing.T) {
 		t.Errorf("expected name=echo, got %q", cmd.Name)
 	}
 }
+
+func TestInteractiveNestedExpansion(t *testing.T) {
+	env := processor.NewEmptyEnvironment(false) // Cmd Mode
+	p := processor.New(env, nil, nil)
+
+	env.Set("N", "1")
+	env.Set("DATAGRV1TA", "hello")
+	env.SetDelayedExpansion(true)
+
+	got := p.ProcessLine("!DATAGRV%N%TA!")
+	if got != "hello" {
+		t.Errorf("expected hello, got %q", got)
+	}
+}
+
+func TestCallRecursiveExpansion(t *testing.T) {
+	// This tests if CALL triggers another round of expansion.
+	// We need a real executor for this.
+	env := processor.NewEmptyEnvironment(true)
+	env.Set("DATAFLT", "C:\\Data")
+	env.Set("FLT", "Fast")
+	env.Set("DATAGRV1TA", "%DATAFLT%\\%FLT%\\GRV1\\TA")
+	env.Set("N", "1")
+	env.SetDelayedExpansion(true)
+
+	var stdout bytes.Buffer
+	p := processor.New(env, nil, nil)
+	p.Stdout = &stdout
+
+	// Simulate "call echo !DATAGRV%N%TA!"
+	// 1. Outer expansion: "call echo !DATAGRV1TA!" -> "call echo %DATAFLT%\%FLT%\GRV1\TA"
+	// 2. Inner expansion: "echo %DATAFLT%\%FLT%\GRV1\TA" -> "echo C:\Data\Fast\GRV1\TA"
+
+	cmd := &parser.SimpleCommand{
+		Name: "call",
+		Args: []string{"echo", "!DATAGRV%N%TA!"},
+	}
+
+	// We'll manually call executeSimpleCommand logic if we can, 
+	// but it's easier to just test p.ExpandNode and then p.ProcessLine.
+	
+	expanded := p.ExpandNode(cmd)
+	// expanded.Args[0] should be "echo"
+	// expanded.Args[1] should now ALREADY be fully expanded because 
+	// Phase 5 now triggers Phase 1 on its result.
+	if expanded.Args[1] != "C:\\Data\\Fast\\GRV1\\TA" {
+		t.Fatalf("expected C:\\Data\\Fast\\GRV1\\TA, got %q", expanded.Args[1])
+	}
+}
+

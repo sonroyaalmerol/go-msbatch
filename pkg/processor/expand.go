@@ -43,6 +43,14 @@ func Phase1PercentExpand(src string, env *Environment, args []string) string {
 	var sb strings.Builder
 	for i := 0; i < len(runes); {
 		r := runes[i]
+
+		// ^% is an escaped percent — emits a literal %
+		if r == '^' && i+1 < len(runes) && runes[i+1] == '%' {
+			sb.WriteRune('%')
+			i += 2
+			continue
+		}
+
 		if r != '%' {
 			sb.WriteRune(r)
 			i++
@@ -168,9 +176,21 @@ func Phase1PercentExpand(src string, env *Environment, args []string) string {
 			rawName := string(runes[i+1 : end])
 			i = end + 1
 
-			varName, manipulation := SplitVarModifier(rawName)
+			val, ok := env.Get(rawName)
+			if !ok {
+				varName, manipulation := SplitVarModifier(rawName)
+				val, ok = env.Get(varName)
+				if ok && manipulation != "" {
+					if strings.HasPrefix(manipulation, "~") {
+						val = applySlicing(val, manipulation[1:])
+					} else if strings.Contains(manipulation, "=") {
+						if before, after, ok := strings.Cut(manipulation, "="); ok {
+							val = applySubstitution(val, before, after)
+						}
+					}
+				}
+			}
 
-			val, ok := env.Get(varName)
 			if !ok {
 				if !env.BatchMode() {
 					sb.WriteRune('%')
@@ -180,15 +200,6 @@ func Phase1PercentExpand(src string, env *Environment, args []string) string {
 				continue
 			}
 
-			if manipulation != "" {
-				if strings.HasPrefix(manipulation, "~") {
-					val = applySlicing(val, manipulation[1:])
-				} else if strings.Contains(manipulation, "=") {
-					if before, after, found := strings.Cut(manipulation, "="); found {
-						val = applySubstitution(val, before, after)
-					}
-				}
-			}
 			sb.WriteString(val)
 		}
 	}
@@ -469,17 +480,42 @@ func Phase5DelayedExpand(src string, env *Environment) string {
 			continue
 		}
 
-		name := string(runes[i+1 : end])
+		rawName := string(runes[i+1 : end])
 		i = end + 1
 
-		if val, ok := env.Get(name); ok {
-			sb.WriteString(val)
-		} else if !env.BatchMode() {
-			// In command-line mode, undefined !VAR! is left unchanged.
-			sb.WriteRune('!')
-			sb.WriteString(name)
-			sb.WriteRune('!')
+		val, ok := env.Get(rawName)
+		if !ok {
+			varName, manipulation := SplitVarModifier(rawName)
+			val, ok = env.Get(varName)
+			if ok && manipulation != "" {
+				if strings.HasPrefix(manipulation, "~") {
+					val = applySlicing(val, manipulation[1:])
+				} else if strings.Contains(manipulation, "=") {
+					if before, after, ok := strings.Cut(manipulation, "="); ok {
+						val = applySubstitution(val, before, after)
+					}
+				}
+			}
 		}
+
+		if !ok {
+			if !env.BatchMode() {
+				// In command-line mode, undefined !VAR! is left unchanged.
+				sb.WriteRune('!')
+				sb.WriteString(rawName)
+				sb.WriteRune('!')
+			}
+			continue
+		}
+
+		// If the expanded value contains percent signs, perform another pass of
+		// percent expansion on it. This handles the "expanded further" requirement
+		// for nested variables produced by delayed expansion.
+		if strings.ContainsRune(val, '%') {
+			val = Phase1PercentExpand(val, env, nil)
+		}
+
+		sb.WriteString(val)
 	}
 	return sb.String()
 }

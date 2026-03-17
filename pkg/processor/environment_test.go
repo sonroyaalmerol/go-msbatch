@@ -88,3 +88,16 @@ func TestEnvironmentSnapshot(t *testing.T) {
 		t.Error("snapshot should not reflect post-snapshot mutations")
 	}
 }
+
+func TestEnvironmentSpaces(t *testing.T) {
+	env := processor.NewEmptyEnvironment(true)
+	env.Set(" VAR", "val")
+	val, ok := env.Get(" VAR")
+	if !ok || val != "val" {
+		t.Errorf("expected val, got %q", val)
+	}
+	_, ok = env.Get("VAR")
+	if ok {
+		t.Error("expected VAR to not be found if set as ' VAR'")
+	}
+}

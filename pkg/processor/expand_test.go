@@ -310,3 +310,30 @@ func TestPhase5DelayedCaretEscapedBang(t *testing.T) {
 		t.Errorf("expected 'echo !VAR!', got %q", got)
 	}
 }
+
+func TestReproNestedExpansion(t *testing.T) {
+	env := processor.NewEmptyEnvironment(true)
+	env.Set("N", "1")
+	env.Set("DATAGRV1TA", "hello")
+	env.SetDelayedExpansion(true)
+
+	p := processor.New(env, nil, nil)
+	got := p.ProcessLine("!DATAGRV%N%TA!")
+	expected := "hello"
+	if got != expected {
+		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestUserRealEnv(t *testing.T) {
+	env := processor.NewEnvironment(true)
+	env.Set("N", "1")
+	env.Set("DATAGRV1TA", "hello")
+	env.SetDelayedExpansion(true)
+
+	p := processor.New(env, nil, nil)
+	got := p.ProcessLine("!DATAGRV%N%TA!")
+	if got != "hello" {
+		t.Errorf("expected hello, got %q", got)
+	}
+}

@@ -39,7 +39,11 @@ func cmdSet(p *processor.Processor, cmd *parser.SimpleCommand) error {
 
 	arg := strings.Join(args, " ")
 
-	if strings.HasPrefix(strings.ToLower(args[0]), "/a") {
+	if strings.HasPrefix(arg, "\"") && strings.HasSuffix(arg, "\"") {
+		arg = arg[1 : len(arg)-1]
+	}
+
+	if strings.HasPrefix(strings.ToLower(arg), "/a") {
 		_, err := p.EvalArithmetic(arg[2:])
 		if err != nil {
 			fmt.Fprintf(p.Stderr, "Invalid number.\n")
