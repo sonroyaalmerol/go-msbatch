@@ -109,6 +109,14 @@ func (e *Environment) Snapshot() map[string]string {
 	return m
 }
 
+// StackDepth returns the number of saved environment frames (i.e. how many
+// unmatched SETLOCAL calls are currently open).
+func (e *Environment) StackDepth() int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return len(e.stack)
+}
+
 // Push saves the current environment state onto a stack.
 func (e *Environment) Push() {
 	e.mu.Lock()

@@ -178,13 +178,19 @@ func resolveBatchFile(name string) (string, bool) {
 
 // runBatchFile executes a .bat/.cmd file in-process using a child Processor.
 //
-// The child shares the parent's Environment (so SET changes are visible to the
-// caller, matching CMD's single-session behaviour), and inherits the parent's
-// I/O streams and executor registry.
-//
-// EXIT /B in the child terminates the script and returns control to the caller.
-// A plain EXIT propagates the Exited flag to the parent, ending the parent
-// script as well (matching CMD's "exit the session" behaviour).
+// Windows CMD semantics observed here:
+//   - The child shares the parent's Environment so SET changes are visible to
+//     the caller after return.
+//   - Any SETLOCAL pushed by the called batch but not matched with ENDLOCAL is
+//     automatically popped on exit (CMD auto-balances SETLOCAL on batch exit).
+//   - Echo state is shared: if the called batch turns echo off, the caller's
+//     echo state reflects that change after return.
+//   - Errors internal to the called batch (e.g. GOTO to a missing label)
+//     terminate only that batch; the parent continues executing.
+//   - EXIT /B terminates only the called batch and returns control to the
+//     caller.
+//   - A plain EXIT propagates the Exited flag to the parent, ending the whole
+//     session (matching CMD's "exit the session" behaviour).
 func runBatchFile(p *processor.Processor, batPath string, args []string) error {
 	content, err := os.ReadFile(batPath)
 	if err != nil {
@@ -193,6 +199,9 @@ func runBatchFile(p *processor.Processor, batPath string, args []string) error {
 		return nil
 	}
 
+	// Record the SETLOCAL stack depth so we can auto-balance on exit.
+	initialDepth := p.Env.StackDepth()
+
 	// %0 = script name, %1..%n = forwarded arguments.
 	childArgs := append([]string{batPath}, args...)
 
@@ -200,6 +209,8 @@ func runBatchFile(p *processor.Processor, batPath string, args []string) error {
 	child.Stdout = p.Stdout
 	child.Stderr = p.Stderr
 	child.Stdin = p.Stdin
+	// Echo state is inherited from the caller; changes inside the called batch
+	// persist back to the caller (CMD global echo state behaviour).
 	child.Echo = p.Echo
 	// Treat the called batch as if it's one CALL level deep so that
 	// EXIT /B returns to the caller rather than calling os.Exit.
@@ -210,7 +221,19 @@ func runBatchFile(p *processor.Processor, batPath string, args []string) error {
 
 	execErr := child.Execute(nodes)
 
+	// Auto-balance SETLOCAL: pop any frames the called batch opened but did
+	// not close with ENDLOCAL (CMD does this automatically on batch exit).
+	for p.Env.StackDepth() > initialDepth {
+		p.Env.Pop()
+	}
+
+	// Propagate echo state: changes made inside the called batch persist to
+	// the caller just as they would in a real CMD session.
+	p.Echo = child.Echo
+
 	// EXIT /B produces an EXIT_LOCAL sentinel — treat as a normal return.
+	// ERRORLEVEL was already set by the exit command before the sentinel was
+	// raised, so we must not overwrite it here.
 	if execErr != nil && execErr.Error() == "EXIT_LOCAL" {
 		return nil
 	}
@@ -218,9 +241,18 @@ func runBatchFile(p *processor.Processor, batPath string, args []string) error {
 	// Plain EXIT: propagate the "exit the session" flag to the parent.
 	if child.Exited {
 		p.Exited = true
+		return nil
 	}
 
-	return execErr
+	// Any other error (e.g. GOTO to a missing label) terminates only the
+	// called batch — the parent continues.  Print the error and set
+	// ERRORLEVEL, but do not propagate.
+	if execErr != nil {
+		fmt.Fprintf(p.Stderr, "%v\n", execErr)
+		p.Env.Set("ERRORLEVEL", "1")
+	}
+
+	return nil
 }
 
 func fileExists(path string) bool {

@@ -194,7 +194,9 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 			p.Args = oldArgs
 			return nil
 		}
-		return p.executeSimpleCommand(&parser.SimpleCommand{Name: target, Args: restArgs})
+		// Suppress echo on the inner dispatch: the CALL command line was
+		// already echoed by the outer executeSimpleCommand call.
+		return p.executeSimpleCommand(&parser.SimpleCommand{Name: target, Args: restArgs, Suppressed: true})
 	case "exit":
 		code := 0
 		isLocal := false
