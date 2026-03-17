@@ -15,6 +15,7 @@ import (
 
 // Execute runs the AST nodes.
 func (p *Processor) Execute(nodes []parser.Node) error {
+	p.Logger.Debug("executing nodes", "count", len(nodes), "env", p.Env.Snapshot())
 	p.Nodes = nodes
 	p.PC = 0
 	p.Exited = false
@@ -62,6 +63,7 @@ func (p *Processor) ExecuteNode(n parser.Node) error {
 }
 
 func (p *Processor) jumpToLabel(labelName string) error {
+	p.Logger.Debug("jumping to label", "label", labelName)
 	target := strings.ToLower(labelName)
 	for i, n := range p.Nodes {
 		if lbl, ok := n.(*parser.LabelNode); ok {
@@ -76,6 +78,7 @@ func (p *Processor) jumpToLabel(labelName string) error {
 
 func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 	expanded := p.ExpandNode(n)
+	p.Logger.Debug("executing command", "name", expanded.Name, "args", expanded.Args)
 
 	// Clean up args for commands that expect words (most commands except echo)
 	var filteredArgs []string
@@ -193,6 +196,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 				p.PC = len(p.Nodes)
 				return nil
 			}
+			p.Logger.Debug("entering subroutine", "label", label, "args", restArgs)
 			oldPC := p.PC
 			oldArgs := p.Args
 			p.Args = append([]string{target}, restArgs...)

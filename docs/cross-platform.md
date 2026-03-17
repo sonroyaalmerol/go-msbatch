@@ -219,6 +219,37 @@ When a command falls through to `os/exec` (not a `.bat`/`.cmd` file), the child 
 
 Real cmd.exe raises a divide-by-zero error. go-msbatch silently returns `0` for both `/` and `%` when the divisor is zero.
 
+## Debug Logging
+
+`go-msbatch` includes a built-in debug logging system powered by Go's `log/slog` library. It provides deep visibility into the interpreter's internal operations, including command execution, variable expansion, and control flow transitions.
+
+### Enabling Logs
+
+Set the `MSBATCH_DEBUG` environment variable to `true`, `1`, `on`, or any non-empty value (except `0` or `false`) to enable debug output.
+
+```sh
+export MSBATCH_DEBUG=true
+```
+
+### Configuring Output
+
+By default, logs are written to **stderr**. You can redirect them to **stdout** or a specific file using the `MSBATCH_DEBUG_FILE` variable:
+
+```sh
+# Log to stdout
+export MSBATCH_DEBUG_FILE=stdout
+
+# Log to a specific file (appends if file exists)
+export MSBATCH_DEBUG_FILE=msbatch_debug.log
+```
+
+### What is logged?
+
+- **Execution Start**: Total node count and a snapshot of the initial environment variables.
+- **Command Dispatch**: The name and fully expanded arguments of every command before it runs.
+- **Control Flow**: Label jumps (`GOTO`), subroutine entries (`CALL :label`), and batch file invocations.
+- **External Commands**: Native OS command execution, including mapped Unix paths and arguments.
+
 ## Case sensitivity
 
 Variable names and command names are compared case-insensitively, matching cmd.exe. However, file paths on case-sensitive Unix filesystems are case-sensitive. A script that relies on Windows case-insensitive file lookup may fail on Linux.

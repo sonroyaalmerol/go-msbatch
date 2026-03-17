@@ -50,6 +50,7 @@ func exePrefix() []string {
 //     so converting them to Unix paths beforehand would break path handling.
 func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	cmdName := processor.MapPath(cmd.Name)
+	p.Logger.Debug("external dispatch", "original", cmd.Name, "mapped", cmdName)
 
 	// Determine early whether this is a prefixed .exe dispatch so that argument
 	// handling can be chosen correctly before we build the args slice.
@@ -176,6 +177,7 @@ func mapArg(arg string) string {
 // runOSCommand executes name with args via the host OS and updates ERRORLEVEL.
 // displayName is used in error messages (the original un-mapped command name).
 func runOSCommand(p *processor.Processor, name string, args []string, displayName string) error {
+	p.Logger.Debug("running OS command", "name", name, "args", args)
 	c := exec.Command(name, args...)
 	c.Stdout = p.Stdout
 	c.Stderr = p.Stderr
@@ -274,6 +276,7 @@ func resolveBatchFile(name string) (string, bool) {
 //   - A plain EXIT propagates the Exited flag to the parent, ending the whole
 //     session (matching CMD's "exit the session" behaviour).
 func runBatchFile(p *processor.Processor, batPath string, args []string) error {
+	p.Logger.Debug("running batch file", "path", batPath, "args", args)
 	content, err := os.ReadFile(batPath)
 	if err != nil {
 		fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command, operable program or batch file.\n", batPath)

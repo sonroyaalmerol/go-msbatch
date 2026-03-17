@@ -2,6 +2,7 @@ package processor
 
 import (
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ type Processor struct {
 	Stdout   io.Writer
 	Stdin    io.Reader
 	Stderr   io.Writer
+	Logger   *slog.Logger
 	Nodes     []parser.Node
 	PC        int
 	Exited    bool
@@ -39,6 +41,7 @@ func New(env *Environment, args []string, exec CommandExecutor) *Processor {
 		Stdout:   os.Stdout,
 		Stdin:    os.Stdin,
 		Stderr:   os.Stderr,
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Executor: exec,
 	}
 }

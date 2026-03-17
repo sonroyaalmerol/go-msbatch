@@ -9,8 +9,15 @@ import (
 
 	"github.com/chzyer/readline"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/executor"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/logging"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
+
+func newProcessor(env *processor.Environment, args []string, exec processor.CommandExecutor) *processor.Processor {
+	proc := processor.New(env, args, exec)
+	proc.Logger = logging.NewLoggerFromEnv()
+	return proc
+}
 
 func main() {
 	args := os.Args[1:]
@@ -44,7 +51,7 @@ func runFile(filename string) {
 	}
 
 	env := processor.NewEnvironment(true)
-	proc := processor.New(env, os.Args[1:], executor.New())
+	proc := newProcessor(env, os.Args[1:], executor.New())
 
 	// Strip Unix shebang so scripts can start with #!/usr/bin/env msbatch
 	raw := string(content)
@@ -67,7 +74,7 @@ func runFile(filename string) {
 // runCommand executes a single command string and exits.
 func runCommand(cmdStr string) {
 	env := processor.NewEnvironment(false)
-	proc := processor.New(env, nil, executor.New())
+	proc := newProcessor(env, nil, executor.New())
 	nodes := processor.ParseExpanded(cmdStr)
 	if err := proc.Execute(nodes); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -146,7 +153,7 @@ func pathComplete(prefix string) ([][]rune, int) {
 func runInteractive() {
 	env := processor.NewEnvironment(false)
 	reg := executor.New()
-	proc := processor.New(env, nil, reg)
+	proc := newProcessor(env, nil, reg)
 	proc.Echo = false // readline already shows typed input; suppress batch-style echo
 
 	// Default CMD-style prompt: "path> "
@@ -226,6 +233,7 @@ func runInteractive() {
 
 // runInteractiveFallback is the non-TTY / no-readline fallback.
 func runInteractiveFallback(proc *processor.Processor) {
+	proc.Logger = logging.NewLoggerFromEnv()
 	proc.Echo = false
 	fmt.Println(executor.VersionString())
 	fmt.Println()
