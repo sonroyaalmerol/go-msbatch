@@ -867,6 +867,19 @@ func TestEdgeCases(t *testing.T) {
 			{TokenNewline, "\n"},
 		}},
 
+		// ── label with trailing comment text ──────────────────────────────
+		// CMD ignores everything after the label name on a label line.
+		// ":021 TIDAL" defines label "021"; "TIDAL" must not produce tokens.
+		{"label_with_trailing_text", ":021 TIDAL\n", []tok{
+			{TokenPunctuation, ":"},
+			{TokenNameLabel, "021"},
+			{TokenNewline, "\n"},
+		}},
+		{"label_with_trailing_text_no_newline", ":050 GRAVSTATIC", []tok{
+			{TokenPunctuation, ":"},
+			{TokenNameLabel, "050"},
+		}},
+
 		// ── multi-line with CRLF ───────────────────────────────────────────
 		{"crlf_line_endings", "echo a\r\necho b\r\n", []tok{
 			{TokenWord, "echo"},

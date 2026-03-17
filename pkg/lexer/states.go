@@ -158,6 +158,10 @@ func (bl *BatchLexer) stateRem() stateFn {
 func (bl *BatchLexer) stateLabelName() stateFn {
 	bl.acceptRun(func(r rune) bool { return !isWS(r) && !isNL(r) && r != 0 })
 	bl.emit(TokenNameLabel)
+	// In CMD, everything after the label name on a label line is a comment.
+	// Discard it so ":021 TIDAL" defines label "021" with "TIDAL" ignored.
+	bl.acceptRun(func(r rune) bool { return !isNL(r) && r != 0 })
+	bl.ignore()
 	return bl.stateRoot
 }
 
