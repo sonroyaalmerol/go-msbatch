@@ -151,6 +151,7 @@ func registerBuiltins(r *Registry) {
 	r.HandleFunc("where", tools.Where)
 	r.HandleFunc("tree", tools.Tree)
 	r.HandleFunc("find", tools.Find)
+	r.HandleFunc("findstr", tools.Findstr)
 	r.HandleFunc("xcopy", tools.Xcopy)
 	r.HandleFunc("robocopy", tools.Robocopy)
 
