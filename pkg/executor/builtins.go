@@ -83,13 +83,18 @@ func cmdSet(p *processor.Processor, cmd *parser.SimpleCommand) error {
 }
 
 func cmdCd(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	if len(cmd.Args) == 0 {
+	// Skip /d flag (change drive — irrelevant on Unix but must not be treated as path).
+	args := cmd.Args
+	if len(args) > 0 && strings.EqualFold(args[0], "/d") {
+		args = args[1:]
+	}
+	if len(args) == 0 {
 		pwd, _ := os.Getwd()
 		fmt.Fprintln(p.Stdout, pwd)
 		p.Env.Set("ERRORLEVEL", "0")
 		return nil
 	}
-	if err := os.Chdir(processor.MapPath(cmd.Args[0])); err != nil {
+	if err := os.Chdir(processor.MapPath(args[0])); err != nil {
 		fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
 		p.Env.Set("ERRORLEVEL", "1")
 	} else {
