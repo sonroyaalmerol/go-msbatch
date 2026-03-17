@@ -319,16 +319,16 @@ func TestTokenCombinations(t *testing.T) {
 
 		// ── IF ─────────────────────────────────────────────────────────────
 		{
-			// The == operator is only recognised as a standalone stateWord token.
-			// When adjacent to other characters (e.g. %X%==yes), stateWord reads
-			// the whole "==yes" as a single Word token.
+			// The == operator is recognised by stateRoot when it sees '='.
+			// Adjacent tokens like %X%==yes are now split correctly.
 			"if_string_equals_adjacent",
 			"if %X%==yes echo ok\n",
 			[]tok{
 				{TokenKeyword, "if"},
 				{TokenWhitespace, " "},
 				{TokenNameVariable, "%X%"},
-				{TokenWord, "==yes"},
+				{TokenOperator, "=="},
+				{TokenWord, "yes"},
 				{TokenWhitespace, " "},
 				{TokenWord, "echo"},
 				{TokenWhitespace, " "},

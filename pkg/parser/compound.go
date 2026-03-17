@@ -299,12 +299,17 @@ func (p *Parser) collectStoken() string {
 			return p.collectQuotedString()
 
 		case lexer.TokenKeyword:
+			// A keyword adjacent to other tokens (e.g. "call" inside a path) is
+			// part of the same stoken; stop only when whitespace or an operator
+			// separates tokens.
 			sb.WriteString(val(p.consume()))
-			return sb.String()
 
 		case lexer.TokenText, lexer.TokenWord, lexer.TokenNameVariable, lexer.TokenStringEscape, lexer.TokenNumber:
+			// Accumulate all adjacent word-class tokens as one stoken so that
+			// compound names like Variables\%PROCTYPE%_%ID%_Variables.bat
+			// (which the lexer emits as multiple tokens with no whitespace
+			// between them) are returned as a single string.
 			sb.WriteString(val(p.consume()))
-			return sb.String()
 
 		case lexer.TokenPunctuation:
 			v := val(t)

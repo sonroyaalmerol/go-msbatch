@@ -68,6 +68,17 @@ func (bl *BatchLexer) stateRoot() stateFn {
 		bl.prev()
 		bl.lexDelayedVar()
 		return bl.stateRoot
+	case r == '=':
+		r2 := bl.next()
+		if r2 == '=' {
+			bl.emit(TokenOperator) // emit "=="
+		} else {
+			if r2 != 0 && !isNL(r2) {
+				bl.prev()
+			}
+			bl.emit(TokenPunctuation) // emit "="
+		}
+		return bl.stateRoot
 	case r >= '0' && r <= '9':
 		bl.acceptRun(func(r rune) bool { return r >= '0' && r <= '9' })
 		nextRune := bl.next()
@@ -90,7 +101,7 @@ func (bl *BatchLexer) stateWord() stateFn {
 	bl.acceptRun(func(r rune) bool {
 		return r != 0 && !isNL(r) && !isWS(r) && !isPunct(r) &&
 			r != '(' && r != ')' && r != '"' && r != '%' &&
-			r != '!' && r != '^' && r != '>' && r != '<' && r != ':'
+			r != '!' && r != '^' && r != '>' && r != '<' && r != ':' && r != '='
 	})
 	if bl.width() == 0 {
 		r := bl.next()
