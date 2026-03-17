@@ -2,7 +2,7 @@ package lexer
 
 import "strings"
 
-func isWS(r rune) bool {
+func IsWS(r rune) bool {
 	return r == ' ' || r == '\t' || r == '\v' || r == '\f' || r == '\xa0'
 }
 
@@ -15,18 +15,18 @@ func isPunct(r rune) bool {
 }
 
 func isKeywordEnd(r rune) bool {
-	return r == 0 || isNL(r) || isWS(r) || isPunct(r) || r == '/'
+	return r == 0 || isNL(r) || IsWS(r) || isPunct(r) || r == '/'
 }
 
 func (bl *BatchLexer) skipWS() {
-	bl.acceptRun(isWS)
+	bl.acceptRun(IsWS)
 	if bl.width() > 0 {
 		bl.emit(TokenWhitespace)
 	}
 }
 
 func (bl *BatchLexer) isFollowPlain(r rune) bool {
-	if r == 0 || isNL(r) || isWS(r) {
+	if r == 0 || isNL(r) || IsWS(r) {
 		return false
 	}
 	if r == '|' || r == '&' || r == '>' || r == '<' {

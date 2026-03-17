@@ -55,6 +55,9 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// handling can be chosen correctly before we build the args slice.
 	isExe := runtime.GOOS != "windows" && strings.HasSuffix(strings.ToLower(cmdName), ".exe")
 
+	// Use Words() which groups RawArgs by true whitespace.
+	cmdWords := cmd.Words()
+
 	// If the command resolves to a batch file, run it in-process.
 	// (Batch files are never Wine candidates.)
 	if batPath, ok := resolveBatchFile(cmdName); ok {
@@ -62,7 +65,7 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		// Strip CMD/CRT quoting so %1 inside the called batch receives the
 		// unquoted value (matching Windows CMD CALL semantics).
 		var batArgs []string
-		for _, arg := range cmd.Args {
+		for _, arg := range cmdWords {
 			mapped := mapArg(stripExeArg(arg))
 			if strings.ContainsAny(mapped, "*?[") {
 				if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
@@ -90,16 +93,16 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		//
 		// Arguments are passed verbatim — no MapPath, no glob expansion.
 		// Wine/the Windows binary handles its own path translation internally.
-		prefixArgs := make([]string, 0, len(prefix)-1+1+len(cmd.Args))
+		prefixArgs := make([]string, 0, len(prefix)-1+1+len(cmdWords))
 		prefixArgs = append(prefixArgs, prefix[1:]...)
 		prefixArgs = append(prefixArgs, cmd.Name)
-		prefixArgs = append(prefixArgs, cmd.Args...)
+		prefixArgs = append(prefixArgs, cmdWords...)
 		return runOSCommand(p, prefix[0], prefixArgs, cmd.Name)
 	}
 
 	// Native Unix command — map paths, expand globs, and strip CMD/CRT quoting.
 	var args []string
-	for _, arg := range cmd.Args {
+	for _, arg := range cmdWords {
 		mapped := mapArg(stripExeArg(arg))
 		if strings.ContainsAny(mapped, "*?[") {
 			if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {

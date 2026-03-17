@@ -167,9 +167,13 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 	// manipulate Processor state (PC, Args, Exited) that an external executor
 	// cannot safely touch.
 	name := strings.ToLower(expanded.Name)
+	cmdWords := expanded.Words()
 	switch name {
 	case "goto":
-		label := strings.Join(filteredArgs, "")
+		if len(cmdWords) == 0 {
+			return nil
+		}
+		label := strings.Join(cmdWords, "")
 		label = strings.TrimPrefix(label, ":")
 		if strings.ToLower(label) == "eof" {
 			p.PC = len(p.Nodes)
@@ -177,11 +181,11 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		}
 		return p.jumpToLabel(label)
 	case "call":
-		if len(filteredArgs) == 0 {
+		if len(cmdWords) == 0 {
 			return nil
 		}
-		target := filteredArgs[0]
-		restArgs := filteredArgs[1:]
+		target := cmdWords[0]
+		restArgs := cmdWords[1:]
 		if strings.HasPrefix(target, ":") {
 			label := target[1:]
 			oldPC := p.PC

@@ -11,8 +11,8 @@ func (bl *BatchLexer) stateRoot() stateFn {
 		bl.acceptRun(isNL)
 		bl.emit(TokenNewline)
 		return bl.stateRoot
-	case isWS(r):
-		bl.acceptRun(isWS)
+	case IsWS(r):
+		bl.acceptRun(IsWS)
 		bl.emit(TokenWhitespace)
 		return bl.stateRoot
 	case r == '(':
@@ -99,7 +99,7 @@ func (bl *BatchLexer) stateRoot() stateFn {
 
 func (bl *BatchLexer) stateWord() stateFn {
 	bl.acceptRun(func(r rune) bool {
-		return r != 0 && !isNL(r) && !isWS(r) && !isPunct(r) &&
+		return r != 0 && !isNL(r) && !IsWS(r) && !isPunct(r) &&
 			r != '(' && r != ')' && r != '"' && r != '%' &&
 			r != '!' && r != '^' && r != '>' && r != '<' && r != ':' && r != '='
 	})
@@ -139,7 +139,7 @@ func (bl *BatchLexer) stateFollow() stateFn {
 	switch {
 	case r == 0:
 		return bl.stateRoot
-	case isNL(r), isWS(r), r == '|', r == '&', r == ')', r == '(',
+	case isNL(r), IsWS(r), r == '|', r == '&', r == ')', r == '(',
 		r == '>', r == '<', r == '"', r == '%', r == '!', r == '^':
 		bl.prev()
 		return bl.stateRoot
@@ -156,7 +156,7 @@ func (bl *BatchLexer) stateRem() stateFn {
 }
 
 func (bl *BatchLexer) stateLabelName() stateFn {
-	bl.acceptRun(func(r rune) bool { return !isWS(r) && !isNL(r) && r != 0 })
+	bl.acceptRun(func(r rune) bool { return !IsWS(r) && !isNL(r) && r != 0 })
 	bl.emit(TokenNameLabel)
 	// In CMD, everything after the label name on a label line is a comment.
 	// Discard it so ":021 TIDAL" defines label "021" with "TIDAL" ignored.

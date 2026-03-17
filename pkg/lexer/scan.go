@@ -38,7 +38,7 @@ func (bl *BatchLexer) lexPercent() {
 	case r >= '0' && r <= '9' || r == '*':
 		bl.emit(TokenNameVariable)
 	case r == '~':
-		bl.acceptRun(func(r rune) bool { return r != 0 && !isNL(r) && !isWS(r) && !isPunct(r) && r != '"' && r != '\'' && r != '`' })
+		bl.acceptRun(func(r rune) bool { return r != 0 && !isNL(r) && !IsWS(r) && !isPunct(r) && r != '"' && r != '\'' && r != '`' })
 		bl.emit(TokenNameVariable)
 	case r == 0 || isNL(r):
 		if r != 0 {

@@ -1,6 +1,12 @@
 // Package parser builds an AST from the BatchLexer token stream.
 package parser
 
+import (
+	"strings"
+
+	"github.com/sonroyaalmerol/go-msbatch/pkg/lexer"
+)
+
 // NodeKind identifies the kind of an AST node.
 type NodeKind int
 
@@ -52,6 +58,40 @@ type SimpleCommand struct {
 }
 
 func (c *SimpleCommand) Kind() NodeKind { return NodeSimpleCommand }
+
+// Words returns RawArgs grouped by true whitespace. This is useful for
+// external commands where delimiters like '=' or ',' should only split
+// arguments if they are surrounded by actual whitespace.
+func (c *SimpleCommand) Words() []string {
+	var words []string
+	var current strings.Builder
+
+	for _, arg := range c.RawArgs {
+		// Check if it's true whitespace
+		isTrueWS := false
+		if len(arg) > 0 {
+			r := rune(arg[0])
+			if lexer.IsWS(r) {
+				isTrueWS = true
+			}
+		}
+
+		if isTrueWS {
+			if current.Len() > 0 {
+				words = append(words, current.String())
+				current.Reset()
+			}
+		} else {
+			current.WriteString(arg)
+		}
+	}
+
+	if current.Len() > 0 {
+		words = append(words, current.String())
+	}
+
+	return words
+}
 
 // Block is a parenthesised sequence of commands: ( cmd1 \n cmd2 ).
 type Block struct {

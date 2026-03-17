@@ -32,7 +32,7 @@ func (bl *BatchLexer) stateSet() stateFn {
 
 func (bl *BatchLexer) stateSetVar() stateFn {
 	bl.acceptRun(func(r rune) bool {
-		return r != 0 && !isNL(r) && !isWS(r) && !isPunct(r) && r != '=' && r != '"'
+		return r != 0 && !isNL(r) && !IsWS(r) && !isPunct(r) && r != '=' && r != '"'
 	})
 	if bl.width() > 0 {
 		bl.emit(TokenNameVariable)
@@ -59,8 +59,8 @@ func (bl *BatchLexer) stateArithmetic() stateFn {
 	case r == ')' && bl.compoundDepth > 0:
 		bl.backup()
 		return bl.stateRoot
-	case isWS(r):
-		bl.acceptRun(isWS)
+	case IsWS(r):
+		bl.acceptRun(IsWS)
 		bl.ignore()
 		return bl.stateArithmetic
 	case r == '(':
@@ -104,7 +104,7 @@ func (bl *BatchLexer) stateArithmetic() stateFn {
 		return bl.stateArithmetic
 	default:
 		bl.acceptRun(func(r rune) bool {
-			return r != 0 && !isNL(r) && !isWS(r) && !isPunct(r) &&
+			return r != 0 && !isNL(r) && !IsWS(r) && !isPunct(r) &&
 				!strings.ContainsRune("=+-*/!~^(),", r) && r != '%' && r != '!'
 		})
 		if bl.width() > 0 {
@@ -172,7 +172,7 @@ func (bl *BatchLexer) stateFor() stateFn {
 			bl.next() // second %
 		}
 		bl.acceptRun(func(r rune) bool {
-			return r != 0 && !isNL(r) && !isWS(r) && !isPunct(r) && r != '(' && r != ')'
+			return r != 0 && !isNL(r) && !IsWS(r) && !isPunct(r) && r != '(' && r != ')'
 		})
 		bl.emit(TokenNameVariable)
 		bl.skipWS()
@@ -237,7 +237,7 @@ func (bl *BatchLexer) stateGoto() stateFn {
 		bl.next()
 		bl.emit(TokenPunctuation)
 	}
-	bl.acceptRun(func(r rune) bool { return !isWS(r) && !isNL(r) && r != 0 })
+	bl.acceptRun(func(r rune) bool { return !IsWS(r) && !isNL(r) && r != 0 })
 	bl.emit(TokenNameLabel)
 	return bl.stateRoot
 }
@@ -247,7 +247,7 @@ func (bl *BatchLexer) stateCall() stateFn {
 	if bl.check(func(r rune) bool { return r == ':' }) {
 		bl.next()
 		bl.emit(TokenPunctuation)
-		bl.acceptRun(func(r rune) bool { return !isWS(r) && !isNL(r) && r != 0 })
+		bl.acceptRun(func(r rune) bool { return !IsWS(r) && !isNL(r) && r != 0 })
 		bl.emit(TokenNameLabel)
 		return bl.stateFollow
 	}
