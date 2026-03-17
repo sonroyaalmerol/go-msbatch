@@ -109,10 +109,25 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		//
 		// Arguments are passed verbatim — no MapPath, no glob expansion.
 		// Wine/the Windows binary handles its own path translation internally.
-		prefixArgs := make([]string, 0, len(prefix)-1+1+len(cmdWords))
+		//
+		// Exception: If an argument looks like a Unix absolute path (starts with /)
+		// and contains backslashes, we normalize the backslashes to forward slashes.
+		// This handles cases where a Unix path variable is joined with Windows-style
+		// subpaths (e.g. /home/user\data -> /home/user/data).
+		exeArgs := make([]string, 0, len(cmdWords))
+		for _, arg := range cmdWords {
+			isUnixPath := strings.HasPrefix(arg, "/") || strings.HasPrefix(arg, "./") || strings.HasPrefix(arg, "../")
+			if runtime.GOOS != "windows" && isUnixPath && strings.Contains(arg, "\\") {
+				exeArgs = append(exeArgs, strings.ReplaceAll(arg, "\\", "/"))
+			} else {
+				exeArgs = append(exeArgs, arg)
+			}
+		}
+
+		prefixArgs := make([]string, 0, len(prefix)-1+1+len(exeArgs))
 		prefixArgs = append(prefixArgs, prefix[1:]...)
 		prefixArgs = append(prefixArgs, cmd.Name)
-		prefixArgs = append(prefixArgs, cmdWords...)
+		prefixArgs = append(prefixArgs, exeArgs...)
 		return runOSCommand(p, prefix[0], prefixArgs, cmd.Name)
 	}
 
