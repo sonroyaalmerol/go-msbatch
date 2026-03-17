@@ -48,7 +48,8 @@ func cmdPath(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		p.Env.Set("ERRORLEVEL", "0")
 		return nil
 	}
-	arg := strings.Join(cmd.Args, " ")
+	arg := strings.Join(cmd.RawArgs, "")
+	arg = strings.TrimLeft(arg, " \t\v\f\xa0,;=")
 	if arg == ";" {
 		p.Env.Set("PATH", "")
 	} else {
@@ -62,7 +63,9 @@ func cmdPrompt(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	if len(cmd.Args) == 0 {
 		p.Env.Set("PROMPT", "$P$G") // restore default
 	} else {
-		p.Env.Set("PROMPT", strings.Join(cmd.Args, " "))
+		arg := strings.Join(cmd.RawArgs, "")
+		arg = strings.TrimLeft(arg, " \t\v\f\xa0,;=")
+		p.Env.Set("PROMPT", arg)
 	}
 	p.Env.Set("ERRORLEVEL", "0")
 	return nil
@@ -112,7 +115,8 @@ func cmdAssoc(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		p.Env.Set("ERRORLEVEL", "0")
 		return nil
 	}
-	arg := strings.Join(cmd.Args, " ")
+	arg := strings.Join(cmd.RawArgs, "")
+	arg = strings.TrimLeft(arg, " \t\v\f\xa0,;=")
 	if before, after, ok := strings.Cut(arg, "="); ok {
 		ext := strings.ToLower(strings.TrimSpace(before))
 		if after == "" {
@@ -142,7 +146,8 @@ func cmdFtype(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		p.Env.Set("ERRORLEVEL", "0")
 		return nil
 	}
-	arg := strings.Join(cmd.Args, " ")
+	arg := strings.Join(cmd.RawArgs, "")
+	arg = strings.TrimLeft(arg, " \t\v\f\xa0,;=")
 	if before, after, ok := strings.Cut(arg, "="); ok {
 		ft := strings.TrimSpace(before)
 		if after == "" {

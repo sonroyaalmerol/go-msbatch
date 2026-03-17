@@ -47,6 +47,7 @@ type SimpleCommand struct {
 	Suppressed bool // true when preceded by @
 	Name       string
 	Args       []string
+	RawArgs    []string
 	Redirects  []Redirect
 }
 

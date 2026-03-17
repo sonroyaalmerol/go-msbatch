@@ -133,7 +133,9 @@ func (p *Parser) collectArgs(cmd *SimpleCommand) {
 
 	flushArg := func() {
 		if cur.Len() > 0 {
-			cmd.Args = append(cmd.Args, cur.String())
+			v := cur.String()
+			cmd.Args = append(cmd.Args, v)
+			cmd.RawArgs = append(cmd.RawArgs, v)
 			cur.Reset()
 		}
 	}
@@ -146,8 +148,8 @@ func (p *Parser) collectArgs(cmd *SimpleCommand) {
 			return
 
 		case lexer.TokenWhitespace:
-			p.consume()
 			flushArg()
+			cmd.RawArgs = append(cmd.RawArgs, val(p.consume()))
 
 		case lexer.TokenKeyword:
 			// Structural keywords emitted by specialised lexer states (e.g. "in"
@@ -155,10 +157,16 @@ func (p *Parser) collectArgs(cmd *SimpleCommand) {
 			cur.WriteString(val(p.consume()))
 
 		case lexer.TokenWord:
+			v := val(t)
+			if v == "," || v == ";" {
+				flushArg()
+				cmd.RawArgs = append(cmd.RawArgs, val(p.consume()))
+				continue
+			}
 			// "else" at the top level (compoundDepth == 0) terminates the
 			// then-branch of an IF statement written without enclosing parens.
 			// Inside a compound block the word is a plain argument.
-			if strings.ToLower(val(t)) == "else" && p.compoundDepth == 0 {
+			if strings.ToLower(v) == "else" && p.compoundDepth == 0 {
 				flushArg()
 				return
 			}
@@ -166,6 +174,11 @@ func (p *Parser) collectArgs(cmd *SimpleCommand) {
 
 		case lexer.TokenPunctuation:
 			v := val(t)
+			if v == "=" {
+				flushArg()
+				cmd.RawArgs = append(cmd.RawArgs, val(p.consume()))
+				continue
+			}
 			if isPipeOrAmpVal(v) || (v == ")" && p.compoundDepth > 0) {
 				flushArg()
 				return

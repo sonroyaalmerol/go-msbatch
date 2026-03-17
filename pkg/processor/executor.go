@@ -77,11 +77,26 @@ func (p *Processor) jumpToLabel(labelName string) error {
 func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 	expanded := p.ExpandNode(n)
 
+	// Clean up args for commands that expect words (most commands except echo)
+	var filteredArgs []string
+	for _, arg := range expanded.Args {
+		if strings.TrimSpace(arg) != "" || (len(arg) >= 2 && (arg[0] == '"' || arg[0] == '\'')) {
+			filteredArgs = append(filteredArgs, arg)
+		}
+	}
+
 	words := strings.Fields(expanded.Name)
 	if len(words) > 1 {
 		expanded.Name = words[0]
 		newArgs := append([]string{}, words[1:]...)
 		expanded.Args = append(newArgs, expanded.Args...)
+		// Update filteredArgs as well
+		filteredArgs = append([]string{}, words[1:]...)
+		for _, arg := range expanded.Args[len(words)-1:] {
+			if strings.TrimSpace(arg) != "" || (len(arg) >= 2 && (arg[0] == '"' || arg[0] == '\'')) {
+				filteredArgs = append(filteredArgs, arg)
+			}
+		}
 	}
 
 	origStdout := p.Stdout
@@ -144,7 +159,8 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 			prompt = "$P$G"
 		}
 		expandedPrompt := p.ExpandPrompt(prompt)
-		fmt.Fprintf(p.Stdout, "%s%s %s\n", expandedPrompt, expanded.Name, strings.Join(expanded.Args, " "))
+		// Join with "" because we preserved whitespace in RawArgs
+		fmt.Fprintf(p.Stdout, "%s%s%s\n", expandedPrompt, expanded.Name, strings.Join(expanded.RawArgs, ""))
 	}
 
 	// Flow-control commands are handled directly by the Processor because they
@@ -153,7 +169,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 	name := strings.ToLower(expanded.Name)
 	switch name {
 	case "goto":
-		label := strings.Join(expanded.Args, "")
+		label := strings.Join(filteredArgs, "")
 		label = strings.TrimPrefix(label, ":")
 		if strings.ToLower(label) == "eof" {
 			p.PC = len(p.Nodes)
@@ -161,11 +177,11 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		}
 		return p.jumpToLabel(label)
 	case "call":
-		if len(expanded.Args) == 0 {
+		if len(filteredArgs) == 0 {
 			return nil
 		}
-		target := expanded.Args[0]
-		restArgs := expanded.Args[1:]
+		target := filteredArgs[0]
+		restArgs := filteredArgs[1:]
 		if strings.HasPrefix(target, ":") {
 			label := target[1:]
 			oldPC := p.PC
@@ -196,26 +212,34 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		}
 		// Suppress echo on the inner dispatch: the CALL command line was
 		// already echoed by the outer executeSimpleCommand call.
-		return p.executeSimpleCommand(&parser.SimpleCommand{Name: target, Args: restArgs, Suppressed: true})
+		var reconstructedRaw []string
+		for i, arg := range restArgs {
+			if i > 0 {
+				reconstructedRaw = append(reconstructedRaw, " ")
+			}
+			reconstructedRaw = append(reconstructedRaw, arg)
+		}
+		return p.executeSimpleCommand(&parser.SimpleCommand{
+			Name:       target,
+			Args:       restArgs,
+			RawArgs:    reconstructedRaw,
+			Suppressed: true,
+		})
 	case "exit":
 		code := 0
 		isLocal := false
-		if len(expanded.Args) > 0 {
-			if strings.ToLower(expanded.Args[0]) == "/b" {
+		if len(filteredArgs) > 0 {
+			if strings.ToLower(filteredArgs[0]) == "/b" {
 				isLocal = true
-				if len(expanded.Args) > 1 {
-					code, _ = strconv.Atoi(expanded.Args[1])
+				if len(filteredArgs) > 1 {
+					code, _ = strconv.Atoi(filteredArgs[1])
 				}
 			} else {
-				code, _ = strconv.Atoi(expanded.Args[0])
+				code, _ = strconv.Atoi(filteredArgs[0])
 			}
 		}
 		p.Env.Set("ERRORLEVEL", strconv.Itoa(code))
 		if isLocal {
-			// EXIT /B — unwind the current CALL :label frame if one exists.
-			// The CALL handler catches EXIT_LOCAL and restores its context.
-			// If we are NOT inside a CALL (p.CallDepth == 0), fall through to
-			// os.Exit so it behaves identically to plain EXIT at the top level.
 			if p.CallDepth > 0 {
 				return fmt.Errorf("EXIT_LOCAL")
 			}
@@ -224,7 +248,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		return nil
 	case "setlocal":
 		p.Env.Push()
-		for _, arg := range expanded.Args {
+		for _, arg := range filteredArgs {
 			switch strings.ToLower(arg) {
 			case "enabledelayedexpansion":
 				p.Env.SetDelayedExpansion(true)
@@ -245,6 +269,9 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 
 	// Delegate all other commands to the pluggable executor.
 	if p.Executor != nil {
+		// For echo, we want the raw args (with whitespace).
+		// For others, we might want filtered ones.
+		// Builtins should be updated to handle raw args if they need original formatting.
 		return p.Executor.ExecCommand(p, expanded)
 	}
 	return nil

@@ -14,8 +14,8 @@ import (
 )
 
 func cmdEcho(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	output, stateChanged := p.HandleEchoBuiltin(cmd.Args)
-	if strings.ToLower(cmd.Name) == "echo." && len(cmd.Args) == 0 {
+	output, stateChanged := p.HandleEchoBuiltin(cmd.RawArgs)
+	if strings.ToLower(cmd.Name) == "echo." && len(cmd.RawArgs) == 0 {
 		fmt.Fprintln(p.Stdout)
 		p.Env.Set("ERRORLEVEL", "0")
 		return nil
@@ -28,8 +28,7 @@ func cmdEcho(p *processor.Processor, cmd *parser.SimpleCommand) error {
 }
 
 func cmdSet(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	args := cmd.Args
-	if len(args) == 0 {
+	if len(cmd.Args) == 0 {
 		for k, v := range p.Env.Snapshot() {
 			fmt.Fprintf(p.Stdout, "%s=%s\n", k, v)
 		}
@@ -37,7 +36,9 @@ func cmdSet(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		return nil
 	}
 
-	arg := strings.Join(args, " ")
+	// Join raw args to preserve spacing, then trim exactly one leading delimiter run
+	arg := strings.Join(cmd.RawArgs, "")
+	arg = strings.TrimLeft(arg, " \t\v\f\xa0,;=")
 
 	if strings.HasPrefix(arg, "\"") && strings.HasSuffix(arg, "\"") {
 		arg = arg[1 : len(arg)-1]
@@ -54,7 +55,7 @@ func cmdSet(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		return nil
 	}
 
-	if strings.HasPrefix(strings.ToLower(args[0]), "/p") {
+	if strings.HasPrefix(strings.ToLower(arg), "/p") {
 		promptStr := arg[2:]
 		if before, after, ok := strings.Cut(promptStr, "="); ok {
 			fmt.Fprint(p.Stdout, after)
@@ -134,7 +135,9 @@ func cmdCls(p *processor.Processor, _ *parser.SimpleCommand) error {
 }
 
 func cmdTitle(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	fmt.Fprintf(p.Stdout, "\033]0;%s\a", strings.Join(cmd.Args, " "))
+	arg := strings.Join(cmd.RawArgs, "")
+	arg = strings.TrimLeft(arg, " \t\v\f\xa0,;=")
+	fmt.Fprintf(p.Stdout, "\033]0;%s\a", arg)
 	p.Env.Set("ERRORLEVEL", "0")
 	return nil
 }

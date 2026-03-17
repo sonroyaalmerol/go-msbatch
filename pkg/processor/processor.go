@@ -75,14 +75,26 @@ func ParseExpanded(line string) []parser.Node {
 func (p *Processor) ExpandNode(n *parser.SimpleCommand) *parser.SimpleCommand {
 	out := &parser.SimpleCommand{
 		Suppressed: n.Suppressed,
-		Redirects:  n.Redirects,
 	}
+
+	for _, r := range n.Redirects {
+		expandedTarget := strings.TrimSpace(p.ProcessLine(r.Target))
+		out.Redirects = append(out.Redirects, parser.Redirect{
+			Kind:   r.Kind,
+			Target: expandedTarget,
+			FD:     r.FD,
+		})
+	}
+
 	out.Name = strings.TrimSpace(p.ProcessLine(n.Name))
 	for _, a := range n.Args {
-		expanded := strings.TrimSpace(p.ProcessLine(a))
+		expanded := p.ProcessLine(a)
 		if expanded != "" {
 			out.Args = append(out.Args, expanded)
 		}
+	}
+	for _, a := range n.RawArgs {
+		out.RawArgs = append(out.RawArgs, p.ProcessLine(a))
 	}
 	return out
 }
@@ -99,35 +111,36 @@ func (p *Processor) ShouldEcho(n *parser.SimpleCommand) bool {
 // HandleEchoBuiltin processes the "echo" builtin command, updating p.Echo and
 // returning the text to print (empty string if it is a state-change command).
 func (p *Processor) HandleEchoBuiltin(args []string) (output string, stateChanged bool) {
-	var filtered []string
-	for _, a := range args {
-		trimmed := strings.TrimSpace(a)
-		if trimmed != "" {
-			filtered = append(filtered, trimmed)
-		}
-	}
-
-	if len(filtered) == 0 {
+	if len(args) == 0 {
 		if p.Echo {
 			return "ECHO is on", false
 		}
 		return "ECHO is off", false
 	}
 
-	first := strings.ToLower(filtered[0])
-	if first == "on" {
+	// Use raw arguments to preserve original spacing.
+	full := strings.Join(args, "")
+
+	// CMD's echo skips the very first delimiter character if it's a standard one:
+	// Space, Tab, Comma, Semicolon, Equal, or 0xA0.
+	if len(full) > 0 {
+		r := full[0]
+		if r == ' ' || r == '\t' || r == ',' || r == ';' || r == '=' || r == '\xa0' {
+			full = full[1:]
+		}
+	}
+
+	lower := strings.ToLower(strings.TrimSpace(full))
+	if lower == "on" {
 		p.Echo = true
 		return "", true
 	}
-	if first == "off" {
+	if lower == "off" {
 		p.Echo = false
 		return "", true
 	}
 
-	// JOIN original args to preserve spaces between words if they were intended
-	// but we must be careful about leading spaces from TokenWhitespace.
-	// Systematic way: join the filtered ones.
-	return strings.Join(filtered, " "), false
+	return full, false
 }
 
 // HandleSetBuiltin parses and applies a SET command.

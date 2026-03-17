@@ -85,7 +85,8 @@ func TestProcessorHandleEchoBuiltinOff(t *testing.T) {
 // TestProcessorHandleEchoBuiltinText tests "echo message" returns the message.
 func TestProcessorHandleEchoBuiltinText(t *testing.T) {
 	p := newProc(true)
-	output, changed := p.HandleEchoBuiltin([]string{"hello", "world"})
+	// New HandleEchoBuiltin expects RawArgs (including whitespace/delimiters)
+	output, changed := p.HandleEchoBuiltin([]string{" ", "hello", " ", "world"})
 	if changed {
 		t.Error("expected no state change for text echo")
 	}

@@ -238,35 +238,31 @@ func analyzeSimpleCmd(a *Analysis, cmd *parser.SimpleCommand, lines []string) {
 
 // analyzeSetCmd extracts variable definitions from a SET command node.
 func analyzeSetCmd(a *Analysis, cmd *parser.SimpleCommand, line string) {
-	if len(cmd.Args) == 0 {
+	if len(cmd.RawArgs) == 0 {
 		return
 	}
 	// Compute the column where the argument begins (after "set " and optional spaces).
 	afterSet := line[cmd.Col+len(cmd.Name):]
-	trimmedAfterSet := strings.TrimLeft(afterSet, " \t")
+	trimmedAfterSet := strings.TrimLeft(afterSet, " \t\v\f\xa0,;=")
 	baseCol := cmd.Col + len(cmd.Name) + (len(afterSet) - len(trimmedAfterSet))
 
-	// cmd.Args[0] is the first whitespace-delimited token after "set".
-	arg0 := cmd.Args[0]
-	arg0Lower := strings.ToLower(arg0)
+	// Reconstruct the raw argument string after "set "
+	fullArg := strings.Join(cmd.RawArgs, "")
+	fullArg = strings.TrimLeft(fullArg, " \t\v\f\xa0,;=")
+
+	fullArgLower := strings.ToLower(fullArg)
 
 	switch {
-	case strings.HasPrefix(arg0Lower, "/a"):
+	case strings.HasPrefix(fullArgLower, "/a"):
 		// SET /A: arithmetic — extract all assigned variable names.
-		expr := strings.TrimSpace(arg0[2:])
-		if expr == "" && len(cmd.Args) > 1 {
-			expr = strings.Join(cmd.Args[1:], " ")
-		}
+		expr := strings.TrimSpace(fullArg[2:])
 		for _, name := range extractSetAVars(expr) {
 			a.Vars = append(a.Vars, VarDef{Name: name, Line: cmd.Line, Col: baseCol, ScopeEnd: -1})
 		}
 
-	case strings.HasPrefix(arg0Lower, "/p"):
+	case strings.HasPrefix(fullArgLower, "/p"):
 		// SET /P: prompt — variable name before '='.
-		promptPart := strings.TrimSpace(arg0[2:])
-		if promptPart == "" && len(cmd.Args) > 1 {
-			promptPart = cmd.Args[1]
-		}
+		promptPart := strings.TrimSpace(fullArg[2:])
 		if idx := strings.IndexByte(promptPart, '='); idx > 0 {
 			a.Vars = append(a.Vars, VarDef{
 				Name: strings.ToUpper(promptPart[:idx]), Line: cmd.Line, Col: baseCol, ScopeEnd: -1,
@@ -275,13 +271,14 @@ func analyzeSetCmd(a *Analysis, cmd *parser.SimpleCommand, line string) {
 
 	default:
 		// Plain SET: "VAR=value"
-		if idx := strings.IndexByte(arg0, '='); idx > 0 {
-			name := arg0[:idx]
-			value := arg0[idx+1:]
-			// Append any further args (spaces inside value are re-joined).
-			if len(cmd.Args) > 1 {
-				value += " " + strings.Join(cmd.Args[1:], " ")
-			}
+		// Strip quotes if they enclose the whole expression
+		arg := fullArg
+		if strings.HasPrefix(arg, "\"") && strings.HasSuffix(arg, "\"") {
+			arg = arg[1 : len(arg)-1]
+		}
+		if idx := strings.IndexByte(arg, '='); idx > 0 {
+			name := arg[:idx]
+			value := arg[idx+1:]
 			a.Vars = append(a.Vars, VarDef{
 				Name: strings.ToUpper(name), Value: value, Line: cmd.Line, Col: baseCol, ScopeEnd: -1,
 			})

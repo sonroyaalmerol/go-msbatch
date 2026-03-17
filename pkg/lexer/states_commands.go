@@ -24,12 +24,15 @@ func (bl *BatchLexer) stateSet() stateFn {
 			}
 		}
 	}
+	if bl.check(func(r rune) bool { return r == '"' }) {
+		return bl.stateFollow
+	}
 	return bl.stateSetVar
 }
 
 func (bl *BatchLexer) stateSetVar() stateFn {
 	bl.acceptRun(func(r rune) bool {
-		return r != 0 && !isNL(r) && !isWS(r) && !isPunct(r) && r != '='
+		return r != 0 && !isNL(r) && !isWS(r) && !isPunct(r) && r != '=' && r != '"'
 	})
 	if bl.width() > 0 {
 		bl.emit(TokenNameVariable)
