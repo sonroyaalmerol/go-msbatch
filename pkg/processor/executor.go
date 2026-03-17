@@ -224,6 +224,14 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		return nil
 	case "setlocal":
 		p.Env.Push()
+		for _, arg := range expanded.Args {
+			switch strings.ToLower(arg) {
+			case "enabledelayedexpansion":
+				p.Env.SetDelayedExpansion(true)
+			case "disabledelayedexpansion":
+				p.Env.SetDelayedExpansion(false)
+			}
+		}
 		return nil
 	case "endlocal":
 		p.Env.Pop()

@@ -15,7 +15,7 @@ type Environment struct {
 	vars             map[string]string
 	delayedExpansion bool // phase 5 enabled flag
 	batchMode        bool // true = batch file, false = command-line mode
-	stack            []map[string]string
+	stack            []envFrame
 }
 
 // NewEnvironment creates an Environment pre-populated from the OS environment.
@@ -117,13 +117,19 @@ func (e *Environment) StackDepth() int {
 	return len(e.stack)
 }
 
+// envFrame holds the state saved by SETLOCAL.
+type envFrame struct {
+	vars             map[string]string
+	delayedExpansion bool
+}
+
 // Push saves the current environment state onto a stack.
 func (e *Environment) Push() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	snapshot := make(map[string]string, len(e.vars))
 	maps.Copy(snapshot, e.vars)
-	e.stack = append(e.stack, snapshot)
+	e.stack = append(e.stack, envFrame{vars: snapshot, delayedExpansion: e.delayedExpansion})
 }
 
 // Pop restores the environment state from the stack.
@@ -133,6 +139,8 @@ func (e *Environment) Pop() {
 	if len(e.stack) == 0 {
 		return
 	}
-	e.vars = e.stack[len(e.stack)-1]
+	frame := e.stack[len(e.stack)-1]
 	e.stack = e.stack[:len(e.stack)-1]
+	e.vars = frame.vars
+	e.delayedExpansion = frame.delayedExpansion
 }
