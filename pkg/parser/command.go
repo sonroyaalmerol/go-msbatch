@@ -122,24 +122,31 @@ func (p *Parser) parseSimpleCommand(suppressed bool) *SimpleCommand {
 		return nil
 	}
 	cmd := &SimpleCommand{Suppressed: suppressed, Line: t.Line, Col: t.Col}
-	cmd.Name = val(p.consume())
+	firstTok := p.consume()
+	cmd.Name = val(firstTok)
 
 	// Support commands that the lexer might have split (e.g. C:\bin\ls.exe
 	// being lexed as "C" [Word] and ":\bin\ls.exe" [Text]).  Join any
 	// immediately following tokens that are not separators.
-	for p.pos < len(p.tokens) {
-		t := p.peek()
-		if t.Type == lexer.TokenWhitespace || t.Type == lexer.TokenNewline || t.Type == lexer.TokenEOF {
-			break
-		}
-		// If it's punctuation, only join if it's not a shell operator.
-		if t.Type == lexer.TokenPunctuation {
-			v := val(t)
-			if v == "|" || v == "&" || v == ">" || v == "<" || v == "(" || v == ")" {
+	//
+	// Keywords (like GOTO, CALL) are never joined; they must stand alone
+	// so that following punctuation (like :) is treated as part of the
+	// argument list (GOTO:EOF -> Name="GOTO", Args=[":EOF"]).
+	if firstTok.Type != lexer.TokenKeyword {
+		for p.pos < len(p.tokens) {
+			t := p.peek()
+			if t.Type == lexer.TokenWhitespace || t.Type == lexer.TokenNewline || t.Type == lexer.TokenEOF {
 				break
 			}
+			// If it's punctuation, only join if it's not a shell operator.
+			if t.Type == lexer.TokenPunctuation {
+				v := val(t)
+				if v == "|" || v == "&" || v == ">" || v == "<" || v == "(" || v == ")" {
+					break
+				}
+			}
+			cmd.Name += val(p.consume())
 		}
-		cmd.Name += val(p.consume())
 	}
 
 	p.collectArgs(cmd)

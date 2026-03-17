@@ -174,8 +174,9 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 			return nil
 		}
 		label := strings.Join(cmdWords, "")
-		label = strings.TrimPrefix(label, ":")
-		if strings.ToLower(label) == "eof" {
+		hasColon := strings.HasPrefix(label, ":")
+		label = strings.TrimLeft(label, ":")
+		if hasColon && strings.ToLower(label) == "eof" {
 			p.PC = len(p.Nodes)
 			return nil
 		}
@@ -187,7 +188,11 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		target := cmdWords[0]
 		restArgs := cmdWords[1:]
 		if strings.HasPrefix(target, ":") {
-			label := target[1:]
+			label := strings.TrimLeft(target, ":")
+			if strings.ToLower(label) == "eof" {
+				p.PC = len(p.Nodes)
+				return nil
+			}
 			oldPC := p.PC
 			oldArgs := p.Args
 			p.Args = append([]string{target}, restArgs...)
