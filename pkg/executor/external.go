@@ -82,9 +82,18 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			p.Env.Set("ERRORLEVEL", "9009")
 			return nil
 		}
-		// Pass arguments to the Windows binary verbatim — no MapPath, no glob
-		// expansion. The prefix tool (e.g. Wine) translates Windows paths internally.
-		prefixArgs := append(append(prefix[1:], cmdName), cmd.Args...)
+		// Pass the original Windows path (cmd.Name) to the prefix tool, NOT the
+		// Unix-mapped cmdName.  Wine resolves "C:\foo\app.exe" via WINEPREFIX/drive_c;
+		// if we pass the Unix-mapped "/mnt/c/foo/app.exe" instead, Wine maps it to
+		// Z:\ (its root drive) rather than C:\, breaking GetModuleFileName and any
+		// relative path lookups the exe performs against its own location.
+		//
+		// Arguments are passed verbatim — no MapPath, no glob expansion.
+		// Wine/the Windows binary handles its own path translation internally.
+		prefixArgs := make([]string, 0, len(prefix)-1+1+len(cmd.Args))
+		prefixArgs = append(prefixArgs, prefix[1:]...)
+		prefixArgs = append(prefixArgs, cmd.Name)
+		prefixArgs = append(prefixArgs, cmd.Args...)
 		return runOSCommand(p, prefix[0], prefixArgs, cmd.Name)
 	}
 
@@ -153,9 +162,27 @@ func runOSCommand(p *processor.Processor, name string, args []string, displayNam
 	c.Stdout = p.Stdout
 	c.Stderr = p.Stderr
 	c.Stdin = p.Stdin
-	c.Env = os.Environ()
+
+	// Build a deduplicated environment: start with the OS environment as the
+	// baseline, then let batch-level SET variables override it.  This matches
+	// Windows CMD behaviour where SET changes are visible to child processes
+	// and take precedence over inherited values.  Without deduplication the OS
+	// value (first entry) would win on Linux because getenv() returns the first
+	// match, silently ignoring any SET PATH=… the batch script issued.
+	envMap := make(map[string]string, len(os.Environ()))
+	for _, kv := range os.Environ() {
+		if k, _, ok := strings.Cut(kv, "="); ok {
+			envMap[strings.ToUpper(k)] = kv // keep original casing in value
+		} else {
+			envMap[strings.ToUpper(kv)] = kv
+		}
+	}
 	for k, v := range p.Env.Snapshot() {
-		c.Env = append(c.Env, fmt.Sprintf("%s=%s", k, v))
+		envMap[strings.ToUpper(k)] = fmt.Sprintf("%s=%s", k, v)
+	}
+	c.Env = make([]string, 0, len(envMap))
+	for _, kv := range envMap {
+		c.Env = append(c.Env, kv)
 	}
 
 	if err := c.Run(); err != nil {

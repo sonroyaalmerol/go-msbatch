@@ -10,6 +10,7 @@ import (
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
+	"golang.org/x/term"
 )
 
 func cmdEcho(p *processor.Processor, cmd *parser.SimpleCommand) error {
@@ -142,7 +143,24 @@ func cmdVer(p *processor.Processor, _ *parser.SimpleCommand) error {
 
 func cmdPause(p *processor.Processor, _ *parser.SimpleCommand) error {
 	fmt.Fprint(p.Stdout, "Press any key to continue . . . ")
-	io.ReadFull(p.Stdin, make([]byte, 1)) //nolint:errcheck
+	// When stdin is a real terminal, switch to raw mode so any key press
+	// (not just Enter) unblocks the read.  Fall back to line-buffered read
+	// when stdin is a pipe or redirected file.
+	if f, ok := p.Stdin.(*os.File); ok {
+		fd := int(f.Fd())
+		if term.IsTerminal(fd) {
+			if old, err := term.MakeRaw(fd); err == nil {
+				io.ReadFull(p.Stdin, make([]byte, 1)) //nolint:errcheck
+				term.Restore(fd, old)                //nolint:errcheck
+			} else {
+				io.ReadFull(p.Stdin, make([]byte, 1)) //nolint:errcheck
+			}
+		} else {
+			io.ReadFull(p.Stdin, make([]byte, 1)) //nolint:errcheck
+		}
+	} else {
+		io.ReadFull(p.Stdin, make([]byte, 1)) //nolint:errcheck
+	}
 	fmt.Fprintln(p.Stdout)
 	p.Env.Set("ERRORLEVEL", "0")
 	return nil
