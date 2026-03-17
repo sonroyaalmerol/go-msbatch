@@ -8,6 +8,13 @@ import (
 )
 
 // parseBlock parses a parenthesised command block: ( cmd... ).
+//
+// Windows CMD semantics: a label definition (:name) inside a parenthesised
+// block terminates the block at that line.  The ':' token is left unconsumed
+// so the outer parser picks it up as a top-level (or enclosing-block-level)
+// label node.  Because each enclosing parseBlock call performs the same check,
+// the label propagates all the way to the top-level node list, which is the
+// correct CMD behaviour.
 func (p *Parser) parseBlock() *Block {
 	open := p.peek()
 	p.consume() // consume "("
@@ -22,6 +29,11 @@ func (p *Parser) parseBlock() *Block {
 		if t.Type == lexer.TokenPunctuation && val(t) == ")" {
 			block.EndLine = t.Line
 			p.consume()
+			break
+		}
+		// A label definition inside a parenthesised block terminates the block
+		// in Windows CMD.  Leave the ':' token for the outer parser.
+		if t.Type == lexer.TokenPunctuation && val(t) == ":" {
 			break
 		}
 		if n := p.parseCommand(); n != nil {
