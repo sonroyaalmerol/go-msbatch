@@ -147,7 +147,11 @@ func (p *Processor) HandleEchoBuiltin(args []string) (output string, stateChange
 // src is the raw text after "set " (i.e. "NAME=value" or "/a expr").
 func (p *Processor) HandleSetBuiltin(name, value string) {
 	if name != "" {
-		p.Env.Set(name, value)
+		if value == "" {
+			p.Env.Delete(name)
+		} else {
+			p.Env.Set(name, value)
+		}
 	}
 }
 
