@@ -221,9 +221,9 @@ func TestParseForF(t *testing.T) {
 	}
 }
 
-// TestParseSemicolonSkipped verifies that standalone ; is not parsed as a command.
+// TestParseSemicolonSkipped verifies that standalone ; consumes rest of line.
 func TestParseSemicolonSkipped(t *testing.T) {
-	// Semicolon should be skipped, echo should be parsed
+	// Semicolon and everything after it should be consumed
 	nodes := parse("echo hello ; echo world\n")
 	if len(nodes) != 1 {
 		t.Fatalf("expected 1 node, got %d", len(nodes))
@@ -235,9 +235,10 @@ func TestParseSemicolonSkipped(t *testing.T) {
 	if cmd.Name != "echo" {
 		t.Errorf("expected command name 'echo', got %q", cmd.Name)
 	}
+	// The "echo world" should NOT be a separate node
 }
 
-// TestParseSemicolonAfterBlock verifies ; after compound block is skipped.
+// TestParseSemicolonAfterBlock verifies ; after compound block consumes rest of line.
 func TestParseSemicolonAfterBlock(t *testing.T) {
 	nodes := parse("if 1==1 (echo yes) ; \n")
 	if len(nodes) != 1 {
@@ -252,7 +253,23 @@ func TestParseSemicolonAfterBlock(t *testing.T) {
 	}
 }
 
-// TestParseCommaSkipped verifies that standalone , is not parsed as a command.
+// TestParseSemicolonWithRedirect verifies ; with trailing redirect is handled.
+func TestParseSemicolonWithRedirect(t *testing.T) {
+	// The ; and >> file.txt should be consumed, if block should be parsed
+	nodes := parse("if 1==1 (echo yes)) ; >> file.txt\n")
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d: %v", len(nodes), nodes)
+	}
+	ifn, ok := nodes[0].(*parser.IfNode)
+	if !ok {
+		t.Fatalf("expected *IfNode, got %T", nodes[0])
+	}
+	if ifn == nil {
+		t.Error("expected non-nil IfNode")
+	}
+}
+
+// TestParseCommaSkipped verifies that standalone , consumes rest of line.
 func TestParseCommaSkipped(t *testing.T) {
 	nodes := parse("echo hello , echo world\n")
 	if len(nodes) != 1 {

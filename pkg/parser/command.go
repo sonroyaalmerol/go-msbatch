@@ -107,16 +107,19 @@ func (p *Parser) parsePrimary() Node {
 	}
 
 	// Skip standalone ; or , tokens (not valid command names in CMD)
+	// In CMD, ; appearing outside of FOR loops is essentially ignored,
+	// along with any trailing content on the same line.
 	if t.Type == lexer.TokenWord && (val(t) == ";" || val(t) == ",") {
 		p.consume()
-		p.skipWS()
-		t = p.peek()
-		// After skipping ; or ,, continue parsing if there's more
-		if t.Type == lexer.TokenEOF || t.Type == lexer.TokenNewline {
-			return nil
+		// Consume remaining tokens until newline/EOF
+		for p.pos < len(p.tokens) {
+			t := p.peek()
+			if t.Type == lexer.TokenNewline || t.Type == lexer.TokenEOF {
+				break
+			}
+			p.consume()
 		}
-		// Recursively parse the next primary element
-		return p.parsePrimary()
+		return nil
 	}
 
 	// Everything else is a simple command
@@ -131,7 +134,7 @@ func (p *Parser) parsePrimary() Node {
 // then collects argument and redirection tokens.
 func (p *Parser) parseSimpleCommand(suppressed bool) *SimpleCommand {
 	t := p.peek()
-	if t.Type == lexer.TokenEOF || t.Type == lexer.TokenPunctuation || t.Type == lexer.TokenNewline {
+	if t.Type == lexer.TokenEOF || t.Type == lexer.TokenPunctuation || t.Type == lexer.TokenNewline || t.Type == lexer.TokenRedirect {
 		return nil
 	}
 	cmd := &SimpleCommand{Suppressed: suppressed, Line: t.Line, Col: t.Col}
