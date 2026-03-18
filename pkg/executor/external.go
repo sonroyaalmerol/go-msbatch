@@ -197,7 +197,84 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 	}
 
-	return runOSCommand(p, cmdName, args, cmd.Name)
+	// Try running as a native command first
+	err := runOSCommand(p, cmdName, args, cmd.Name)
+	if err == nil {
+		return nil
+	}
+
+	// If native command failed (not found) and we're on non-Windows, try with .exe via Wine.
+	// Wine has its own PATH environment, so the .exe might not be visible to Go but
+	// Wine can still find it (e.g., in C:\Windows\System32 or Wine's PATH).
+	if err == ErrCommandNotFound && runtime.GOOS != "windows" && !isExe {
+		prefix := exePrefix(p)
+		if len(prefix) > 0 {
+			exeName := cmd.Name + ".exe"
+			p.Logger.Debug("native command not found, trying via wine", "original", cmd.Name, "exe", exeName)
+			return runExeViaWine(p, cmd, exeName, cmdWords)
+		}
+	}
+
+	// Command not found and no Wine fallback available
+	if err == ErrCommandNotFound {
+		fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command, operable program or batch file.\n", cmd.Name)
+		p.FailureWithCode(9009)
+		return nil
+	}
+
+	return err
+}
+
+// runExeViaWine runs a command via Wine with the MSBATCH_EXE_PREFIX.
+func runExeViaWine(p *processor.Processor, cmd *parser.SimpleCommand, exeName string, cmdWords []string) error {
+	prefix := exePrefix(p)
+	if len(prefix) == 0 {
+		return fmt.Errorf("no exe prefix configured")
+	}
+
+	// Set up Wine bridge
+	if bridgeDir := ensureWineBridge(p); bridgeDir != "" {
+		p.Logger.Debug("wine bridge active", "dir", bridgeDir)
+		path, _ := p.Env.Get("PATH")
+		if !strings.Contains(path, bridgeDir) {
+			newPath := bridgeDir + string(os.PathListSeparator) + path
+			p.Env.Set("PATH", newPath)
+			p.Logger.Debug("updated PATH for wine bridge", "new_path", newPath)
+		}
+		winePath, _ := p.Env.Get("WINEPATH")
+		if !strings.Contains(winePath, bridgeDir) {
+			sep := ""
+			if winePath != "" {
+				sep = ";"
+			}
+			newWinePath := bridgeDir + sep + winePath
+			p.Env.Set("WINEPATH", newWinePath)
+			p.Logger.Debug("updated WINEPATH for wine bridge", "new_winepath", newWinePath)
+		}
+	}
+
+	// Build args for Wine execution
+	exeArgs := make([]string, 0, len(cmdWords))
+	for _, arg := range cmdWords {
+		isUnixPath := strings.HasPrefix(arg, "/") || strings.HasPrefix(arg, "./") || strings.HasPrefix(arg, "../")
+		if runtime.GOOS != "windows" && isUnixPath && strings.Contains(arg, "\\") {
+			exeArgs = append(exeArgs, strings.ReplaceAll(arg, "\\", "/"))
+		} else {
+			exeArgs = append(exeArgs, arg)
+		}
+	}
+
+	prefixArgs := make([]string, 0, len(prefix)-1+1+len(exeArgs))
+	prefixArgs = append(prefixArgs, prefix[1:]...)
+	prefixArgs = append(prefixArgs, exeName)
+	prefixArgs = append(prefixArgs, exeArgs...)
+	wineErr := runOSCommand(p, prefix[0], prefixArgs, cmd.Name)
+	if wineErr == ErrCommandNotFound {
+		fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command, operable program or batch file.\n", cmd.Name)
+		p.FailureWithCode(9009)
+		return nil
+	}
+	return wineErr
 }
 
 // lookPathCaseInsensitive searches for a command on the PATH case-insensitively.
@@ -311,6 +388,9 @@ func mapArg(arg string) string {
 
 // runOSCommand executes name with args via the host OS and updates ERRORLEVEL.
 // displayName is used in error messages (the original un-mapped command name).
+// Returns ErrCommandNotFound if the command executable doesn't exist.
+var ErrCommandNotFound = fmt.Errorf("command not found")
+
 func runOSCommand(p *processor.Processor, name string, args []string, displayName string) error {
 	p.Logger.Debug("running OS command", "name", name, "args", args)
 	c := exec.Command(name, args...)
@@ -343,10 +423,10 @@ func runOSCommand(p *processor.Processor, name string, args []string, displayNam
 	if err := c.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			p.SetErrorLevel(exitErr.ExitCode())
-		} else {
-			fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command, operable program or batch file.\n", displayName)
-			p.FailureWithCode(9009)
+			return nil // Command ran but failed - don't try Wine fallback
 		}
+		// Command not found - return error so caller can try Wine fallback
+		return ErrCommandNotFound
 	} else {
 		p.Success()
 	}

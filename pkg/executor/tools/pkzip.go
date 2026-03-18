@@ -78,17 +78,19 @@ func run7z(p *processor.Processor, cmd *parser.SimpleCommand, defaultMode string
 		}
 	}
 
-	// Find 7z or 7za
+	// Find 7z, 7za, or 7zz
 	exe, err := exec.LookPath("7z")
 	if err != nil {
 		exe, err = exec.LookPath("7za")
 		if err != nil {
-			fmt.Fprintln(p.Stderr, "7z or 7za not found on PATH. Please install 7-Zip.")
-			p.FailureWithCode(9009)
-			return nil
+			exe, err = exec.LookPath("7zz")
+			if err != nil {
+				fmt.Fprintln(p.Stderr, "7z, 7za, or 7zz not found on PATH. Please install 7-Zip.")
+				p.FailureWithCode(9009)
+				return nil
+			}
 		}
 	}
-
 	finalArgs := []string{mode}
 	finalArgs = append(finalArgs, z7Args...)
 	finalArgs = append(finalArgs, zipFile)
