@@ -32,7 +32,7 @@ func TestPhase0NoCtrlZ(t *testing.T) {
 // TestPhase1DoublePercent tests guideline: %% → % in batch mode.
 func TestPhase1DoublePercent(t *testing.T) {
 	env := processor.NewEmptyEnvironment(true)
-	got := processor.Phase1PercentExpand("100%%", env, nil)
+	got := processor.Phase1PercentExpand("100%%", env, nil, nil)
 	if got != "100%" {
 		t.Errorf("expected 100%%, got %q", got)
 	}
@@ -42,7 +42,7 @@ func TestPhase1DoublePercent(t *testing.T) {
 func TestPhase1PositionalArg(t *testing.T) {
 	env := processor.NewEmptyEnvironment(true)
 	args := []string{"script.bat", "hello", "world"}
-	got := processor.Phase1PercentExpand("echo %1 %2", env, args)
+	got := processor.Phase1PercentExpand("echo %1 %2", env, args, nil)
 	if got != "echo hello world" {
 		t.Errorf("expected 'echo hello world', got %q", got)
 	}
@@ -52,19 +52,19 @@ func TestPhase1PositionalArg(t *testing.T) {
 func TestPhase1PositionalArgZero(t *testing.T) {
 	env := processor.NewEmptyEnvironment(true)
 	args := []string{"myscript.bat"}
-	got := processor.Phase1PercentExpand("%0", env, args)
+	got := processor.Phase1PercentExpand("%0", env, args, nil)
 	if got != "myscript.bat" {
 		t.Errorf("expected myscript.bat, got %q", got)
 	}
 }
 
-// TestPhase1PositionalArgStar tests %* → all args joined.
+// TestPhase1PositionalArgStar tests %* → all args joined (excluding %0).
 func TestPhase1PositionalArgStar(t *testing.T) {
 	env := processor.NewEmptyEnvironment(true)
-	args := []string{"s.bat", "a", "b", "c"}
-	got := processor.Phase1PercentExpand("%*", env, args)
-	if got != "s.bat a b c" {
-		t.Errorf("expected 's.bat a b c', got %q", got)
+	originalArgs := []string{"a", "b", "c"}
+	got := processor.Phase1PercentExpand("%*", env, nil, originalArgs)
+	if got != "a b c" {
+		t.Errorf("expected 'a b c', got %q", got)
 	}
 }
 
@@ -72,7 +72,7 @@ func TestPhase1PositionalArgStar(t *testing.T) {
 func TestPhase1VarExpand(t *testing.T) {
 	env := processor.NewEmptyEnvironment(true)
 	env.Set("GREETING", "hello")
-	got := processor.Phase1PercentExpand("echo %GREETING% world", env, nil)
+	got := processor.Phase1PercentExpand("echo %GREETING% world", env, nil, nil)
 	if got != "echo hello world" {
 		t.Errorf("expected 'echo hello world', got %q", got)
 	}
@@ -81,7 +81,7 @@ func TestPhase1VarExpand(t *testing.T) {
 // TestPhase1MissingVarBatchEmpty tests guideline: missing %VAR% → "" in batch.
 func TestPhase1MissingVarBatchEmpty(t *testing.T) {
 	env := processor.NewEmptyEnvironment(true)
-	got := processor.Phase1PercentExpand("echo %MISSING%", env, nil)
+	got := processor.Phase1PercentExpand("echo %MISSING%", env, nil, nil)
 	if got != "echo " {
 		t.Errorf("expected 'echo ', got %q", got)
 	}
@@ -91,7 +91,7 @@ func TestPhase1MissingVarBatchEmpty(t *testing.T) {
 // undefined %VAR% is left unchanged in command-line mode.
 func TestPhase1MissingVarCmdLineUnchanged(t *testing.T) {
 	env := processor.NewEmptyEnvironment(false) // command-line mode
-	got := processor.Phase1PercentExpand("echo %MISSING%", env, nil)
+	got := processor.Phase1PercentExpand("echo %MISSING%", env, nil, nil)
 	if got != "echo %MISSING%" {
 		t.Errorf("expected 'echo %%MISSING%%', got %q", got)
 	}
@@ -101,7 +101,7 @@ func TestPhase1MissingVarCmdLineUnchanged(t *testing.T) {
 // %1 is left unchanged in command-line mode.
 func TestPhase1NoCmdLinePositional(t *testing.T) {
 	env := processor.NewEmptyEnvironment(false)
-	got := processor.Phase1PercentExpand("echo %1", env, []string{"script"})
+	got := processor.Phase1PercentExpand("echo %1", env, []string{"script"}, nil)
 	if got != "echo %1" {
 		t.Errorf("expected 'echo %%1', got %q", got)
 	}
@@ -111,7 +111,7 @@ func TestPhase1NoCmdLinePositional(t *testing.T) {
 func TestPhase1VarCaseFolded(t *testing.T) {
 	env := processor.NewEmptyEnvironment(true)
 	env.Set("myvar", "value")
-	got := processor.Phase1PercentExpand("%MYVAR%", env, nil)
+	got := processor.Phase1PercentExpand("%MYVAR%", env, nil, nil)
 	if got != "value" {
 		t.Errorf("expected value, got %q", got)
 	}
@@ -123,7 +123,7 @@ func TestPhase1VarCaseFolded(t *testing.T) {
 func TestPhase1TildeBasic(t *testing.T) {
 	env := processor.NewEmptyEnvironment(true)
 	args := []string{`"C:\scripts\deploy.bat"`}
-	got := processor.Phase1PercentExpand("%~0", env, args)
+	got := processor.Phase1PercentExpand("%~0", env, args, nil)
 	if got != `C:\scripts\deploy.bat` {
 		t.Errorf("expected unquoted path, got %q", got)
 	}
@@ -133,7 +133,7 @@ func TestPhase1TildeBasic(t *testing.T) {
 func TestPhase1TildeN(t *testing.T) {
 	env := processor.NewEmptyEnvironment(true)
 	args := []string{"/tmp/tilde_test.bat"}
-	got := processor.Phase1PercentExpand("%~n0", env, args)
+	got := processor.Phase1PercentExpand("%~n0", env, args, nil)
 	if got != "tilde_test" {
 		t.Errorf("expected 'tilde_test', got %q", got)
 	}
@@ -143,7 +143,7 @@ func TestPhase1TildeN(t *testing.T) {
 func TestPhase1TildeX(t *testing.T) {
 	env := processor.NewEmptyEnvironment(true)
 	args := []string{"/tmp/tilde_test.bat"}
-	got := processor.Phase1PercentExpand("%~x0", env, args)
+	got := processor.Phase1PercentExpand("%~x0", env, args, nil)
 	if got != ".bat" {
 		t.Errorf("expected '.bat', got %q", got)
 	}
@@ -153,7 +153,7 @@ func TestPhase1TildeX(t *testing.T) {
 func TestPhase1TildeNX(t *testing.T) {
 	env := processor.NewEmptyEnvironment(true)
 	args := []string{"/tmp/tilde_test.bat"}
-	got := processor.Phase1PercentExpand("%~nx0", env, args)
+	got := processor.Phase1PercentExpand("%~nx0", env, args, nil)
 	if got != "tilde_test.bat" {
 		t.Errorf("expected 'tilde_test.bat', got %q", got)
 	}
@@ -164,7 +164,7 @@ func TestPhase1TildeNX(t *testing.T) {
 func TestPhase1TildeDP(t *testing.T) {
 	env := processor.NewEmptyEnvironment(true)
 	args := []string{"/tmp/scripts/deploy.bat"}
-	got := processor.Phase1PercentExpand("%~dp0", env, args)
+	got := processor.Phase1PercentExpand("%~dp0", env, args, nil)
 	if got != "/tmp/scripts/" {
 		t.Errorf("expected '/tmp/scripts/', got %q", got)
 	}
@@ -174,7 +174,7 @@ func TestPhase1TildeDP(t *testing.T) {
 func TestPhase1TildeF(t *testing.T) {
 	env := processor.NewEmptyEnvironment(true)
 	args := []string{"/tmp/tilde_test.bat"}
-	got := processor.Phase1PercentExpand("%~f0", env, args)
+	got := processor.Phase1PercentExpand("%~f0", env, args, nil)
 	if got != "/tmp/tilde_test.bat" {
 		t.Errorf("expected '/tmp/tilde_test.bat', got %q", got)
 	}
@@ -184,7 +184,7 @@ func TestPhase1TildeF(t *testing.T) {
 func TestPhase1TildeNotBatchMode(t *testing.T) {
 	env := processor.NewEmptyEnvironment(false)
 	args := []string{"script.bat"}
-	got := processor.Phase1PercentExpand("%~n0", env, args)
+	got := processor.Phase1PercentExpand("%~n0", env, args, nil)
 	if got != "%~n0" {
 		t.Errorf("expected literal '%%~n0', got %q", got)
 	}
@@ -194,7 +194,7 @@ func TestPhase1TildeNotBatchMode(t *testing.T) {
 func TestPhase1TildeOutOfRange(t *testing.T) {
 	env := processor.NewEmptyEnvironment(true)
 	args := []string{"script.bat"} // only %0, no %1
-	got := processor.Phase1PercentExpand("%~n1", env, args)
+	got := processor.Phase1PercentExpand("%~n1", env, args, nil)
 	if got != "" {
 		t.Errorf("expected empty string, got %q", got)
 	}

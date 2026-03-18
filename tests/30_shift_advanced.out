@@ -1,0 +1,14 @@
+Original args: A B C
+All args (%*): A B C
+Shifting...
+After 1st shift: B C 
+All args (%*): A B C
+Shifting from /1...
+After shift /1: C  
+All args (%*): A B C
+Shifting from /2...
+After shift /2: C  
+All args (%*): A B C
+Shifting in a loop...
+After loop:   
+All args (%*): A B C

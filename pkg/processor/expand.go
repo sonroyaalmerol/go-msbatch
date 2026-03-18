@@ -71,7 +71,7 @@ func resolveVariable(rawName string, env *Environment) (string, bool) {
 }
 
 // Phase1PercentExpand performs phase-1 percent expansion on src.
-func Phase1PercentExpand(src string, env *Environment, args []string) string {
+func Phase1PercentExpand(src string, env *Environment, args []string, originalArgs []string) string {
 	runes := []rune(src)
 	var sb strings.Builder
 	for i := 0; i < len(runes); {
@@ -118,8 +118,8 @@ func Phase1PercentExpand(src string, env *Environment, args []string) string {
 		case next == '*':
 			// %* all positional arguments (batch mode only)
 			if env.BatchMode() {
-				if len(args) > 0 {
-					sb.WriteString(strings.Join(args, " "))
+				if len(originalArgs) > 0 {
+					sb.WriteString(strings.Join(originalArgs, " "))
 				}
 			} else {
 				sb.WriteRune('%')
@@ -519,7 +519,7 @@ func Phase5DelayedExpand(src string, env *Environment) string {
 		// percent expansion on it. This handles the "expanded further" requirement
 		// for nested variables produced by delayed expansion.
 		if strings.ContainsRune(val, '%') {
-			val = Phase1PercentExpand(val, env, nil)
+			val = Phase1PercentExpand(val, env, nil, nil)
 		}
 
 		sb.WriteString(val)

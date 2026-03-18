@@ -10,22 +10,27 @@ func (bl *BatchLexer) stateRoot() stateFn {
 	case isNL(r):
 		bl.acceptRun(isNL)
 		bl.emit(TokenNewline)
+		bl.atCommandStart = true
 		return bl.stateRoot
 	case IsWS(r):
 		bl.acceptRun(IsWS)
 		bl.emit(TokenWhitespace)
 		return bl.stateRoot
 	case r == '(':
+		bl.atCommandStart = false
 		bl.compoundDepth++
 		bl.emit(TokenPunctuation)
 		return bl.stateRoot
 	case r == ')':
+		bl.atCommandStart = false
 		if bl.compoundDepth > 0 {
 			bl.compoundDepth--
 		}
 		bl.emit(TokenPunctuation)
 		return bl.stateRoot
 	case r == '@':
+		// @ is an echo-suppression prefix; treat it as transparent to label
+		// detection so that @:label still defines a label.
 		bl.acceptRun(func(r rune) bool { return r == '@' })
 		bl.emit(TokenPunctuation)
 		return bl.stateRoot
@@ -34,21 +39,34 @@ func (bl *BatchLexer) stateRoot() stateFn {
 			bl.next()
 			bl.acceptRun(func(r rune) bool { return !isNL(r) && r != 0 })
 			bl.emit(TokenComment)
+			bl.atCommandStart = false
 			return bl.stateRoot
 		}
+		// A colon defines a label only when it is the first non-whitespace
+		// token on the line.  In all other positions it is plain punctuation.
+		isAtStart := bl.atCommandStart
+		bl.atCommandStart = false
 		bl.emit(TokenPunctuation)
-		return bl.stateLabelName
+		if isAtStart {
+			return bl.stateLabelName
+		}
+		return bl.stateRoot
 	case r == '|' || r == '&':
+		bl.atCommandStart = false
 		bl.acceptRun(func(r rune) bool { return r == '|' || r == '&' })
 		bl.emit(TokenPunctuation)
 		return bl.stateRoot
 	case r == '>' || r == '<':
+		bl.atCommandStart = false
 		return bl.stateRedirectRune(r)
 	case r == '"':
+		bl.atCommandStart = false
 		return bl.lexStringDoubleBody(bl.stateRoot)()
 	case r == '`':
+		bl.atCommandStart = false
 		return bl.lexStringBTBody(bl.stateRoot)()
 	case r == '^':
+		bl.atCommandStart = false
 		r2 := bl.next()
 		if r2 == 0 {
 			bl.emit(TokenStringEscape)
@@ -62,14 +80,17 @@ func (bl *BatchLexer) stateRoot() stateFn {
 		}
 		return bl.stateRoot
 	case r == '%':
+		bl.atCommandStart = false
 		bl.prev()
 		bl.lexPercent()
 		return bl.stateRoot
 	case r == '!':
+		bl.atCommandStart = false
 		bl.prev()
 		bl.lexDelayedVar()
 		return bl.stateRoot
 	case r == '=':
+		bl.atCommandStart = false
 		r2 := bl.next()
 		if r2 == '=' {
 			bl.emit(TokenOperator) // emit "=="
@@ -81,9 +102,11 @@ func (bl *BatchLexer) stateRoot() stateFn {
 		}
 		return bl.stateRoot
 	case r == '/':
+		bl.atCommandStart = false
 		bl.emit(TokenPunctuation)
 		return bl.stateRoot
 	case r >= '0' && r <= '9':
+		bl.atCommandStart = false
 		bl.acceptRun(func(r rune) bool { return r >= '0' && r <= '9' })
 		nextRune := bl.next()
 		if nextRune == '>' || nextRune == '<' {
@@ -96,6 +119,7 @@ func (bl *BatchLexer) stateRoot() stateFn {
 		}
 		return bl.stateWord
 	default:
+		bl.atCommandStart = false
 		bl.prev()
 		return bl.stateWord
 	}

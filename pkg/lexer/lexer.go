@@ -13,14 +13,16 @@ type BatchLexer struct {
 	items      chan Item
 	lineOffset int // 0-based line number stamped on all emitted Items
 	// batch-specific state
-	compoundDepth int
+	compoundDepth  int
+	atCommandStart bool // true when : would start a label (no content on line yet)
 }
 
 // New creates a BatchLexer ready to tokenise src.
 func New(src string) *BatchLexer {
 	bl := &BatchLexer{
-		input: []rune(src),
-		items: make(chan Item, 10),
+		input:          []rune(src),
+		items:          make(chan Item, 10),
+		atCommandStart: true,
 	}
 	bl.state = bl.stateRoot
 	return bl

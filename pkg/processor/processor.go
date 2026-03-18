@@ -15,37 +15,45 @@ import (
 // Processor applies the CMD.EXE parsing phases to a line of batch source and
 // returns the expanded result ready for execution.
 type Processor struct {
-	Env      *Environment
-	Args     []string // %0..%N positional arguments (batch mode)
-	Echo     bool     // ECHO state (phase 3)
-	ForVars  map[string]string
-	Stdout   io.Writer
-	Stdin    io.Reader
-	Stderr   io.Writer
-	Console  io.Writer
-	Logger   *slog.Logger
-	Nodes     []parser.Node
-	PC        int
-	Exited    bool
-	CallDepth int             // incremented inside CALL :label frames
-	DirStack  []string        // directory stack for PUSHD/POPD
-	Executor  CommandExecutor // handles non-flow-control command dispatch
+	Env          *Environment
+	Args         []string // %0..%N positional arguments (batch mode)
+	OriginalArgs []string // %1..%N stable arguments for %*
+	Echo         bool     // ECHO state (phase 3)
+	ForVars      map[string]string
+	Stdout       io.Writer
+	Stdin        io.Reader
+	Stderr       io.Writer
+	Console      io.Writer
+	Logger       *slog.Logger
+	Nodes        []parser.Node
+	PC           int
+	Exited       bool
+	CallDepth    int      // incremented inside CALL :label frames
+	DirStack     []string // directory stack for PUSHD/POPD
+	Executor     CommandExecutor // handles non-flow-control command dispatch
 }
 
 // New creates a Processor. exec handles command dispatch; pass nil when only
 // the parsing and expansion phases are needed (e.g. in tests).
 func New(env *Environment, args []string, exec CommandExecutor) *Processor {
+	// Make an independent copy so SHIFT's in-place append on p.Args never
+	// corrupts OriginalArgs (they would otherwise share a backing array).
+	var originalArgs []string
+	if len(args) > 1 {
+		originalArgs = append([]string(nil), args[1:]...)
+	}
 	return &Processor{
-		Env:      env,
-		Args:     args,
-		Echo:     true,
-		ForVars:  make(map[string]string),
-		Stdout:   os.Stdout,
-		Stdin:    os.Stdin,
-		Stderr:   os.Stderr,
-		Console:  os.Stdout,
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Executor: exec,
+		Env:          env,
+		Args:         args,
+		OriginalArgs: originalArgs,
+		Echo:         true,
+		ForVars:      make(map[string]string),
+		Stdout:       os.Stdout,
+		Stdin:        os.Stdin,
+		Stderr:       os.Stderr,
+		Console:      os.Stdout,
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Executor:     exec,
 	}
 }
 
@@ -61,7 +69,7 @@ func (p *Processor) ProcessLine(src string) string {
 
 // ExpandPhase1 performs phase-1 percent expansion (%VAR%, %0..%9).
 func (p *Processor) ExpandPhase1(s string) string {
-	return Phase1PercentExpand(s, p.Env, p.Args)
+	return Phase1PercentExpand(s, p.Env, p.Args, p.OriginalArgs)
 }
 
 // ExpandPhase4 performs phase-4 FOR variable expansion (%%i).

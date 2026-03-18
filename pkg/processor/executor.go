@@ -379,8 +379,19 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		p.Env.Pop()
 		return nil
 	case "shift":
-		if len(p.Args) > 1 {
-			p.Args = append(p.Args[:1], p.Args[2:]...)
+		start := 0
+		for _, arg := range filteredArgs {
+			if strings.HasPrefix(arg, "/") {
+				if n, err := strconv.Atoi(arg[1:]); err == nil {
+					start = n
+				}
+			}
+		}
+
+		if start >= 0 && start < len(p.Args) {
+			p.Logger.Debug("shifting arguments", "start", start, "before", p.Args)
+			p.Args = append(p.Args[:start], p.Args[start+1:]...)
+			p.Logger.Debug("arguments shifted", "after", p.Args)
 		}
 		return nil
 	}
