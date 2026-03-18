@@ -106,6 +106,19 @@ func (p *Parser) parsePrimary() Node {
 		return &LabelNode{Line: t.Line, Col: t.Col, Name: val(t)}
 	}
 
+	// Skip standalone ; or , tokens (not valid command names in CMD)
+	if t.Type == lexer.TokenWord && (val(t) == ";" || val(t) == ",") {
+		p.consume()
+		p.skipWS()
+		t = p.peek()
+		// After skipping ; or ,, continue parsing if there's more
+		if t.Type == lexer.TokenEOF || t.Type == lexer.TokenNewline {
+			return nil
+		}
+		// Recursively parse the next primary element
+		return p.parsePrimary()
+	}
+
 	// Everything else is a simple command
 	cmd := p.parseSimpleCommand(suppressed)
 	if cmd == nil {

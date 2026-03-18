@@ -220,3 +220,49 @@ func TestParseForF(t *testing.T) {
 		t.Errorf("expected ForF, got %v", fn.Variant)
 	}
 }
+
+// TestParseSemicolonSkipped verifies that standalone ; is not parsed as a command.
+func TestParseSemicolonSkipped(t *testing.T) {
+	// Semicolon should be skipped, echo should be parsed
+	nodes := parse("echo hello ; echo world\n")
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+	cmd, ok := nodes[0].(*parser.SimpleCommand)
+	if !ok {
+		t.Fatalf("expected *SimpleCommand, got %T", nodes[0])
+	}
+	if cmd.Name != "echo" {
+		t.Errorf("expected command name 'echo', got %q", cmd.Name)
+	}
+}
+
+// TestParseSemicolonAfterBlock verifies ; after compound block is skipped.
+func TestParseSemicolonAfterBlock(t *testing.T) {
+	nodes := parse("if 1==1 (echo yes) ; \n")
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+	ifn, ok := nodes[0].(*parser.IfNode)
+	if !ok {
+		t.Fatalf("expected *IfNode, got %T", nodes[0])
+	}
+	if ifn == nil {
+		t.Error("expected non-nil IfNode")
+	}
+}
+
+// TestParseCommaSkipped verifies that standalone , is not parsed as a command.
+func TestParseCommaSkipped(t *testing.T) {
+	nodes := parse("echo hello , echo world\n")
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+	cmd, ok := nodes[0].(*parser.SimpleCommand)
+	if !ok {
+		t.Fatalf("expected *SimpleCommand, got %T", nodes[0])
+	}
+	if cmd.Name != "echo" {
+		t.Errorf("expected command name 'echo', got %q", cmd.Name)
+	}
+}
