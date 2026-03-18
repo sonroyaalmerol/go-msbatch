@@ -153,3 +153,109 @@ func TestXcopyNoArgs(t *testing.T) {
 		t.Errorf("expected syntax error message, got: %q", errOut.String())
 	}
 }
+
+func TestXcopyWildcardDst(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	writeFile(t, src, "chk.txt", "content1")
+	writeFile(t, src, "chk.bat", "content2")
+
+	p, _, _ := newProc(nil)
+	Xcopy(p, cmd("xcopy", filepath.Join(src, "chk.*"), filepath.Join(dst, "chk.*")))
+
+	if errorLevel(p) != "0" {
+		t.Errorf("expected ERRORLEVEL 0, got %s", errorLevel(p))
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "chk.txt")); err != nil {
+		t.Error("expected chk.txt in destination")
+	}
+	if _, err := os.Stat(filepath.Join(dst, "chk.bat")); err != nil {
+		t.Error("expected chk.bat in destination")
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "chk.*")); err == nil {
+		t.Error("should not create file with literal '*' in name")
+	}
+}
+
+func TestXcopyWildcardDstSingleFile(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	writeFile(t, src, "file.txt", "hello")
+
+	p, _, _ := newProc(nil)
+	Xcopy(p, cmd("xcopy", filepath.Join(src, "file.*"), filepath.Join(dst, "file.*")))
+
+	if errorLevel(p) != "0" {
+		t.Errorf("expected ERRORLEVEL 0, got %s", errorLevel(p))
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "file.txt")); err != nil {
+		t.Error("expected file.txt in destination")
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "file.*")); err == nil {
+		t.Error("should not create file with literal '*' in name")
+	}
+}
+
+func TestXcopyWildcardDstDifferentPattern(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	writeFile(t, src, "test.txt", "hello")
+
+	p, _, _ := newProc(nil)
+	Xcopy(p, cmd("xcopy", filepath.Join(src, "test.*"), filepath.Join(dst, "test.bak")))
+
+	if errorLevel(p) != "0" {
+		t.Errorf("expected ERRORLEVEL 0, got %s", errorLevel(p))
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "test.bak")); err != nil {
+		t.Error("expected test.bak in destination")
+	}
+}
+
+func TestXcopyWildcardQuestionMark(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	writeFile(t, src, "file1.txt", "content")
+
+	p, _, _ := newProc(nil)
+	Xcopy(p, cmd("xcopy", filepath.Join(src, "file?.txt"), filepath.Join(dst, "file?.txt")))
+
+	if errorLevel(p) != "0" {
+		t.Errorf("expected ERRORLEVEL 0, got %s", errorLevel(p))
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "file1.txt")); err != nil {
+		t.Error("expected file1.txt in destination")
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "file?.txt")); err == nil {
+		t.Error("should not create file with literal '?' in name")
+	}
+}
+
+func TestXcopyWildcardChangeExtension(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	writeFile(t, src, "data.txt", "content")
+
+	p, _, _ := newProc(nil)
+	Xcopy(p, cmd("xcopy", filepath.Join(src, "*.txt"), filepath.Join(dst, "*.bak")))
+
+	if errorLevel(p) != "0" {
+		t.Errorf("expected ERRORLEVEL 0, got %s", errorLevel(p))
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "data.bak")); err != nil {
+		t.Error("expected data.bak in destination")
+	}
+}

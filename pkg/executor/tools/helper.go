@@ -1,14 +1,11 @@
-// Package tools provides native Go implementations of commonly-used external
-// commands. These work cross-platform without requiring the host tool to be
-// installed.
 package tools
 
 import (
 	"io"
 	"os"
+	"strings"
 )
 
-// isDirEmpty reports whether the directory at path contains no entries.
 func isDirEmpty(path string) (bool, error) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
@@ -17,8 +14,6 @@ func isDirEmpty(path string) (bool, error) {
 	return len(entries) == 0, nil
 }
 
-// copyFile copies a single file from src to dst, preserving the source
-// modification time so that subsequent robocopy runs can detect unchanged files.
 func copyFile(src, dst string) error {
 	srcInfo, err := os.Stat(src)
 	if err != nil {
@@ -43,4 +38,98 @@ func copyFile(src, dst string) error {
 	out.Close()
 
 	return os.Chtimes(dst, srcInfo.ModTime(), srcInfo.ModTime())
+}
+
+type WildcardPos struct {
+	Index      int
+	IsStar     bool
+	IsQuestion bool
+}
+
+func FindWildcards(pattern string) []WildcardPos {
+	var positions []WildcardPos
+	for i, c := range pattern {
+		if c == '*' {
+			positions = append(positions, WildcardPos{Index: i, IsStar: true})
+		} else if c == '?' {
+			positions = append(positions, WildcardPos{Index: i, IsQuestion: true})
+		}
+	}
+	return positions
+}
+
+func ExtractMatches(name, pattern string, wildcards []WildcardPos) []string {
+	var matches []string
+	nameIdx := 0
+	patIdx := 0
+
+	for _, wc := range wildcards {
+		for patIdx < wc.Index && nameIdx < len(name) {
+			if pattern[patIdx] == name[nameIdx] || pattern[patIdx] == '?' {
+				patIdx++
+				nameIdx++
+			} else {
+				patIdx++
+			}
+		}
+
+		patIdx = wc.Index + 1
+
+		if wc.IsStar {
+			nextFixed := ""
+			if patIdx < len(pattern) {
+				end := strings.IndexAny(pattern[patIdx:], "*?")
+				if end >= 0 {
+					nextFixed = pattern[patIdx : patIdx+end]
+				} else {
+					nextFixed = pattern[patIdx:]
+				}
+			}
+
+			if nextFixed == "" {
+				matches = append(matches, name[nameIdx:])
+				nameIdx = len(name)
+			} else {
+				endIdx := strings.Index(name[nameIdx:], nextFixed)
+				if endIdx >= 0 {
+					matches = append(matches, name[nameIdx:nameIdx+endIdx])
+					nameIdx += endIdx
+				} else {
+					matches = append(matches, name[nameIdx:])
+					nameIdx = len(name)
+				}
+			}
+		} else if wc.IsQuestion {
+			if nameIdx < len(name) {
+				matches = append(matches, string(name[nameIdx]))
+				nameIdx++
+			}
+		}
+	}
+
+	return matches
+}
+
+func SubstituteWildcard(srcName, srcPattern, dstPattern string) string {
+	srcWildcards := FindWildcards(srcPattern)
+	dstWildcards := FindWildcards(dstPattern)
+
+	if len(srcWildcards) == 0 || len(dstWildcards) == 0 {
+		return dstPattern
+	}
+
+	matchedParts := ExtractMatches(srcName, srcPattern, srcWildcards)
+
+	result := dstPattern
+	for i, wc := range dstWildcards {
+		if i < len(matchedParts) {
+			part := matchedParts[i]
+			if wc.IsStar {
+				result = strings.Replace(result, "*", part, 1)
+			} else {
+				result = strings.Replace(result, "?", part, 1)
+			}
+		}
+	}
+	return result
 }

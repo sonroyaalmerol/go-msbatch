@@ -136,6 +136,8 @@ func Xcopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	srcInfo, _ := os.Lstat(mappedSrc)
 	isSingleFileSrc := !isGlob && srcInfo != nil && !srcInfo.IsDir()
 
+	dstHasWildcard := strings.ContainsAny(dstArg, "*?")
+
 	dstIsDir := false
 	switch {
 	case mappedDst == "":
@@ -144,9 +146,7 @@ func Xcopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		dstIsDir = true
 	case strings.HasSuffix(dstArg, "\\") || strings.HasSuffix(dstArg, "/"):
 		dstIsDir = true
-	case strings.HasSuffix(dstArg, "*"):
-		// Trailing * forces file destination (suppress F/D prompt).
-		mappedDst = mappedDst[:len(mappedDst)-1]
+	case dstHasWildcard:
 		dstIsDir = false
 	default:
 		if info, err := os.Stat(mappedDst); err == nil {
@@ -154,9 +154,20 @@ func Xcopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		} else if !isSingleFileSrc || opts.assumeDir || isGlob {
 			dstIsDir = true
 		} else {
-			// Single file, non-existent destination, no /I → prompt.
 			dstIsDir = xcopyPromptFileOrDir(p, dstArg) == "D"
 		}
+	}
+
+	resolveDst := func(srcPath string) string {
+		if !dstHasWildcard {
+			return mappedDst
+		}
+		srcBase := filepath.Base(srcPath)
+		srcPatBase := filepath.Base(srcArg)
+		dstPatBase := filepath.Base(dstArg)
+		dstDir := filepath.Dir(mappedDst)
+		newDstBase := SubstituteWildcard(srcBase, srcPatBase, dstPatBase)
+		return filepath.Join(dstDir, newDstBase)
 	}
 
 	count, failed := 0, 0
@@ -172,7 +183,7 @@ func Xcopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 
 		if info.IsDir() {
-			dst := mappedDst
+			dst := resolveDst(src)
 			if dstIsDir && len(srcPaths) > 1 {
 				dst = filepath.Join(mappedDst, filepath.Base(src))
 			}
@@ -180,7 +191,7 @@ func Xcopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			count += n
 			failed += f
 		} else {
-			dst := mappedDst
+			dst := resolveDst(src)
 			if dstIsDir {
 				dst = filepath.Join(mappedDst, filepath.Base(src))
 			}

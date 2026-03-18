@@ -167,7 +167,7 @@ func cmdPause(p *processor.Processor, _ *parser.SimpleCommand) error {
 
 	if fd != -1 && term.IsTerminal(fd) {
 		if old, err := term.MakeRaw(fd); err == nil {
-			defer term.Restore(fd, old) //nolint:errcheck
+			defer term.Restore(fd, old)         //nolint:errcheck
 			io.ReadFull(input, make([]byte, 1)) //nolint:errcheck
 		} else {
 			io.ReadFull(input, make([]byte, 1)) //nolint:errcheck
@@ -326,7 +326,6 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	for _, arg := range cmd.Args {
 		switch strings.ToLower(arg) {
 		case "/y", "/-y", "/b", "/a", "/v":
-			// ignore flags
 		default:
 			rawArgs = append(rawArgs, arg)
 		}
@@ -345,22 +344,30 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 	}
 
-	var srcs []string
+	type srcEntry struct {
+		path    string
+		pattern string
+	}
+	var srcs []srcEntry
 	var dst string
+	var dstPattern string
 
 	if !hasPlus {
 		if len(rawArgs) >= 2 {
-			dst = processor.MapPath(rawArgs[len(rawArgs)-1])
+			dstPattern = rawArgs[len(rawArgs)-1]
+			dst = processor.MapPath(dstPattern)
 			for _, s := range rawArgs[:len(rawArgs)-1] {
 				mapped := processor.MapPath(s)
 				if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
-					srcs = append(srcs, matches...)
+					for _, m := range matches {
+						srcs = append(srcs, srcEntry{path: m, pattern: s})
+					}
 				} else {
-					srcs = append(srcs, mapped)
+					srcs = append(srcs, srcEntry{path: mapped, pattern: s})
 				}
 			}
 		} else {
-			srcs = []string{processor.MapPath(rawArgs[0])}
+			srcs = []srcEntry{{path: processor.MapPath(rawArgs[0]), pattern: rawArgs[0]}}
 			dst, _ = os.Getwd()
 		}
 	} else {
@@ -369,6 +376,7 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			last := rawArgs[len(rawArgs)-1]
 			prev := rawArgs[len(rawArgs)-2]
 			if !strings.Contains(last, "+") && prev != "+" && !strings.HasSuffix(prev, "+") {
+				dstPattern = last
 				dst = processor.MapPath(last)
 				srcArgs = rawArgs[:len(rawArgs)-1]
 			}
@@ -384,14 +392,16 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 				}
 				mapped := processor.MapPath(part)
 				if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
-					srcs = append(srcs, matches...)
+					for _, m := range matches {
+						srcs = append(srcs, srcEntry{path: m, pattern: part})
+					}
 				} else {
-					srcs = append(srcs, mapped)
+					srcs = append(srcs, srcEntry{path: mapped, pattern: part})
 				}
 			}
 		}
 		if dst == "" && len(srcs) > 0 {
-			dst = srcs[0]
+			dst = srcs[0].path
 		}
 	}
 
@@ -401,20 +411,32 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		return nil
 	}
 
-	dstTarget := dst
+	resolveDst := func(srcPath, srcPattern string) string {
+		if strings.ContainsAny(dstPattern, "*?") {
+			srcBase := filepath.Base(srcPath)
+			srcPatBase := filepath.Base(srcPattern)
+			dstPatBase := filepath.Base(dstPattern)
+			dstDir := filepath.Dir(dst)
+			newDstBase := substituteWildcard(srcBase, srcPatBase, dstPatBase)
+			return filepath.Join(dstDir, newDstBase)
+		}
+		return dst
+	}
+
+	dstTarget := resolveDst(srcs[0].path, srcs[0].pattern)
 	if info, err := os.Stat(dst); err == nil && info.IsDir() {
-		dstTarget = filepath.Join(dst, filepath.Base(srcs[0]))
+		dstTarget = filepath.Join(dst, filepath.Base(srcs[0].path))
 	}
 
 	switch {
 	case !hasPlus && len(srcs) > 1:
 		count := 0
 		for _, src := range srcs {
-			target := dstTarget
+			target := resolveDst(src.path, src.pattern)
 			if info, err := os.Stat(dst); err == nil && info.IsDir() {
-				target = filepath.Join(dst, filepath.Base(src))
+				target = filepath.Join(dst, filepath.Base(src.path))
 			}
-			if err := copyFile(src, target); err != nil {
+			if err := copyFile(src.path, target); err != nil {
 				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
 				p.Failure()
 				return nil
@@ -423,17 +445,16 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 		fmt.Fprintf(p.Stdout, "        %d file(s) copied.\n", count)
 	case !hasPlus:
-		if err := copyFile(srcs[0], dstTarget); err != nil {
+		if err := copyFile(srcs[0].path, dstTarget); err != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
 			p.Failure()
 			return nil
 		}
 		fmt.Fprintf(p.Stdout, "        1 file(s) copied.\n")
 	default:
-		// Append: read all sources into a buffer first so dst == srcs[0] is safe.
 		var buf bytes.Buffer
 		for _, src := range srcs {
-			data, err := os.ReadFile(src)
+			data, err := os.ReadFile(src.path)
 			if err != nil {
 				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
 				p.Failure()
@@ -449,6 +470,100 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		fmt.Fprintf(p.Stdout, "        1 file(s) copied.\n")
 	}
 	return p.Success()
+}
+
+func substituteWildcard(srcName, srcPattern, dstPattern string) string {
+	srcWildcards := findWildcards(srcPattern)
+	dstWildcards := findWildcards(dstPattern)
+
+	if len(srcWildcards) == 0 || len(dstWildcards) == 0 {
+		return dstPattern
+	}
+
+	matchedParts := extractMatches(srcName, srcPattern, srcWildcards)
+
+	result := dstPattern
+	for i, wc := range dstWildcards {
+		if i < len(matchedParts) {
+			part := matchedParts[i]
+			if wc.isStar {
+				result = strings.Replace(result, "*", part, 1)
+			} else {
+				result = strings.Replace(result, "?", part, 1)
+			}
+		}
+	}
+	return result
+}
+
+type wildcardPos struct {
+	index      int
+	isStar     bool
+	isQuestion bool
+}
+
+func findWildcards(pattern string) []wildcardPos {
+	var positions []wildcardPos
+	for i, c := range pattern {
+		if c == '*' {
+			positions = append(positions, wildcardPos{index: i, isStar: true})
+		} else if c == '?' {
+			positions = append(positions, wildcardPos{index: i, isQuestion: true})
+		}
+	}
+	return positions
+}
+
+func extractMatches(name, pattern string, wildcards []wildcardPos) []string {
+	var matches []string
+	nameIdx := 0
+	patIdx := 0
+
+	for _, wc := range wildcards {
+		for patIdx < wc.index && nameIdx < len(name) {
+			if pattern[patIdx] == name[nameIdx] || pattern[patIdx] == '?' {
+				patIdx++
+				nameIdx++
+			} else {
+				patIdx++
+			}
+		}
+
+		patIdx = wc.index + 1
+
+		if wc.isStar {
+			nextFixed := ""
+			if patIdx < len(pattern) {
+				end := strings.IndexAny(pattern[patIdx:], "*?")
+				if end >= 0 {
+					nextFixed = pattern[patIdx : patIdx+end]
+				} else {
+					nextFixed = pattern[patIdx:]
+				}
+			}
+
+			if nextFixed == "" {
+				matches = append(matches, name[nameIdx:])
+				nameIdx = len(name)
+			} else {
+				endIdx := strings.Index(name[nameIdx:], nextFixed)
+				if endIdx >= 0 {
+					matches = append(matches, name[nameIdx:nameIdx+endIdx])
+					nameIdx += endIdx
+				} else {
+					matches = append(matches, name[nameIdx:])
+					nameIdx = len(name)
+				}
+			}
+		} else if wc.isQuestion {
+			if nameIdx < len(name) {
+				matches = append(matches, string(name[nameIdx]))
+				nameIdx++
+			}
+		}
+	}
+
+	return matches
 }
 
 func cmdMove(p *processor.Processor, cmd *parser.SimpleCommand) error {
