@@ -78,7 +78,8 @@ func ParseExpanded(line string) []parser.Node {
 // returning a new SimpleCommand with expanded name and args.
 func (p *Processor) ExpandNode(n *parser.SimpleCommand) *parser.SimpleCommand {
 	out := &parser.SimpleCommand{
-		Suppressed: n.Suppressed,
+		Suppressed:       n.Suppressed,
+		RedirectsApplied: n.RedirectsApplied,
 	}
 
 	for _, r := range n.Redirects {

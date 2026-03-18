@@ -236,14 +236,15 @@ func runOSCommand(p *processor.Processor, name string, args []string, displayNam
 // searching the current directory and then the PATH.
 // Returns the resolved path and true on success.
 func resolveBatchFile(name string) (string, bool) {
-	lower := strings.ToLower(name)
+	mappedName := processor.MapPath(name)
+	lower := strings.ToLower(mappedName)
 	isBatch := strings.HasSuffix(lower, ".bat") || strings.HasSuffix(lower, ".cmd")
-	hasPathSep := strings.ContainsAny(name, "/\\")
+	hasPathSep := strings.ContainsAny(mappedName, "/\\")
 
 	// Name already carries a batch extension — look for it directly.
 	if isBatch {
-		if _, err := os.Stat(name); err == nil {
-			return name, true
+		if _, err := os.Stat(mappedName); err == nil {
+			return mappedName, true
 		}
 		return "", false
 	}
@@ -251,7 +252,7 @@ func resolveBatchFile(name string) (string, bool) {
 	// Name carries a path separator but no batch extension — try .bat/.cmd.
 	if hasPathSep {
 		for _, ext := range []string{".bat", ".cmd"} {
-			if candidate := name + ext; fileExists(candidate) {
+			if candidate := mappedName + ext; fileExists(candidate) {
 				return candidate, true
 			}
 		}
@@ -260,13 +261,15 @@ func resolveBatchFile(name string) (string, bool) {
 
 	// Bare name: check current directory first, then every PATH directory.
 	for _, ext := range []string{".bat", ".cmd"} {
-		if fileExists(name + ext) {
-			return name + ext, true
+		candidate := processor.MapPath(name + ext)
+		if fileExists(candidate) {
+			return candidate, true
 		}
 	}
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		for _, ext := range []string{".bat", ".cmd"} {
-			if candidate := filepath.Join(dir, name+ext); fileExists(candidate) {
+			candidate := processor.MapPath(filepath.Join(dir, name+ext))
+			if fileExists(candidate) {
 				return candidate, true
 			}
 		}
