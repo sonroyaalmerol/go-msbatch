@@ -324,13 +324,21 @@ func cmdDel(p *processor.Processor, cmd *parser.SimpleCommand) error {
 
 func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	var rawArgs []string
+	suppressPrompt := true
+
 	for _, arg := range cmd.Args {
-		switch strings.ToLower(arg) {
-		case "/y", "/-y", "/b", "/a", "/v":
+		lower := strings.ToLower(arg)
+		switch lower {
+		case "/y":
+			suppressPrompt = true
+		case "/-y":
+			suppressPrompt = false
+		case "/b", "/a", "/v":
 		default:
 			rawArgs = append(rawArgs, arg)
 		}
 	}
+
 	if len(rawArgs) < 1 {
 		fmt.Fprintf(p.Stderr, "The syntax of the command is incorrect.\n")
 		p.Failure()
@@ -412,6 +420,30 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		return nil
 	}
 
+	confirmOverwrite := func(target string) bool {
+		if suppressPrompt {
+			return true
+		}
+		if _, err := os.Stat(target); os.IsNotExist(err) {
+			return true
+		}
+		if p.Stdin == nil {
+			return true
+		}
+		fmt.Fprintf(p.Stdout, "Overwrite %s? (Yes/No/All): ", target)
+		var response string
+		fmt.Fscanln(p.Stdin, &response)
+		switch strings.ToUpper(strings.TrimSpace(response)) {
+		case "Y", "YES":
+			return true
+		case "A", "ALL":
+			suppressPrompt = true
+			return true
+		default:
+			return false
+		}
+	}
+
 	resolveDst := func(srcPath, srcPattern string) string {
 		if tools.HasWildcards(dstPattern) {
 			return tools.ResolveWildcardDst(srcPath, srcPattern, dstPattern, dst)
@@ -432,6 +464,9 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			if info, err := os.Stat(dst); err == nil && info.IsDir() {
 				target = filepath.Join(dst, filepath.Base(src.path))
 			}
+			if !confirmOverwrite(target) {
+				continue
+			}
 			if err := tools.CopyFile(src.path, target); err != nil {
 				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
 				p.Failure()
@@ -441,6 +476,9 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 		fmt.Fprintf(p.Stdout, "        %d file(s) copied.\n", count)
 	case !hasPlus:
+		if !confirmOverwrite(dstTarget) {
+			return p.Success()
+		}
 		if err := tools.CopyFile(srcs[0].path, dstTarget); err != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
 			p.Failure()
@@ -448,6 +486,9 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 		fmt.Fprintf(p.Stdout, "        1 file(s) copied.\n")
 	default:
+		if !confirmOverwrite(dstTarget) {
+			return p.Success()
+		}
 		var buf bytes.Buffer
 		for _, src := range srcs {
 			data, err := os.ReadFile(src.path)
