@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/chzyer/readline"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/executor"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/logging"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
@@ -20,6 +22,19 @@ func newProcessor(env *processor.Environment, args []string, exec processor.Comm
 }
 
 func main() {
+	// If the executable name matches a registered tool (e.g. via symlink),
+	// run that tool directly with the provided arguments.
+	// We ignore "msbatch" and "msbatch-lsp" to allow normal operation.
+	exeName := strings.ToLower(filepath.Base(os.Args[0]))
+	exeName = strings.TrimSuffix(exeName, ".exe")
+	if exeName != "msbatch" && exeName != "msbatch-lsp" {
+		reg := executor.New()
+		if _, ok := reg.NamesMap()[exeName]; ok {
+			runAsTool(exeName, os.Args[1:])
+			return
+		}
+	}
+
 	args := os.Args[1:]
 	if len(args) == 0 {
 		runInteractive()
@@ -40,6 +55,32 @@ func main() {
 	default:
 		runFile(args[0])
 	}
+}
+
+// runAsTool executes a single registered tool and exits with its ERRORLEVEL.
+func runAsTool(name string, args []string) {
+	env := processor.NewEnvironment(false)
+	reg := executor.New()
+	proc := newProcessor(env, nil, reg)
+
+	cmd := &parser.SimpleCommand{
+		Name:    name,
+		RawArgs: args,
+		Args:    args, // Rough approximation, tools usually use Words() or RawArgs
+	}
+
+	if err := reg.ExecCommand(proc, cmd); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Exit with the ERRORLEVEL set by the tool.
+	if lv, ok := proc.Env.Get("ERRORLEVEL"); ok {
+		if code, err := strconv.Atoi(lv); err == nil {
+			os.Exit(code)
+		}
+	}
+	os.Exit(0)
 }
 
 // runFile executes a batch script file.

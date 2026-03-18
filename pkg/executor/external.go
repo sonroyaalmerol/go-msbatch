@@ -100,6 +100,26 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			p.FailureWithCode(9009)
 			return nil
 		}
+
+		// Automatically set up a bridge directory with symlinks for all internal tools
+		// and add it to PATH/WINEPATH so the prefixed process can find them.
+		if bridgeDir := ensureWineBridge(p); bridgeDir != "" {
+			// Update PATH for the child process environment
+			path, _ := p.Env.Get("PATH")
+			if !strings.Contains(path, bridgeDir) {
+				p.Env.Set("PATH", bridgeDir+string(os.PathListSeparator)+path)
+			}
+			// Update WINEPATH (Wine uses semicolons even on Linux)
+			winePath, _ := p.Env.Get("WINEPATH")
+			if !strings.Contains(winePath, bridgeDir) {
+				sep := ""
+				if winePath != "" {
+					sep = ";"
+				}
+				p.Env.Set("WINEPATH", bridgeDir+sep+winePath)
+			}
+		}
+
 		// Pass the original Windows path (cmd.Name) to the prefix tool, NOT the
 		// Unix-mapped cmdName.  Wine resolves "C:\foo\app.exe" via WINEPREFIX/drive_c;
 		// if we pass the Unix-mapped "/mnt/c/foo/app.exe" instead, Wine maps it to
@@ -142,7 +162,81 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 		args = append(args, mapped)
 	}
+
+	// For bare command names on Linux, try a case-insensitive search on the PATH
+	// if the direct name isn't found. This matches CMD's case-insensitivity.
+	if runtime.GOOS != "windows" && !strings.ContainsAny(cmdName, "/\\") {
+		if _, err := exec.LookPath(cmdName); err != nil {
+			if resolved, ok := lookPathCaseInsensitive(cmdName); ok {
+				cmdName = resolved
+			}
+		}
+	}
+
 	return runOSCommand(p, cmdName, args, cmd.Name)
+}
+
+// lookPathCaseInsensitive searches for a command on the PATH case-insensitively.
+func lookPathCaseInsensitive(name string) (string, bool) {
+	lowerName := strings.ToLower(name)
+	pathEnv := os.Getenv("PATH")
+	for _, dir := range filepath.SplitList(pathEnv) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if strings.EqualFold(entry.Name(), lowerName) {
+				return filepath.Join(dir, entry.Name()), true
+			}
+		}
+	}
+	return "", false
+}
+
+// ensureWineBridge creates a temporary directory with symlinks to the current
+// msbatch executable for all registered tools, allowing them to be called
+// back from Windows processes running under Wine.
+func ensureWineBridge(p *processor.Processor) string {
+	if bridge, ok := p.Env.Get("_MSBATCH_WINE_BRIDGE"); ok {
+		return bridge
+	}
+
+	reg, ok := p.Executor.(*Registry)
+	if !ok {
+		return ""
+	}
+
+	self, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+
+	tmp, err := os.MkdirTemp("", "msbatch-bridge-*")
+	if err != nil {
+		p.Logger.Debug("failed to create wine bridge temp dir", "error", err)
+		return ""
+	}
+
+	for _, name := range reg.Names() {
+		// Only link tools that are commonly used as external commands.
+		// Built-ins like 'cd' don't make sense as external calls.
+		switch name {
+		case "pkzip", "pkunzip", "pkzipc", "robocopy", "xcopy", "find", "findstr",
+			"sort", "tree", "where", "timeout", "hostname", "whoami", "time", "date":
+			scriptPath := filepath.Join(tmp, name+".exe")
+			// We use a shell script with a shebang. Wine/Linux will see the shebang
+			// and execute it via /bin/sh, which then runs our native msbatch.
+			// This is more reliable than a symlink to an ELF binary named .exe.
+			content := fmt.Sprintf("#!/bin/sh\nexec \"%s\" \"$@\"\n", self)
+			if err := os.WriteFile(scriptPath, []byte(content), 0755); err != nil {
+				p.Logger.Debug("failed to create wrapper in wine bridge", "path", scriptPath, "error", err)
+			}
+		}
+	}
+
+	p.Env.Set("_MSBATCH_WINE_BRIDGE", tmp)
+	return tmp
 }
 
 // stripExeArg removes CMD/CRT-style quoting from an argument before it is

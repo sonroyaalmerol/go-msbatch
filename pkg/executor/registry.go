@@ -91,17 +91,45 @@ func (r *Registry) Names() []string {
 	return names
 }
 
+// NamesMap returns a map of all registered command names for fast lookup.
+func (r *Registry) NamesMap() map[string]bool {
+	names := make(map[string]bool, len(r.handlers))
+	for name := range r.handlers {
+		names[name] = true
+	}
+	return names
+}
+
 // ExecCommand looks up cmd.Name and calls the registered handler.
 // Falls through to the fallback executor when the name is not registered.
 func (r *Registry) ExecCommand(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	lowerName := strings.ToLower(cmd.Name)
 
-	// Automatic help support for all registered built-ins and tools.
-	if _, ok := r.handlers[lowerName]; ok {
+	// Try direct match first
+	if h, ok := r.handlers[lowerName]; ok {
 		if p.ShowHelp(cmd, CommandHelp(lowerName)) {
 			return nil
 		}
-		return r.handlers[lowerName].ExecCommand(p, cmd)
+		return h.ExecCommand(p, cmd)
+	}
+
+	// Handle full paths and .exe extensions (e.g. C:\Path\To\tool.exe)
+	// We check if the base name (minus extension) matches a registered tool.
+	base := strings.ToLower(cmd.Name)
+	if strings.ContainsAny(base, "/\\") {
+		// Use manual split to avoid filepath platform dependency issues in registry
+		parts := strings.FieldsFunc(base, func(r rune) bool { return r == '/' || r == '\\' })
+		if len(parts) > 0 {
+			base = parts[len(parts)-1]
+		}
+	}
+	base = strings.TrimSuffix(base, ".exe")
+
+	if h, ok := r.handlers[base]; ok {
+		if p.ShowHelp(cmd, CommandHelp(base)) {
+			return nil
+		}
+		return h.ExecCommand(p, cmd)
 	}
 
 	if r.fallback != nil {
@@ -161,5 +189,7 @@ func registerBuiltins(r *Registry) {
 	r.HandleFunc("robocopy", tools.Robocopy)
 	r.HandleFunc("time", tools.Time)
 	r.HandleFunc("date", tools.Date)
-
+	r.HandleFunc("pkzip", tools.Pkzip)
+	r.HandleFunc("pkunzip", tools.Pkunzip)
+	r.HandleFunc("pkzipc", tools.Pkzipc)
 }
