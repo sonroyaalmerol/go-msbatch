@@ -96,7 +96,7 @@ func uncMount(server, share string) string {
 	return ""
 }
 
-func resolveCaseInsensitive(path string) string {
+func ResolveCaseInsensitive(path string) string {
 	if _, err := os.Stat(path); err == nil {
 		return path
 	}
@@ -173,13 +173,13 @@ func MapPath(path string) string {
 			if mount == "" {
 				// No mapping configured — return the path unchanged so callers
 				// can decide how to handle it.
-				return resolveCaseInsensitive(filepath.Clean(p))
+				return ResolveCaseInsensitive(filepath.Clean(p))
 			}
 			rest := ""
 			if len(parts) == 3 {
 				rest = "/" + parts[2]
 			}
-			return resolveCaseInsensitive(filepath.Clean(mount + rest))
+			return ResolveCaseInsensitive(filepath.Clean(mount + rest))
 		}
 	}
 
@@ -189,5 +189,5 @@ func MapPath(path string) string {
 		p = mount + p[2:]
 	}
 
-	return resolveCaseInsensitive(filepath.Clean(p))
+	return ResolveCaseInsensitive(filepath.Clean(p))
 }

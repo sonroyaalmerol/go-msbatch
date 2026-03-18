@@ -379,10 +379,22 @@ func stripExeArg(s string) string {
 }
 
 // mapArg applies MapPath to an argument only when it looks like a Windows path.
+func isPathLike(s string) bool {
+	return strings.HasPrefix(s, "/") ||
+		strings.HasPrefix(s, "./") ||
+		strings.HasPrefix(s, "../") ||
+		strings.Contains(s, "/")
+}
+
 func mapArg(arg string) string {
 	if strings.Contains(arg, "\\") || (len(arg) >= 2 && arg[1] == ':') {
 		return processor.MapPath(arg)
 	}
+
+	if runtime.GOOS != "windows" && isPathLike(arg) {
+		return processor.ResolveCaseInsensitive(arg)
+	}
+
 	return arg
 }
 

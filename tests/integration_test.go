@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -64,13 +65,116 @@ func normalize(s string) string {
 	var result []string
 	for _, line := range lines {
 		trimmed := strings.TrimRight(line, " \r\t")
-		if trimmed != "" || len(result) > 0 { // Skip leading empty lines, but keep internal ones
+		if trimmed != "" || len(result) > 0 {
 			result = append(result, trimmed)
 		}
 	}
-	// Trim trailing empty lines
 	for len(result) > 0 && result[len(result)-1] == "" {
 		result = result[:len(result)-1]
 	}
 	return strings.Join(result, "\n")
+}
+
+func TestGawkCaseInsensitivePath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping gawk test on Windows")
+	}
+
+	if _, err := os.Stat("/usr/bin/gawk"); os.IsNotExist(err) {
+		t.Skip("gawk not available, skipping test")
+	}
+
+	tmpDir := t.TempDir()
+
+	dataDir := filepath.Join(tmpDir, "DataFolder")
+	if err := os.Mkdir(dataDir, 0755); err != nil {
+		t.Fatalf("Failed to create data directory: %v", err)
+	}
+
+	dataFile := filepath.Join(dataDir, "InputFile.txt")
+	content := "line1\nline2\nline3\n"
+	if err := os.WriteFile(dataFile, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to create input file: %v", err)
+	}
+
+	batContent := `@echo off
+gawk "{print}" ` + filepath.Join(tmpDir, "datafolder", "inputfile.txt") + `
+`
+
+	env := processor.NewEnvironment(true)
+	var stdout bytes.Buffer
+	proc := processor.New(env, []string{"test.bat"}, executor.New())
+	proc.Stdout = &stdout
+	proc.Echo = false
+
+	src := processor.Phase0ReadLine(batContent)
+	nodes := processor.ParseExpanded(src)
+
+	err := proc.Execute(nodes)
+	if err != nil {
+		t.Errorf("Execute failed: %v", err)
+	}
+
+	got := stdout.String()
+	want := "line1\nline2\nline3\n"
+
+	if got != want {
+		t.Errorf("Gawk output mismatch\nGOT:\n%s\nWANT:\n%s", got, want)
+	}
+}
+
+func TestGawkCaseInsensitiveRelativePath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping gawk test on Windows")
+	}
+
+	if _, err := os.Stat("/usr/bin/gawk"); os.IsNotExist(err) {
+		t.Skip("gawk not available, skipping test")
+	}
+
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	dataDir := filepath.Join(tmpDir, "MyData")
+	if err := os.Mkdir(dataDir, 0755); err != nil {
+		t.Fatalf("Failed to create data directory: %v", err)
+	}
+
+	dataFile := filepath.Join(dataDir, "Records.txt")
+	content := "apple\nbanana\ncherry\n"
+	if err := os.WriteFile(dataFile, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to create input file: %v", err)
+	}
+
+	batContent := `@echo off
+gawk "{print}" ./mydata/records.txt
+`
+
+	env := processor.NewEnvironment(true)
+	var stdout bytes.Buffer
+	proc := processor.New(env, []string{"test.bat"}, executor.New())
+	proc.Stdout = &stdout
+	proc.Echo = false
+
+	src := processor.Phase0ReadLine(batContent)
+	nodes := processor.ParseExpanded(src)
+
+	err = proc.Execute(nodes)
+	if err != nil {
+		t.Errorf("Execute failed: %v", err)
+	}
+
+	got := stdout.String()
+	want := "apple\nbanana\ncherry\n"
+
+	if got != want {
+		t.Errorf("Gawk output mismatch\nGOT:\n%s\nWANT:\n%s", got, want)
+	}
 }

@@ -1,6 +1,8 @@
 package processor
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -143,6 +145,91 @@ func TestStripQuotes(t *testing.T) {
 			got := StripQuotes(tt.input)
 			if got != tt.expected {
 				t.Errorf("StripQuotes(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestResolveCaseInsensitive(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	lowerDir := filepath.Join(tmpDir, "lowercase")
+	upperDir := filepath.Join(tmpDir, "UPPERCASE")
+	mixedDir := filepath.Join(tmpDir, "MiXeDCaSe")
+
+	for _, dir := range []string{lowerDir, upperDir, mixedDir} {
+		if err := os.Mkdir(dir, 0755); err != nil {
+			t.Fatalf("Failed to create test directory: %v", err)
+		}
+	}
+
+	lowerFile := filepath.Join(lowerDir, "file.txt")
+	upperFile := filepath.Join(upperDir, "FILE.TXT")
+	mixedFile := filepath.Join(mixedDir, "MiXeD.txt")
+
+	for _, file := range []string{lowerFile, upperFile, mixedFile} {
+		if err := os.WriteFile(file, []byte("test"), 0644); err != nil {
+			t.Fatalf("Failed to create test file: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "exact match lowercase dir",
+			input:    lowerDir,
+			expected: lowerDir,
+		},
+		{
+			name:     "uppercase input for lowercase dir",
+			input:    filepath.Join(tmpDir, "LOWERCASE"),
+			expected: lowerDir,
+		},
+		{
+			name:     "mixed case input for uppercase dir",
+			input:    filepath.Join(tmpDir, "uppercase"),
+			expected: upperDir,
+		},
+		{
+			name:     "exact match mixed case dir",
+			input:    mixedDir,
+			expected: mixedDir,
+		},
+		{
+			name:     "wrong case for mixed case dir",
+			input:    filepath.Join(tmpDir, "mixedcase"),
+			expected: mixedDir,
+		},
+		{
+			name:     "file with wrong case in dir",
+			input:    filepath.Join(tmpDir, "lowercase", "FILE.TXT"),
+			expected: lowerFile,
+		},
+		{
+			name:     "nested path with wrong case",
+			input:    filepath.Join(tmpDir, "MIXEDCASE", "mIxEd.TxT"),
+			expected: mixedFile,
+		},
+		{
+			name:     "nonexistent path returns input",
+			input:    filepath.Join(tmpDir, "nonexistent", "file.txt"),
+			expected: filepath.Join(tmpDir, "nonexistent", "file.txt"),
+		},
+		{
+			name:     "relative path with dot",
+			input:    "./some/path",
+			expected: "./some/path",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ResolveCaseInsensitive(tt.input)
+			if got != tt.expected {
+				t.Errorf("ResolveCaseInsensitive(%q) = %q, want %q", tt.input, got, tt.expected)
 			}
 		})
 	}
