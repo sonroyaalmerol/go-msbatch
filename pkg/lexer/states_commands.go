@@ -88,7 +88,7 @@ func (bl *BatchLexer) stateArithmetic() stateFn {
 				return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
 			})
 		} else if r2 >= '0' && r2 <= '7' {
-			bl.acceptRun(func(r rune) bool { return r >= '0' && r >= '7' })
+			bl.acceptRun(func(r rune) bool { return r >= '0' && r <= '7' })
 		} else if r2 != 0 {
 			bl.prev()
 		}

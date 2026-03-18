@@ -49,24 +49,32 @@ func New(env *Environment, args []string, exec CommandExecutor) *Processor {
 	}
 }
 
-// ProcessLine applies phases 0-5 to a single source line and returns the
-// fully-expanded line.  It does NOT execute the result.
+// ProcessLine applies all expansion phases (0, 1, 4, 5) to a single source line
+// and returns the fully-expanded result. It does NOT execute the result.
 func (p *Processor) ProcessLine(src string) string {
-	// Phase 0: read-line normalisation (Ctrl-Z -> LF)
 	s := Phase0ReadLine(src)
-
-	// Phase 1: percent expansion
-	s = Phase1PercentExpand(s, p.Env, p.Args)
-
-	// Phase 4: FOR variable expansion
-	if len(p.ForVars) > 0 {
-		s = Phase4ForVarExpand(s, p.ForVars)
-	}
-
-	// Phase 5: delayed expansion (applied before execution per spec)
-	s = Phase5DelayedExpand(s, p.Env)
-
+	s = p.ExpandPhase1(s)
+	s = p.ExpandPhase4(s)
+	s = p.ExpandPhase5(s)
 	return s
+}
+
+// ExpandPhase1 performs phase-1 percent expansion (%VAR%, %0..%9).
+func (p *Processor) ExpandPhase1(s string) string {
+	return Phase1PercentExpand(s, p.Env, p.Args)
+}
+
+// ExpandPhase4 performs phase-4 FOR variable expansion (%%i).
+func (p *Processor) ExpandPhase4(s string) string {
+	if len(p.ForVars) > 0 {
+		return Phase4ForVarExpand(s, p.ForVars)
+	}
+	return s
+}
+
+// ExpandPhase5 performs phase-5 delayed expansion (!VAR!).
+func (p *Processor) ExpandPhase5(s string) string {
+	return Phase5DelayedExpand(s, p.Env)
 }
 
 // ParseExpanded lexes and parses an already-expanded line, returning the AST.
@@ -74,36 +82,6 @@ func ParseExpanded(line string) []parser.Node {
 	bl := lexer.New(line)
 	pr := parser.New(bl)
 	return pr.Parse()
-}
-
-// ExpandNode applies phases 1 and 5 to every string field in a SimpleCommand,
-// returning a new SimpleCommand with expanded name and args.
-func (p *Processor) ExpandNode(n *parser.SimpleCommand) *parser.SimpleCommand {
-	out := &parser.SimpleCommand{
-		Suppressed:       n.Suppressed,
-		RedirectsApplied: n.RedirectsApplied,
-	}
-
-	for _, r := range n.Redirects {
-		expandedTarget := strings.TrimSpace(p.ProcessLine(r.Target))
-		out.Redirects = append(out.Redirects, parser.Redirect{
-			Kind:   r.Kind,
-			Target: expandedTarget,
-			FD:     r.FD,
-		})
-	}
-
-	out.Name = strings.TrimSpace(p.ProcessLine(n.Name))
-	for _, a := range n.Args {
-		expanded := p.ProcessLine(a)
-		if expanded != "" {
-			out.Args = append(out.Args, expanded)
-		}
-	}
-	for _, a := range n.RawArgs {
-		out.RawArgs = append(out.RawArgs, p.ProcessLine(a))
-	}
-	return out
 }
 
 // ShouldEcho reports whether this command should be echoed (phase 3).

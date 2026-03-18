@@ -17,7 +17,6 @@ type TokenType int
 
 const (
 	TokenEOF TokenType = iota
-	TokenError
 	TokenText
 	TokenPunctuation
 	TokenKeyword
@@ -38,7 +37,7 @@ const (
 
 func (t TokenType) String() string {
 	names := map[TokenType]string{
-		TokenEOF: "EOF", TokenError: "Error", TokenText: "Text",
+		TokenEOF: "EOF", TokenText: "Text",
 		TokenPunctuation: "Punctuation", TokenKeyword: "Keyword",
 		TokenComment: "Comment", TokenNameLabel: "Name.Label",
 		TokenNameVariable: "Name.Variable", TokenStringDouble: "String.Double",

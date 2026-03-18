@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -87,28 +88,79 @@ func (p *Processor) jumpToLabel(labelName string) error {
 }
 
 func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
-	expanded := p.ExpandNode(n)
+	// 1. Initial expansion: Phase 1 (percents) and Phase 4 (FOR variables)
+	// These are expanded before command name resolution and echoing.
+	expanded := &parser.SimpleCommand{
+		Suppressed:       n.Suppressed,
+		RedirectsApplied: n.RedirectsApplied,
+	}
+	expanded.Name = strings.TrimSpace(p.ExpandPhase4(p.ExpandPhase1(n.Name)))
+	for _, arg := range n.Args {
+		expanded.Args = append(expanded.Args, p.ExpandPhase4(p.ExpandPhase1(arg)))
+	}
+	for _, arg := range n.RawArgs {
+		expanded.RawArgs = append(expanded.RawArgs, p.ExpandPhase4(p.ExpandPhase1(arg)))
+	}
+	for _, r := range n.Redirects {
+		expanded.Redirects = append(expanded.Redirects, parser.Redirect{
+			Kind:   r.Kind,
+			Target: strings.TrimSpace(p.ExpandPhase4(p.ExpandPhase1(r.Target))),
+			FD:     r.FD,
+		})
+	}
+
+	// 2. Command name splitting (e.g. %VAR% containing "cmd args")
+	words := strings.Fields(expanded.Name)
+	if len(words) > 1 {
+		expanded.Name = words[0]
+		newArgs := words[1:]
+		expanded.Args = append(newArgs, expanded.Args...)
+
+		// Update RawArgs to keep mirroring the name and arguments correctly
+		var newRaw []string
+		for i, w := range newArgs {
+			if i > 0 {
+				newRaw = append(newRaw, " ")
+			}
+			newRaw = append(newRaw, w)
+		}
+		if len(expanded.RawArgs) > 0 {
+			newRaw = append(newRaw, " ")
+		}
+		expanded.RawArgs = append(newRaw, expanded.RawArgs...)
+	}
+
+	// 3. Command echoing (happens after Phase 1/4 but BEFORE Phase 5)
+	if p.ShouldEcho(n) {
+		prompt, ok := p.Env.Get("PROMPT")
+		if !ok {
+			prompt = "$P$G"
+		}
+		expandedPrompt := p.ExpandPrompt(prompt)
+		// Join with "" because RawArgs includes original whitespace and delimiters
+		fmt.Fprintf(p.Console, "%s%s%s\n", expandedPrompt, expanded.Name, strings.Join(expanded.RawArgs, ""))
+	}
+
+	// 4. Final expansion: Phase 5 (delayed expansion)
+	// This happens just before execution.
+	expanded.Name = strings.TrimSpace(p.ExpandPhase5(expanded.Name))
+	for i := range expanded.Args {
+		expanded.Args[i] = p.ExpandPhase5(expanded.Args[i])
+	}
+	for i := range expanded.RawArgs {
+		expanded.RawArgs[i] = p.ExpandPhase5(expanded.RawArgs[i])
+	}
+	for i := range expanded.Redirects {
+		expanded.Redirects[i].Target = strings.TrimSpace(p.ExpandPhase5(expanded.Redirects[i].Target))
+	}
+
 	p.Logger.Debug("executing command", "name", expanded.Name, "args", expanded.Args)
 
-	// Clean up args for commands that expect words (most commands except echo)
+	// 5. Clean up args for commands that expect words (removing empty expanded arguments)
 	var filteredArgs []string
 	for _, arg := range expanded.Args {
 		if strings.TrimSpace(arg) != "" || (len(arg) >= 2 && (arg[0] == '"' || arg[0] == '\'')) {
 			filteredArgs = append(filteredArgs, arg)
-		}
-	}
-
-	words := strings.Fields(expanded.Name)
-	if len(words) > 1 {
-		expanded.Name = words[0]
-		newArgs := append([]string{}, words[1:]...)
-		expanded.Args = append(newArgs, expanded.Args...)
-		// Update filteredArgs as well
-		filteredArgs = append([]string{}, words[1:]...)
-		for _, arg := range expanded.Args[len(words)-1:] {
-			if strings.TrimSpace(arg) != "" || (len(arg) >= 2 && (arg[0] == '"' || arg[0] == '\'')) {
-				filteredArgs = append(filteredArgs, arg)
-			}
 		}
 	}
 
@@ -165,19 +217,29 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 					openedFiles = append(openedFiles, f)
 					p.Stdin = f
 				}
+			case parser.RedirectOutFD:
+				// Redirect FD to another FD, e.g. 2>&1
+				switch r.Target {
+				case "0":
+					p.applyFD(r.FD, p.Stdin)
+				case "1":
+					p.applyFD(r.FD, p.Stdout)
+				case "2":
+					p.applyFD(r.FD, p.Stderr)
+				}
+			case parser.RedirectInFD:
+				// Similar to OutFD but for input redirection e.g. <&0
+				switch r.Target {
+				case "0":
+					p.applyFD(r.FD, p.Stdin)
+				case "1":
+					p.applyFD(r.FD, p.Stdout)
+				case "2":
+					p.applyFD(r.FD, p.Stderr)
+				}
 			}
 		}
 		expanded.RedirectsApplied = true
-	}
-
-	if p.ShouldEcho(n) {
-		prompt, ok := p.Env.Get("PROMPT")
-		if !ok {
-			prompt = "$P$G"
-		}
-		expandedPrompt := p.ExpandPrompt(prompt)
-		// Join with "" because we preserved whitespace in RawArgs
-		fmt.Fprintf(p.Console, "%s%s%s\n", expandedPrompt, expanded.Name, strings.Join(expanded.RawArgs, ""))
 	}
 
 	// Flow-control commands are handled directly by the Processor because they
@@ -253,7 +315,6 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 			Suppressed:       true,
 			RedirectsApplied: true, // propagate flag to avoid re-applying same redirects
 		})
-		closeRedirects()
 		return err
 	case "exit":
 		code := 0
@@ -299,14 +360,26 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 
 	// Delegate all other commands to the pluggable executor.
 	if p.Executor != nil {
-		// For echo, we want the raw args (with whitespace).
-		// For others, we might want filtered ones.
-		// Builtins should be updated to handle raw args if they need original formatting.
-		err := p.Executor.ExecCommand(p, expanded)
-		closeRedirects()
-		return err
+		return p.Executor.ExecCommand(p, expanded)
 	}
 	return nil
+}
+
+func (p *Processor) applyFD(fd int, stream any) {
+	switch fd {
+	case 0:
+		if s, ok := stream.(io.Reader); ok {
+			p.Stdin = s
+		}
+	case 1:
+		if s, ok := stream.(io.Writer); ok {
+			p.Stdout = s
+		}
+	case 2:
+		if s, ok := stream.(io.Writer); ok {
+			p.Stderr = s
+		}
+	}
 }
 
 func (p *Processor) executeIf(n *parser.IfNode) error {

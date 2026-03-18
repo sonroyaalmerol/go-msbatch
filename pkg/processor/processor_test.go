@@ -118,24 +118,6 @@ func TestProcessorSetBuiltin(t *testing.T) {
 	}
 }
 
-// TestProcessorExpandNode tests ExpandNode applies phase 1 to name and args.
-func TestProcessorExpandNode(t *testing.T) {
-	p := newProc(true)
-	p.Env.Set("CMD", "echo")
-	p.Env.Set("ARG", "world")
-	cmd := &parser.SimpleCommand{
-		Name: "%CMD%",
-		Args: []string{"%ARG%"},
-	}
-	expanded := p.ExpandNode(cmd)
-	if expanded.Name != "echo" {
-		t.Errorf("expected expanded name=echo, got %q", expanded.Name)
-	}
-	if len(expanded.Args) == 0 || expanded.Args[0] != "world" {
-		t.Errorf("expected expanded arg=world, got %v", expanded.Args)
-	}
-}
-
 // TestExpandPrompt tests all supported $X PROMPT codes.
 func TestExpandPrompt(t *testing.T) {
 	p := newProc(true)
@@ -227,20 +209,13 @@ func TestCallRecursiveExpansion(t *testing.T) {
 	// 1. Outer expansion: "call echo !DATAGRV1TA!" -> "call echo %DATAFLT%\%FLT%\GRV1\TA"
 	// 2. Inner expansion: "echo %DATAFLT%\%FLT%\GRV1\TA" -> "echo C:\Data\Fast\GRV1\TA"
 
-	cmd := &parser.SimpleCommand{
-		Name: "call",
-		Args: []string{"echo", "!DATAGRV%N%TA!"},
-	}
-
-	// We'll manually call executeSimpleCommand logic if we can, 
-	// but it's easier to just test p.ExpandNode and then p.ProcessLine.
+	// but it's easier to just test p.ProcessLine.
 	
-	expanded := p.ExpandNode(cmd)
-	// expanded.Args[0] should be "echo"
-	// expanded.Args[1] should now ALREADY be fully expanded because 
+	expandedArg := p.ProcessLine("!DATAGRV%N%TA!")
+	// expandedArg should now ALREADY be fully expanded because 
 	// Phase 5 now triggers Phase 1 on its result.
-	if expanded.Args[1] != "C:\\Data\\Fast\\GRV1\\TA" {
-		t.Fatalf("expected C:\\Data\\Fast\\GRV1\\TA, got %q", expanded.Args[1])
+	if expandedArg != "C:\\Data\\Fast\\GRV1\\TA" {
+		t.Fatalf("expected C:\\Data\\Fast\\GRV1\\TA, got %q", expandedArg)
 	}
 }
 
