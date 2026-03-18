@@ -16,6 +16,9 @@ import (
 
 func cmdEcho(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	output, stateChanged := p.HandleEchoBuiltin(cmd.RawArgs)
+	if !stateChanged {
+		p.Logger.Debug("echo command execution", "output", output)
+	}
 	if strings.ToLower(cmd.Name) == "echo." && len(cmd.RawArgs) == 0 {
 		fmt.Fprintln(p.Stdout)
 		p.Success()

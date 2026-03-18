@@ -137,8 +137,35 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 			prompt = "$P$G"
 		}
 		expandedPrompt := p.ExpandPrompt(prompt)
-		// Join with "" because RawArgs includes original whitespace and delimiters
-		fmt.Fprintf(p.Console, "%s%s%s\n", expandedPrompt, expanded.Name, strings.Join(expanded.RawArgs, ""))
+
+		var sb strings.Builder
+		sb.WriteString(expandedPrompt)
+		sb.WriteString(expanded.Name)
+		sb.WriteString(strings.Join(expanded.RawArgs, ""))
+
+		// Include redirections in the echoed output
+		for _, r := range expanded.Redirects {
+			sb.WriteString(" ")
+			if r.FD != 1 && r.FD != 0 {
+				sb.WriteString(strconv.Itoa(r.FD))
+			}
+			switch r.Kind {
+			case parser.RedirectOut:
+				sb.WriteString(">")
+			case parser.RedirectAppend:
+				sb.WriteString(">>")
+			case parser.RedirectIn:
+				sb.WriteString("<")
+			case parser.RedirectOutFD:
+				sb.WriteString(">&")
+			case parser.RedirectInFD:
+				sb.WriteString("<&")
+			}
+			sb.WriteString(r.Target)
+		}
+
+		p.Logger.Debug("echo console output", "line", sb.String())
+		fmt.Fprintln(p.Console, sb.String())
 	}
 
 	// 4. Final expansion: Phase 5 (delayed expansion)
