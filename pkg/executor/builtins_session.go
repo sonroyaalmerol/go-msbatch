@@ -2,13 +2,15 @@ package executor
 
 import (
 	"fmt"
-	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
-	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/sonroyaalmerol/go-msbatch/pkg/executor/tools"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
 // fileAssoc and fileTypes back the in-process ASSOC/FTYPE tables.
@@ -203,19 +205,14 @@ func cmdRen(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	dstPattern := cmd.Args[1]
 	src := processor.MapPath(srcPattern)
 
-	matches, err := filepath.Glob(src)
-	if err != nil || len(matches) == 0 {
-		matches = []string{src}
-	}
+	matches := tools.GlobOrLiteral(src)
 
-	dstHasWildcard := strings.ContainsAny(dstPattern, "*?")
+	dstHasWildcard := tools.HasWildcards(dstPattern)
 
 	for _, m := range matches {
 		dstName := dstPattern
 		if dstHasWildcard {
-			srcBase := filepath.Base(m)
-			srcPatBase := filepath.Base(srcPattern)
-			dstName = substituteWildcard(srcBase, srcPatBase, dstPattern)
+			dstName = tools.SubstituteWildcard(filepath.Base(m), filepath.Base(srcPattern), dstPattern)
 		}
 		dst := filepath.Join(filepath.Dir(m), dstName)
 		if err := os.Rename(m, dst); err != nil {

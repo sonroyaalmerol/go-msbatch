@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/sonroyaalmerol/go-msbatch/pkg/executor/tools"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 	"golang.org/x/term"
@@ -412,13 +413,8 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 
 	resolveDst := func(srcPath, srcPattern string) string {
-		if strings.ContainsAny(dstPattern, "*?") {
-			srcBase := filepath.Base(srcPath)
-			srcPatBase := filepath.Base(srcPattern)
-			dstPatBase := filepath.Base(dstPattern)
-			dstDir := filepath.Dir(dst)
-			newDstBase := substituteWildcard(srcBase, srcPatBase, dstPatBase)
-			return filepath.Join(dstDir, newDstBase)
+		if tools.HasWildcards(dstPattern) {
+			return tools.ResolveWildcardDst(srcPath, srcPattern, dstPattern, dst)
 		}
 		return dst
 	}
@@ -436,7 +432,7 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			if info, err := os.Stat(dst); err == nil && info.IsDir() {
 				target = filepath.Join(dst, filepath.Base(src.path))
 			}
-			if err := copyFile(src.path, target); err != nil {
+			if err := tools.CopyFile(src.path, target); err != nil {
 				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
 				p.Failure()
 				return nil
@@ -445,7 +441,7 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 		fmt.Fprintf(p.Stdout, "        %d file(s) copied.\n", count)
 	case !hasPlus:
-		if err := copyFile(srcs[0].path, dstTarget); err != nil {
+		if err := tools.CopyFile(srcs[0].path, dstTarget); err != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
 			p.Failure()
 			return nil
@@ -472,100 +468,6 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	return p.Success()
 }
 
-func substituteWildcard(srcName, srcPattern, dstPattern string) string {
-	srcWildcards := findWildcards(srcPattern)
-	dstWildcards := findWildcards(dstPattern)
-
-	if len(srcWildcards) == 0 || len(dstWildcards) == 0 {
-		return dstPattern
-	}
-
-	matchedParts := extractMatches(srcName, srcPattern, srcWildcards)
-
-	result := dstPattern
-	for i, wc := range dstWildcards {
-		if i < len(matchedParts) {
-			part := matchedParts[i]
-			if wc.isStar {
-				result = strings.Replace(result, "*", part, 1)
-			} else {
-				result = strings.Replace(result, "?", part, 1)
-			}
-		}
-	}
-	return result
-}
-
-type wildcardPos struct {
-	index      int
-	isStar     bool
-	isQuestion bool
-}
-
-func findWildcards(pattern string) []wildcardPos {
-	var positions []wildcardPos
-	for i, c := range pattern {
-		if c == '*' {
-			positions = append(positions, wildcardPos{index: i, isStar: true})
-		} else if c == '?' {
-			positions = append(positions, wildcardPos{index: i, isQuestion: true})
-		}
-	}
-	return positions
-}
-
-func extractMatches(name, pattern string, wildcards []wildcardPos) []string {
-	var matches []string
-	nameIdx := 0
-	patIdx := 0
-
-	for _, wc := range wildcards {
-		for patIdx < wc.index && nameIdx < len(name) {
-			if pattern[patIdx] == name[nameIdx] || pattern[patIdx] == '?' {
-				patIdx++
-				nameIdx++
-			} else {
-				patIdx++
-			}
-		}
-
-		patIdx = wc.index + 1
-
-		if wc.isStar {
-			nextFixed := ""
-			if patIdx < len(pattern) {
-				end := strings.IndexAny(pattern[patIdx:], "*?")
-				if end >= 0 {
-					nextFixed = pattern[patIdx : patIdx+end]
-				} else {
-					nextFixed = pattern[patIdx:]
-				}
-			}
-
-			if nextFixed == "" {
-				matches = append(matches, name[nameIdx:])
-				nameIdx = len(name)
-			} else {
-				endIdx := strings.Index(name[nameIdx:], nextFixed)
-				if endIdx >= 0 {
-					matches = append(matches, name[nameIdx:nameIdx+endIdx])
-					nameIdx += endIdx
-				} else {
-					matches = append(matches, name[nameIdx:])
-					nameIdx = len(name)
-				}
-			}
-		} else if wc.isQuestion {
-			if nameIdx < len(name) {
-				matches = append(matches, string(name[nameIdx]))
-				nameIdx++
-			}
-		}
-	}
-
-	return matches
-}
-
 func cmdMove(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	var args []string
 	for _, arg := range cmd.Args {
@@ -586,14 +488,9 @@ func cmdMove(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	src := processor.MapPath(srcPattern)
 	dst := processor.MapPath(dstPattern)
 
-	var srcs []string
-	if matches, err := filepath.Glob(src); err == nil && len(matches) > 0 {
-		srcs = matches
-	} else {
-		srcs = []string{src}
-	}
+	srcs := tools.GlobOrLiteral(src)
 
-	dstHasWildcard := strings.ContainsAny(dstPattern, "*?")
+	dstHasWildcard := tools.HasWildcards(dstPattern)
 
 	count := 0
 	for _, srcPath := range srcs {
@@ -601,12 +498,7 @@ func cmdMove(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		if info, err := os.Stat(dst); err == nil && info.IsDir() {
 			target = filepath.Join(dst, filepath.Base(srcPath))
 		} else if dstHasWildcard {
-			srcBase := filepath.Base(srcPath)
-			srcPatBase := filepath.Base(srcPattern)
-			dstPatBase := filepath.Base(dstPattern)
-			dstDir := filepath.Dir(dst)
-			newDstBase := substituteWildcard(srcBase, srcPatBase, dstPatBase)
-			target = filepath.Join(dstDir, newDstBase)
+			target = tools.ResolveWildcardDst(srcPath, srcPattern, dstPattern, dst)
 		}
 		if err := os.Rename(srcPath, target); err != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
@@ -620,50 +512,111 @@ func cmdMove(p *processor.Processor, cmd *parser.SimpleCommand) error {
 }
 
 func cmdDir(p *processor.Processor, cmd *parser.SimpleCommand) error {
+	bare := false
+	recursive := false
 	dirPath := "."
+
 	for _, arg := range cmd.Args {
-		if !strings.HasPrefix(arg, "/") {
-			dirPath = processor.MapPath(arg)
-			break
+		lower := strings.ToLower(arg)
+		switch lower {
+		case "/b":
+			bare = true
+		case "/s":
+			recursive = true
+		default:
+			if !strings.HasPrefix(arg, "/") || strings.ContainsRune(arg[1:], '/') {
+				dirPath = processor.MapPath(arg)
+			}
 		}
 	}
+
+	var fileCount, dirCount int
+	abs, _ := filepath.Abs(dirPath)
+
+	if recursive {
+		err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			relPath, _ := filepath.Rel(dirPath, path)
+			if relPath == "." {
+				return nil
+			}
+			if info.IsDir() {
+				dirCount++
+				if bare {
+					fmt.Fprintf(p.Stdout, "%s\n", path)
+				} else {
+					t := info.ModTime()
+					fmt.Fprintf(p.Stdout, "%s  %s    <DIR>          %s\n",
+						t.Format("01/02/2006"), t.Format("03:04 PM"), path)
+				}
+			} else {
+				fileCount++
+				if bare {
+					fmt.Fprintf(p.Stdout, "%s\n", path)
+				} else {
+					t := info.ModTime()
+					fmt.Fprintf(p.Stdout, "%s  %s    %14d %s\n",
+						t.Format("01/02/2006"), t.Format("03:04 PM"), info.Size(), path)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			fmt.Fprintf(p.Stderr, "File Not Found\n")
+			p.Failure()
+			return nil
+		}
+		if !bare {
+			fmt.Fprintf(p.Stdout, "\n Total Files Listed:\n")
+			fmt.Fprintf(p.Stdout, "%15d File(s)%14d bytes\n", fileCount, int64(0))
+			fmt.Fprintf(p.Stdout, "%15d Dir(s)\n", dirCount)
+		}
+		return p.Success()
+	}
+
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		fmt.Fprintf(p.Stderr, "File Not Found\n")
 		p.Failure()
 		return nil
 	}
-	abs, _ := filepath.Abs(dirPath)
-	fmt.Fprintf(p.Stdout, " Directory of %s\n\n", abs)
+
+	if !bare {
+		fmt.Fprintf(p.Stdout, " Directory of %s\n\n", abs)
+	}
+
 	for _, e := range entries {
 		info, err := e.Info()
 		if err != nil {
 			continue
 		}
-		t := info.ModTime()
 		if e.IsDir() {
-			fmt.Fprintf(p.Stdout, "%s  %s    <DIR>          %s\n",
-				t.Format("01/02/2006"), t.Format("03:04 PM"), e.Name())
+			dirCount++
+			if bare {
+				fmt.Fprintf(p.Stdout, "%s\n", e.Name())
+			} else {
+				t := info.ModTime()
+				fmt.Fprintf(p.Stdout, "%s  %s    <DIR>          %s\n",
+					t.Format("01/02/2006"), t.Format("03:04 PM"), e.Name())
+			}
 		} else {
-			fmt.Fprintf(p.Stdout, "%s  %s    %14d %s\n",
-				t.Format("01/02/2006"), t.Format("03:04 PM"), info.Size(), e.Name())
+			fileCount++
+			if bare {
+				fmt.Fprintf(p.Stdout, "%s\n", e.Name())
+			} else {
+				t := info.ModTime()
+				fmt.Fprintf(p.Stdout, "%s  %s    %14d %s\n",
+					t.Format("01/02/2006"), t.Format("03:04 PM"), info.Size(), e.Name())
+			}
 		}
 	}
-	return p.Success()
-}
 
-// copyFile copies src to dst, creating or truncating dst.
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
+	if !bare {
+		fmt.Fprintf(p.Stdout, "\n%15d File(s)%14d bytes\n", fileCount, int64(0))
+		fmt.Fprintf(p.Stdout, "%15d Dir(s)\n", dirCount)
 	}
-	defer in.Close()
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
+
+	return p.Success()
 }

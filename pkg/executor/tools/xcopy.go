@@ -112,7 +112,7 @@ func Xcopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 
 	// Resolve source.
 	mappedSrc := processor.MapPath(srcArg)
-	isGlob := strings.ContainsAny(filepath.Base(srcArg), "*?")
+	isGlob := HasWildcards(filepath.Base(srcArg))
 
 	var srcPaths []string
 	if isGlob {
@@ -136,7 +136,7 @@ func Xcopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	srcInfo, _ := os.Lstat(mappedSrc)
 	isSingleFileSrc := !isGlob && srcInfo != nil && !srcInfo.IsDir()
 
-	dstHasWildcard := strings.ContainsAny(dstArg, "*?")
+	dstHasWildcard := HasWildcards(dstArg)
 
 	dstIsDir := false
 	switch {
@@ -162,12 +162,7 @@ func Xcopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		if !dstHasWildcard {
 			return mappedDst
 		}
-		srcBase := filepath.Base(srcPath)
-		srcPatBase := filepath.Base(srcArg)
-		dstPatBase := filepath.Base(dstArg)
-		dstDir := filepath.Dir(mappedDst)
-		newDstBase := SubstituteWildcard(srcBase, srcPatBase, dstPatBase)
-		return filepath.Join(dstDir, newDstBase)
+		return ResolveWildcardDst(srcPath, srcArg, dstArg, mappedDst)
 	}
 
 	count, failed := 0, 0

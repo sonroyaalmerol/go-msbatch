@@ -3,6 +3,7 @@ package tools
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -38,6 +39,31 @@ func copyFile(src, dst string) error {
 	out.Close()
 
 	return os.Chtimes(dst, srcInfo.ModTime(), srcInfo.ModTime())
+}
+
+func CopyFile(src, dst string) error {
+	return copyFile(src, dst)
+}
+
+func HasWildcards(pattern string) bool {
+	return strings.ContainsAny(pattern, "*?")
+}
+
+func GlobOrLiteral(pattern string) []string {
+	matches, err := filepath.Glob(pattern)
+	if err != nil || len(matches) == 0 {
+		return []string{pattern}
+	}
+	return matches
+}
+
+func ResolveWildcardDst(srcPath, srcPattern, dstPattern, dst string) string {
+	srcBase := filepath.Base(srcPath)
+	srcPatBase := filepath.Base(srcPattern)
+	dstPatBase := filepath.Base(dstPattern)
+	dstDir := filepath.Dir(dst)
+	newDstBase := SubstituteWildcard(srcBase, srcPatBase, dstPatBase)
+	return filepath.Join(dstDir, newDstBase)
 }
 
 type WildcardPos struct {

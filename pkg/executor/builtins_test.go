@@ -5,8 +5,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/sonroyaalmerol/go-msbatch/pkg/executor/tools"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
@@ -226,9 +228,9 @@ func TestSubstituteWildcard(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := substituteWildcard(tt.srcName, tt.srcPattern, tt.dstPattern)
+			got := tools.SubstituteWildcard(tt.srcName, tt.srcPattern, tt.dstPattern)
 			if got != tt.expected {
-				t.Errorf("substituteWildcard(%q, %q, %q) = %q, want %q",
+				t.Errorf("SubstituteWildcard(%q, %q, %q) = %q, want %q",
 					tt.srcName, tt.srcPattern, tt.dstPattern, got, tt.expected)
 			}
 		})
@@ -361,5 +363,81 @@ func TestCmdMoveSingleFile(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(dstDir, "file.txt")); err != nil {
 		t.Error("expected file.txt in destination")
+	}
+}
+
+func TestCmdDirBare(t *testing.T) {
+	dir := t.TempDir()
+
+	writeTestFile(t, dir, "file1.txt", "content1")
+	writeTestFile(t, dir, "file2.txt", "content2")
+	os.Mkdir(filepath.Join(dir, "subdir"), 0755)
+
+	p, out, _ := newTestProc(nil)
+	cmdDir(p, testCmd("dir", dir, "/b"))
+
+	if testErrorLevel(p) != "0" {
+		t.Errorf("expected ERRORLEVEL 0, got %s", testErrorLevel(p))
+	}
+
+	output := out.String()
+	if strings.Contains(output, "<DIR>") {
+		t.Error("/B should not show <DIR> format")
+	}
+	if strings.Contains(output, "Directory of") {
+		t.Error("/B should not show header")
+	}
+	if !strings.Contains(output, "file1.txt") {
+		t.Error("/B should list file1.txt")
+	}
+	if !strings.Contains(output, "file2.txt") {
+		t.Error("/B should list file2.txt")
+	}
+	if !strings.Contains(output, "subdir") {
+		t.Error("/B should list subdir")
+	}
+}
+
+func TestCmdDirRecursive(t *testing.T) {
+	dir := t.TempDir()
+
+	writeTestFile(t, dir, "root.txt", "root")
+	writeTestFile(t, dir, filepath.Join("sub", "child.txt"), "child")
+
+	p, out, _ := newTestProc(nil)
+	cmdDir(p, testCmd("dir", dir, "/s"))
+
+	if testErrorLevel(p) != "0" {
+		t.Errorf("expected ERRORLEVEL 0, got %s", testErrorLevel(p))
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "root.txt") {
+		t.Error("/S should list root.txt")
+	}
+	if !strings.Contains(output, "child.txt") {
+		t.Error("/S should list child.txt in subdirectory")
+	}
+}
+
+func TestCmdDirBareRecursive(t *testing.T) {
+	dir := t.TempDir()
+
+	writeTestFile(t, dir, "root.txt", "root")
+	writeTestFile(t, dir, filepath.Join("sub", "child.txt"), "child")
+
+	p, out, _ := newTestProc(nil)
+	cmdDir(p, testCmd("dir", dir, "/s", "/b"))
+
+	if testErrorLevel(p) != "0" {
+		t.Errorf("expected ERRORLEVEL 0, got %s", testErrorLevel(p))
+	}
+
+	output := out.String()
+	if strings.Contains(output, "<DIR>") {
+		t.Error("/B should not show <DIR> format")
+	}
+	if strings.Contains(output, "Directory of") {
+		t.Error("/B should not show header")
 	}
 }
