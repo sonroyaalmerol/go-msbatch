@@ -257,7 +257,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 				return fmt.Errorf("EXIT_LOCAL")
 			}
 		}
-		os.Exit(code)
+		p.Exited = true
 		return nil
 	case "setlocal":
 		p.Env.Push()

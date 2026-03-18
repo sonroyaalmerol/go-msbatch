@@ -145,6 +145,10 @@ func (p *Parser) parseSimpleCommand(suppressed bool) *SimpleCommand {
 					break
 				}
 			}
+			// CMD treats '/' as a delimiter between command and switch.
+			if strings.HasPrefix(val(t), "/") {
+				break
+			}
 			cmd.Name += val(p.consume())
 		}
 	}

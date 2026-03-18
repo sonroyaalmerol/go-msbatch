@@ -135,8 +135,6 @@ func registerBuiltins(r *Registry) {
 	r.HandleFunc("move", cmdMove)
 	r.HandleFunc("dir", cmdDir)
 	r.HandleFunc("break", cmdBreak)
-	r.HandleFunc("date", cmdDate)
-	r.HandleFunc("time", cmdTime)
 	r.HandleFunc("path", cmdPath)
 	r.HandleFunc("prompt", cmdPrompt)
 	r.HandleFunc("verify", cmdVerify)
@@ -161,5 +159,7 @@ func registerBuiltins(r *Registry) {
 	r.HandleFunc("findstr", tools.Findstr)
 	r.HandleFunc("xcopy", tools.Xcopy)
 	r.HandleFunc("robocopy", tools.Robocopy)
+	r.HandleFunc("time", tools.Time)
+	r.HandleFunc("date", tools.Date)
 
 }

@@ -7,8 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
-
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
@@ -22,20 +20,6 @@ var (
 
 func cmdBreak(p *processor.Processor, _ *parser.SimpleCommand) error {
 	// BREAK historically toggled extended Ctrl+C checking; it is now a no-op.
-	p.Success()
-	return nil
-}
-
-func cmdDate(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	// /T — display only (default behaviour here; setting the system date is unsupported).
-	fmt.Fprintf(p.Stdout, "The current date is: %s\n", time.Now().Format("Mon 01/02/2006"))
-	p.Success()
-	return nil
-}
-
-func cmdTime(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	// /T — display only (setting the system time is unsupported).
-	fmt.Fprintf(p.Stdout, "The current time is: %s\n", time.Now().Format("15:04:05.00"))
 	p.Success()
 	return nil
 }

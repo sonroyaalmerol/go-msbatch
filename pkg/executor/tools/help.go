@@ -14,6 +14,8 @@ var ToolHelp = map[string]string{
 	"where":    whereHelp,
 	"hostname": hostnameHelp,
 	"whoami":   whoamiHelp,
+	"time":     timeHelp,
+	"date":     dateHelp,
 }
 
 // Help returns the help text for the named tool, or an empty string.
