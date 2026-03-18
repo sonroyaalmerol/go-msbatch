@@ -106,69 +106,15 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 	origStdin := p.Stdin
 	origStderr := p.Stderr
 
-	defer func() {
-		if f, ok := p.Stdout.(*os.File); ok && f != os.Stdout && f != origStdout {
-			f.Close()
-		}
-		if f, ok := p.Stdin.(*os.File); ok && f != os.Stdin && f != origStdin {
-			f.Close()
-		}
-		if f, ok := p.Stderr.(*os.File); ok && f != os.Stderr && f != origStderr {
-			f.Close()
-		}
-		p.Stdout = origStdout
-		p.Stdin = origStdin
-		p.Stderr = origStderr
-	}()
-
-	for _, r := range expanded.Redirects {
-		targetPath := MapPath(r.Target)
-		switch r.Kind {
-		case parser.RedirectOut:
-			f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
-			if err == nil {
-				switch r.FD {
-				case 0:
-					fallthrough
-				case 1:
-					p.Stdout = f
-				case 2:
-					p.Stderr = f
-				}
-			}
-		case parser.RedirectAppend:
-			f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
-			if err == nil {
-				switch r.FD {
-				case 0:
-					fallthrough
-				case 1:
-					p.Stdout = f
-				case 2:
-					p.Stderr = f
-				}
-			}
-		case parser.RedirectIn:
-			f, err := os.Open(targetPath)
-			if err == nil {
-				p.Stdin = f
-			}
-		}
-	}
-
-	if p.ShouldEcho(n) {
-		prompt, ok := p.Env.Get("PROMPT")
-		if !ok {
-			prompt = "$P$G"
-		}
-		expandedPrompt := p.ExpandPrompt(prompt)
-		// Join with "" because we preserved whitespace in RawArgs
-		fmt.Fprintf(p.Stdout, "%s%s%s\n", expandedPrompt, expanded.Name, strings.Join(expanded.RawArgs, ""))
-	}
-
 	// Flow-control commands are handled directly by the Processor because they
 	// manipulate Processor state (PC, Args, Exited) that an external executor
 	// cannot safely touch.
+	//
+	// We handle these BEFORE applying redirections to the current command node.
+	// For "CALL file.bat > log", the redirection should apply to the execution
+	// of the CALL command itself, but nested executeSimpleCommand calls (the
+	// "recursive" part of CALL) should inherit the already-redirected state
+	// rather than opening the file again.
 	name := strings.ToLower(expanded.Name)
 	cmdWords := expanded.Words()
 	switch name {
@@ -278,6 +224,66 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 			p.Args = append(p.Args[:1], p.Args[2:]...)
 		}
 		return nil
+	}
+
+	defer func() {
+		if f, ok := p.Stdout.(*os.File); ok && f != os.Stdout && f != origStdout {
+			f.Close()
+		}
+		if f, ok := p.Stdin.(*os.File); ok && f != os.Stdin && f != origStdin {
+			f.Close()
+		}
+		if f, ok := p.Stderr.(*os.File); ok && f != os.Stderr && f != origStderr {
+			f.Close()
+		}
+		p.Stdout = origStdout
+		p.Stdin = origStdin
+		p.Stderr = origStderr
+	}()
+
+	for _, r := range expanded.Redirects {
+		targetPath := MapPath(r.Target)
+		switch r.Kind {
+		case parser.RedirectOut:
+			f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+			if err == nil {
+				switch r.FD {
+				case 0:
+					fallthrough
+				case 1:
+					p.Stdout = f
+				case 2:
+					p.Stderr = f
+				}
+			}
+		case parser.RedirectAppend:
+			f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
+			if err == nil {
+				switch r.FD {
+				case 0:
+					fallthrough
+				case 1:
+					p.Stdout = f
+				case 2:
+					p.Stderr = f
+				}
+			}
+		case parser.RedirectIn:
+			f, err := os.Open(targetPath)
+			if err == nil {
+				p.Stdin = f
+			}
+		}
+	}
+
+	if p.ShouldEcho(n) {
+		prompt, ok := p.Env.Get("PROMPT")
+		if !ok {
+			prompt = "$P$G"
+		}
+		expandedPrompt := p.ExpandPrompt(prompt)
+		// Join with "" because we preserved whitespace in RawArgs
+		fmt.Fprintf(p.Stdout, "%s%s%s\n", expandedPrompt, expanded.Name, strings.Join(expanded.RawArgs, ""))
 	}
 
 	// Delegate all other commands to the pluggable executor.
