@@ -24,9 +24,9 @@ import (
 //	MSBATCH_EXE_PREFIX="box64 wine"
 //
 // When unset (or empty), .exe files cannot be run and will produce an error.
-func exePrefix() []string {
-	v := os.Getenv("MSBATCH_EXE_PREFIX")
-	if v == "" {
+func exePrefix(p *processor.Processor) []string {
+	v, ok := p.Env.Get("MSBATCH_EXE_PREFIX")
+	if !ok || v == "" {
 		return nil
 	}
 	return strings.Fields(v)
@@ -51,9 +51,26 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	cmdName := processor.MapPath(cmd.Name)
 	p.Logger.Debug("external dispatch", "original", cmd.Name, "mapped", cmdName)
 
-	// Determine early whether this is a prefixed .exe dispatch so that argument
+	// If the command doesn't have an extension, try to find a matching .exe or .com.
+	// This matches CMD's search behavior where extensions are often omitted.
+	if runtime.GOOS != "windows" && !strings.ContainsAny(cmdName, "/\\.") {
+		for _, ext := range []string{".exe", ".com"} {
+			if _, err := os.Stat(cmdName + ext); err == nil {
+				cmdName += ext
+				break
+			}
+			if resolved, ok := lookPathCaseInsensitive(cmdName + ext); ok {
+				cmdName = resolved
+				break
+			}
+		}
+	}
+
+	// Determine early whether this is a prefixed .exe/.com dispatch so that argument
 	// handling can be chosen correctly before we build the args slice.
-	isExe := runtime.GOOS != "windows" && strings.HasSuffix(strings.ToLower(cmdName), ".exe")
+	lower := strings.ToLower(cmdName)
+	isExe := runtime.GOOS != "windows" && (strings.HasSuffix(lower, ".exe") || strings.HasSuffix(lower, ".com"))
+	p.Logger.Debug("is_exe check", "name", cmdName, "result", isExe)
 
 	// On non-Windows, if we're asked to run "foo.exe", check first if a native
 	// "foo" exists in the same location or in PATH. If it does, we run that
@@ -64,9 +81,11 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		if !strings.ContainsAny(nativeName, "/\\") && fileExists(nativeName) {
 			isExe = false
 			cmdName = "./" + nativeName
+			p.Logger.Debug("found native match in current dir", "native", cmdName)
 		} else if nativePath, err := exec.LookPath(nativeName); err == nil {
 			isExe = false
 			cmdName = nativePath
+			p.Logger.Debug("found native match on PATH", "native", cmdName)
 		}
 	}
 
@@ -94,7 +113,7 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 
 	if isExe {
-		prefix := exePrefix()
+		prefix := exePrefix(p)
 		if len(prefix) == 0 {
 			fmt.Fprintf(p.Stderr, "cannot execute '%s': no exe prefix configured (set MSBATCH_EXE_PREFIX, e.g. MSBATCH_EXE_PREFIX=wine)\n", cmd.Name)
 			p.FailureWithCode(9009)
@@ -104,10 +123,13 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		// Automatically set up a bridge directory with symlinks for all internal tools
 		// and add it to PATH/WINEPATH so the prefixed process can find them.
 		if bridgeDir := ensureWineBridge(p); bridgeDir != "" {
+			p.Logger.Debug("wine bridge active", "dir", bridgeDir)
 			// Update PATH for the child process environment
 			path, _ := p.Env.Get("PATH")
 			if !strings.Contains(path, bridgeDir) {
-				p.Env.Set("PATH", bridgeDir+string(os.PathListSeparator)+path)
+				newPath := bridgeDir + string(os.PathListSeparator) + path
+				p.Env.Set("PATH", newPath)
+				p.Logger.Debug("updated PATH for wine bridge", "new_path", newPath)
 			}
 			// Update WINEPATH (Wine uses semicolons even on Linux)
 			winePath, _ := p.Env.Get("WINEPATH")
@@ -116,7 +138,9 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 				if winePath != "" {
 					sep = ";"
 				}
-				p.Env.Set("WINEPATH", bridgeDir+sep+winePath)
+				newWinePath := bridgeDir + sep + winePath
+				p.Env.Set("WINEPATH", newWinePath)
+				p.Logger.Debug("updated WINEPATH for wine bridge", "new_winepath", newWinePath)
 			}
 		}
 
@@ -214,9 +238,10 @@ func ensureWineBridge(p *processor.Processor) string {
 
 	tmp, err := os.MkdirTemp("", "msbatch-bridge-*")
 	if err != nil {
-		p.Logger.Debug("failed to create wine bridge temp dir", "error", err)
+		p.Logger.Error("failed to create wine bridge temp dir", "error", err)
 		return ""
 	}
+	p.Logger.Debug("created wine bridge temp dir", "dir", tmp)
 
 	for _, name := range reg.Names() {
 		// Only link tools that are commonly used as external commands.
@@ -230,7 +255,9 @@ func ensureWineBridge(p *processor.Processor) string {
 			// This is more reliable than a symlink to an ELF binary named .exe.
 			content := fmt.Sprintf("#!/bin/sh\nexec \"%s\" \"$@\"\n", self)
 			if err := os.WriteFile(scriptPath, []byte(content), 0755); err != nil {
-				p.Logger.Debug("failed to create wrapper in wine bridge", "path", scriptPath, "error", err)
+				p.Logger.Error("failed to create wrapper in wine bridge", "path", scriptPath, "error", err)
+			} else {
+				p.Logger.Debug("wrapped tool for wine bridge", "tool", name, "path", scriptPath)
 			}
 		}
 	}
@@ -402,6 +429,7 @@ func runBatchFile(p *processor.Processor, batPath string, args []string) error {
 	childArgs := append([]string{batPath}, args...)
 
 	child := processor.New(p.Env, childArgs, p.Executor)
+	child.Logger = p.Logger
 	child.Stdout = p.Stdout
 	child.Stderr = p.Stderr
 	child.Stdin = p.Stdin
