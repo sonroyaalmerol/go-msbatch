@@ -571,7 +571,6 @@ func cmdMove(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	for _, arg := range cmd.Args {
 		switch strings.ToLower(arg) {
 		case "/y", "/-y":
-			// ignore
 		default:
 			args = append(args, arg)
 		}
@@ -581,17 +580,42 @@ func cmdMove(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		p.Failure()
 		return nil
 	}
-	src := processor.MapPath(args[0])
-	dst := processor.MapPath(args[1])
-	if info, err := os.Stat(dst); err == nil && info.IsDir() {
-		dst = filepath.Join(dst, filepath.Base(src))
+
+	srcPattern := args[0]
+	dstPattern := args[1]
+	src := processor.MapPath(srcPattern)
+	dst := processor.MapPath(dstPattern)
+
+	var srcs []string
+	if matches, err := filepath.Glob(src); err == nil && len(matches) > 0 {
+		srcs = matches
+	} else {
+		srcs = []string{src}
 	}
-	if err := os.Rename(src, dst); err != nil {
-		fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
-		p.Failure()
-		return nil
+
+	dstHasWildcard := strings.ContainsAny(dstPattern, "*?")
+
+	count := 0
+	for _, srcPath := range srcs {
+		target := dst
+		if info, err := os.Stat(dst); err == nil && info.IsDir() {
+			target = filepath.Join(dst, filepath.Base(srcPath))
+		} else if dstHasWildcard {
+			srcBase := filepath.Base(srcPath)
+			srcPatBase := filepath.Base(srcPattern)
+			dstPatBase := filepath.Base(dstPattern)
+			dstDir := filepath.Dir(dst)
+			newDstBase := substituteWildcard(srcBase, srcPatBase, dstPatBase)
+			target = filepath.Join(dstDir, newDstBase)
+		}
+		if err := os.Rename(srcPath, target); err != nil {
+			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
+			p.Failure()
+			return nil
+		}
+		count++
 	}
-	fmt.Fprintf(p.Stdout, "        1 file(s) moved.\n")
+	fmt.Fprintf(p.Stdout, "        %d file(s) moved.\n", count)
 	return p.Success()
 }
 

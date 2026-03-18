@@ -234,3 +234,132 @@ func TestSubstituteWildcard(t *testing.T) {
 		})
 	}
 }
+
+func TestCmdRenWildcardDst(t *testing.T) {
+	dir := t.TempDir()
+
+	writeTestFile(t, dir, "file1.txt", "content1")
+	writeTestFile(t, dir, "file2.txt", "content2")
+
+	p, _, _ := newTestProc(nil)
+	cmdRen(p, testCmd("ren", filepath.Join(dir, "*.txt"), "*.bak"))
+
+	if testErrorLevel(p) != "0" {
+		t.Errorf("expected ERRORLEVEL 0, got %s", testErrorLevel(p))
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "file1.bak")); err != nil {
+		t.Error("expected file1.bak after rename")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "file2.bak")); err != nil {
+		t.Error("expected file2.bak after rename")
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "*.bak")); err == nil {
+		t.Error("should not create file with literal '*' in name")
+	}
+}
+
+func TestCmdRenWildcardQuestionMark(t *testing.T) {
+	dir := t.TempDir()
+
+	writeTestFile(t, dir, "test1.txt", "content")
+
+	p, _, _ := newTestProc(nil)
+	cmdRen(p, testCmd("ren", filepath.Join(dir, "test?.txt"), "new?.txt"))
+
+	if testErrorLevel(p) != "0" {
+		t.Errorf("expected ERRORLEVEL 0, got %s", testErrorLevel(p))
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "new1.txt")); err != nil {
+		t.Error("expected new1.txt after rename")
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "new?.txt")); err == nil {
+		t.Error("should not create file with literal '?' in name")
+	}
+}
+
+func TestCmdRenSingleFileNoWildcard(t *testing.T) {
+	dir := t.TempDir()
+
+	writeTestFile(t, dir, "oldname.txt", "content")
+
+	p, _, _ := newTestProc(nil)
+	cmdRen(p, testCmd("ren", filepath.Join(dir, "oldname.txt"), "newname.txt"))
+
+	if testErrorLevel(p) != "0" {
+		t.Errorf("expected ERRORLEVEL 0, got %s", testErrorLevel(p))
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "newname.txt")); err != nil {
+		t.Error("expected newname.txt after rename")
+	}
+}
+
+func TestCmdMoveWildcardDst(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	writeTestFile(t, srcDir, "file1.txt", "content1")
+	writeTestFile(t, srcDir, "file2.txt", "content2")
+
+	p, _, _ := newTestProc(nil)
+	cmdMove(p, testCmd("move", filepath.Join(srcDir, "*.txt"), filepath.Join(dstDir, "*.bak")))
+
+	if testErrorLevel(p) != "0" {
+		t.Errorf("expected ERRORLEVEL 0, got %s", testErrorLevel(p))
+	}
+
+	if _, err := os.Stat(filepath.Join(dstDir, "file1.bak")); err != nil {
+		t.Error("expected file1.bak in destination")
+	}
+	if _, err := os.Stat(filepath.Join(dstDir, "file2.bak")); err != nil {
+		t.Error("expected file2.bak in destination")
+	}
+
+	if _, err := os.Stat(filepath.Join(dstDir, "*.bak")); err == nil {
+		t.Error("should not create file with literal '*' in name")
+	}
+}
+
+func TestCmdMoveMultipleFilesToDir(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	writeTestFile(t, srcDir, "a.txt", "a")
+	writeTestFile(t, srcDir, "b.txt", "b")
+
+	p, _, _ := newTestProc(nil)
+	cmdMove(p, testCmd("move", filepath.Join(srcDir, "*.txt"), dstDir))
+
+	if testErrorLevel(p) != "0" {
+		t.Errorf("expected ERRORLEVEL 0, got %s", testErrorLevel(p))
+	}
+
+	if _, err := os.Stat(filepath.Join(dstDir, "a.txt")); err != nil {
+		t.Error("expected a.txt in destination")
+	}
+	if _, err := os.Stat(filepath.Join(dstDir, "b.txt")); err != nil {
+		t.Error("expected b.txt in destination")
+	}
+}
+
+func TestCmdMoveSingleFile(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	writeTestFile(t, srcDir, "file.txt", "content")
+
+	p, _, _ := newTestProc(nil)
+	cmdMove(p, testCmd("move", filepath.Join(srcDir, "file.txt"), filepath.Join(dstDir, "file.txt")))
+
+	if testErrorLevel(p) != "0" {
+		t.Errorf("expected ERRORLEVEL 0, got %s", testErrorLevel(p))
+	}
+
+	if _, err := os.Stat(filepath.Join(dstDir, "file.txt")); err != nil {
+		t.Error("expected file.txt in destination")
+	}
+}

@@ -2,13 +2,13 @@ package executor
 
 import (
 	"fmt"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
-	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
 // fileAssoc and fileTypes back the in-process ASSOC/FTYPE tables.
@@ -199,14 +199,25 @@ func cmdRen(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		p.Failure()
 		return nil
 	}
-	src := processor.MapPath(cmd.Args[0])
-	newName := cmd.Args[1]
+	srcPattern := cmd.Args[0]
+	dstPattern := cmd.Args[1]
+	src := processor.MapPath(srcPattern)
+
 	matches, err := filepath.Glob(src)
 	if err != nil || len(matches) == 0 {
 		matches = []string{src}
 	}
+
+	dstHasWildcard := strings.ContainsAny(dstPattern, "*?")
+
 	for _, m := range matches {
-		dst := filepath.Join(filepath.Dir(m), newName)
+		dstName := dstPattern
+		if dstHasWildcard {
+			srcBase := filepath.Base(m)
+			srcPatBase := filepath.Base(srcPattern)
+			dstName = substituteWildcard(srcBase, srcPatBase, dstPattern)
+		}
+		dst := filepath.Join(filepath.Dir(m), dstName)
 		if err := os.Rename(m, dst); err != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
 			p.Failure()
