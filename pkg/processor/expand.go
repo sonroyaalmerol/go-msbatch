@@ -1,10 +1,12 @@
 package processor
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Phase0ReadLine applies phase-0 line-reading rules:
@@ -52,16 +54,50 @@ func Phase0ReadLine(src string) string {
 	return strings.Join(result, "\n")
 }
 
+// dynamicVar returns the value of a CMD dynamic variable (one whose value
+// is computed at expansion time rather than stored in the environment), along
+// with a boolean indicating whether the name matched a dynamic variable.
+//
+// Supported dynamic variables:
+//
+//	TIME  — current local time as "H:MM:SS.CC" (space-padded hour, no leading
+//	        zero), matching the Windows CMD %TIME% format exactly.
+func dynamicVar(name string) (string, bool) {
+	switch strings.ToUpper(name) {
+	case "TIME":
+		now := time.Now()
+		h, m, s := now.Hour(), now.Minute(), now.Second()
+		cs := now.Nanosecond() / 1e7 // centiseconds (0–99)
+		return fmt.Sprintf("%2d:%02d:%02d.%02d", h, m, s, cs), true
+	}
+	return "", false
+}
+
 func resolveVariable(rawName string, env *Environment) (string, bool) {
+	// Dynamic variables take precedence over stored ones (matching CMD behaviour
+	// where %TIME% always reflects the current time even if SET TIME=foo).
+	varName, manipulation := SplitVarModifier(rawName)
+	if dval, ok := dynamicVar(varName); ok {
+		if manipulation != "" {
+			if strings.HasPrefix(manipulation, "~") {
+				dval = applySlicing(dval, manipulation[1:])
+			} else if strings.Contains(manipulation, "=") {
+				if before, after, ok2 := strings.Cut(manipulation, "="); ok2 {
+					dval = applySubstitution(dval, before, after)
+				}
+			}
+		}
+		return dval, true
+	}
+
 	val, ok := env.Get(rawName)
 	if !ok {
-		varName, manipulation := SplitVarModifier(rawName)
 		val, ok = env.Get(varName)
 		if ok && manipulation != "" {
 			if strings.HasPrefix(manipulation, "~") {
 				val = applySlicing(val, manipulation[1:])
 			} else if strings.Contains(manipulation, "=") {
-				if before, after, ok := strings.Cut(manipulation, "="); ok {
+				if before, after, ok2 := strings.Cut(manipulation, "="); ok2 {
 					val = applySubstitution(val, before, after)
 				}
 			}

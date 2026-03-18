@@ -1,0 +1,24 @@
+Test FOR with variable expansion in set:
+Item: 1
+Item: 2
+Item: 3
+Test FOR with comma delimiter:
+Comma: alpha
+Comma: beta
+Comma: gamma
+Test FOR with semicolon delimiter:
+Semi: one
+Semi: two
+Semi: three
+Test FOR with mixed delimiters:
+Mixed: 1
+Mixed: 2
+Mixed: 3
+Mixed: 4
+Test FOR with quoted string (should be single item):
+Quoted: "hello world"
+Test FOR with nested loops:
+a1
+a2
+b1
+b2

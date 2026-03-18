@@ -517,6 +517,49 @@ func (p *Processor) executeIf(n *parser.IfNode) error {
 	return nil
 }
 
+func splitForSetItems(s string) []string {
+	var result []string
+	var current strings.Builder
+	inQuote := false
+	quoteChar := byte(0)
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+
+		if inQuote {
+			current.WriteByte(c)
+			if c == quoteChar {
+				inQuote = false
+				quoteChar = 0
+			}
+			continue
+		}
+
+		if c == '"' || c == '\'' {
+			inQuote = true
+			quoteChar = c
+			current.WriteByte(c)
+			continue
+		}
+
+		if c == ' ' || c == '\t' || c == ',' || c == ';' {
+			if current.Len() > 0 {
+				result = append(result, current.String())
+				current.Reset()
+			}
+			continue
+		}
+
+		current.WriteByte(c)
+	}
+
+	if current.Len() > 0 {
+		result = append(result, current.String())
+	}
+
+	return result
+}
+
 func (p *Processor) executeFor(n *parser.ForNode) error {
 	oldForVars := p.ForVars
 	p.ForVars = make(map[string]string)
@@ -526,14 +569,19 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 	if n.Variant == parser.ForFiles {
 		for _, item := range n.Set {
 			expandedItem := p.ProcessLine(item)
-			matches, err := filepath.Glob(MapPath(expandedItem))
-			if err != nil || len(matches) == 0 {
-				matches = []string{expandedItem}
-			}
-			for _, m := range matches {
-				p.ForVars[n.Variable] = m
-				if err := p.ExecuteNode(n.Do); err != nil {
-					return err
+			for _, part := range splitForSetItems(expandedItem) {
+				matches, err := filepath.Glob(MapPath(part))
+				if err != nil || len(matches) == 0 {
+					matches = []string{part}
+				}
+				for _, m := range matches {
+					p.ForVars[n.Variable] = m
+					if err := p.ExecuteNode(n.Do); err != nil {
+						return err
+					}
+					if p.Exited {
+						break
+					}
 				}
 				if p.Exited {
 					break
@@ -577,25 +625,30 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 	} else if n.Variant == parser.ForDir {
 		for _, item := range n.Set {
 			expandedItem := p.ProcessLine(item)
-			mapped := MapPath(expandedItem)
-			dir := filepath.Dir(mapped)
-			pattern := filepath.Base(mapped)
-			entries, err := os.ReadDir(dir)
-			if err != nil {
-				continue
-			}
-			for _, e := range entries {
-				if !e.IsDir() {
+			for _, part := range splitForSetItems(expandedItem) {
+				mapped := MapPath(part)
+				dir := filepath.Dir(mapped)
+				pattern := filepath.Base(mapped)
+				entries, err := os.ReadDir(dir)
+				if err != nil {
 					continue
 				}
-				if matched, _ := filepath.Match(pattern, e.Name()); matched {
-					p.ForVars[n.Variable] = filepath.Join(dir, e.Name())
-					if err := p.ExecuteNode(n.Do); err != nil {
-						return err
+				for _, e := range entries {
+					if !e.IsDir() {
+						continue
 					}
-					if p.Exited {
-						break
+					if matched, _ := filepath.Match(pattern, e.Name()); matched {
+						p.ForVars[n.Variable] = filepath.Join(dir, e.Name())
+						if err := p.ExecuteNode(n.Do); err != nil {
+							return err
+						}
+						if p.Exited {
+							break
+						}
 					}
+				}
+				if p.Exited {
+					break
 				}
 			}
 			if p.Exited {
@@ -619,14 +672,25 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 			}
 			for _, item := range n.Set {
 				expandedItem := p.ProcessLine(item)
-				fullPattern := filepath.Join(dirPath, expandedItem)
-				if strings.ContainsAny(expandedItem, "*?") {
-					matches, err := filepath.Glob(fullPattern)
-					if err != nil || len(matches) == 0 {
-						continue
-					}
-					for _, m := range matches {
-						p.ForVars[n.Variable] = m
+				for _, part := range splitForSetItems(expandedItem) {
+					fullPattern := filepath.Join(dirPath, part)
+					if strings.ContainsAny(part, "*?") {
+						matches, err := filepath.Glob(fullPattern)
+						if err != nil || len(matches) == 0 {
+							continue
+						}
+						for _, m := range matches {
+							p.ForVars[n.Variable] = m
+							if err := p.ExecuteNode(n.Do); err != nil {
+								walkErr = err
+								return errors.New("stop")
+							}
+							if p.Exited {
+								return errors.New("stop")
+							}
+						}
+					} else {
+						p.ForVars[n.Variable] = fullPattern
 						if err := p.ExecuteNode(n.Do); err != nil {
 							walkErr = err
 							return errors.New("stop")
@@ -634,15 +698,6 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 						if p.Exited {
 							return errors.New("stop")
 						}
-					}
-				} else {
-					p.ForVars[n.Variable] = fullPattern
-					if err := p.ExecuteNode(n.Do); err != nil {
-						walkErr = err
-						return errors.New("stop")
-					}
-					if p.Exited {
-						return errors.New("stop")
 					}
 				}
 			}

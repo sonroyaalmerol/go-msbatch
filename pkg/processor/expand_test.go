@@ -325,6 +325,34 @@ func TestReproNestedExpansion(t *testing.T) {
 	}
 }
 
+// TestDynamicVarTime verifies that %TIME% expands to a string matching the
+// Windows CMD format: " H:MM:SS.CC" (space-padded 24-h hour, no leading zero).
+func TestDynamicVarTime(t *testing.T) {
+	env := processor.NewEmptyEnvironment(true)
+	p := processor.New(env, nil, nil)
+	got := p.ExpandPhase1("%TIME%")
+	// Expected pattern: optional leading space + digits : MM : SS . CC
+	// e.g. " 9:05:03.07" or "14:30:00.00"
+	if len(got) != 11 {
+		t.Fatalf("expected length 11, got %d: %q", len(got), got)
+	}
+	if got[2] != ':' || got[5] != ':' || got[8] != '.' {
+		t.Errorf("unexpected TIME format: %q", got)
+	}
+}
+
+// TestDynamicVarTimeOverridesEnv verifies that dynamic %TIME% is not shadowed
+// by a SET TIME=... assignment, matching CMD behaviour.
+func TestDynamicVarTimeOverridesEnv(t *testing.T) {
+	env := processor.NewEmptyEnvironment(true)
+	env.Set("TIME", "fixed")
+	p := processor.New(env, nil, nil)
+	got := p.ExpandPhase1("%TIME%")
+	if got == "fixed" {
+		t.Errorf("dynamic %%TIME%% should not be overridden by SET, got %q", got)
+	}
+}
+
 func TestUserRealEnv(t *testing.T) {
 	env := processor.NewEnvironment(true)
 	env.Set("N", "1")
