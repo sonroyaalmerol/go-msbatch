@@ -12,19 +12,23 @@ For each drive letter the interpreter consults three sources in order:
 
 1. **`MSBATCH_DRIVE_<LETTER>`** — per-drive override (letter must be uppercase in the var name).
 2. **`MSBATCH_DRIVE_ROOT`** — common prefix applied to all unmapped drives.
-3. Built-in default **`/mnt/<letter>`** (WSL2 convention).
+3. Built-in defaults:
+   - **`Z:`** maps to `/` (Wine convention — Z: is the Unix root)
+   - **All other drives** map to `/mnt/<letter>` (WSL2 convention)
 
 ### Examples
 
 ```sh
-# All defaults (WSL2-style)
+# All defaults (WSL2-style + Wine Z:)
 # C:\foo\bar  →  /mnt/c/foo/bar
 # D:\data     →  /mnt/d/data
+# Z:\home\user → /home/user
 
 # Shift all drives under /drives/
 export MSBATCH_DRIVE_ROOT=/drives/
 # C:\foo\bar  →  /drives/c/foo/bar
 # D:\data     →  /drives/d/data
+# Z:\home\user → /home/user  (Z: always maps to /)
 
 # Pin individual drives, let others fall through to MSBATCH_DRIVE_ROOT
 export MSBATCH_DRIVE_C=/windows
@@ -33,6 +37,7 @@ export MSBATCH_DRIVE_ROOT=/mnt/
 # C:\foo\bar  →  /windows/foo/bar
 # D:\data     →  /media/data/data
 # E:\tmp      →  /mnt/e/tmp   (fallback to MSBATCH_DRIVE_ROOT)
+# Z:\home     →  /home       (Z: always maps to /)
 ```
 
 All variables are read from the **host** environment (not from inside the batch script).
@@ -75,7 +80,7 @@ When **no UNC variable matches**, the path is passed through unchanged (with bac
 
 ## Running .exe Files
 
-On non-Windows hosts, invoking a `.exe` binary (e.g. `program.exe` or `C:\Tools\app.exe`) follows a two-step resolution process.
+On non-Windows hosts, invoking a `.exe` binary (e.g. `program.exe` or `C:\Tools\app.exe`) follows a resolution process with automatic Wine fallback.
 
 ### 1. Native Binary Lookup
 
@@ -122,21 +127,37 @@ cannot execute 'program.exe': no exe prefix configured (set MSBATCH_EXE_PREFIX, 
 
 `ERRORLEVEL` is set to `9009` in that case, matching the standard "not recognised" exit code.
 
+### 3. Automatic Wine Fallback for Unknown Commands
+
+When a command is not found as an internal command, batch file, or native binary, `go-msbatch` will automatically try running it via Wine (if `MSBATCH_EXE_PREFIX` is configured). This allows scripts to call Windows executables without the `.exe` extension:
+
+```
+# If "mytool" is not found as a native command or batch file,
+# go-msbatch will try: wine mytool.exe
+mytool arg1 arg2
+```
+
+This fallback respects Wine's internal PATH, so commands in `C:\Windows\System32` and other Wine-mapped directories will be found even if they're not visible to the host OS.
+
 ### How it works
 
-The variable is split on whitespace.  The first token becomes the executable; any remaining tokens are prepended before the `.exe` path.  The `.exe` path is run through `MapPath` (drive-letter remapping) so the prefix tool receives a valid Unix path to the binary:
+The variable is split on whitespace. The first token becomes the executable; any remaining tokens are prepended before the `.exe` path. The `.exe` path is passed directly to Wine (not mapped) so Wine can resolve it through its own Windows APIs:
 
 ```
 MSBATCH_EXE_PREFIX="wine64 --some-flag"
 C:\Tools\app.exe C:\data\file.txt
-→  wine64 --some-flag /mnt/c/Tools/app.exe C:\data\file.txt
-                      ^^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^^^^
-                      mapped (prefix tool   NOT mapped — the
-                      needs a Unix path     Windows binary handles
-                      to load the binary)   this via Windows APIs
+→  wine64 --some-flag C:\Tools\app.exe C:\data\file.txt
+                       ^^^^^^^^^^^^^^^^^ NOT mapped — Wine resolves
+                       this via Windows APIs
+
+Z:\home\user\file.txt
+→  wine64 ... Z:\home\user\file.txt
+                       ^^^^^^^^^^^^^^^^^^^ Z: paths work in Wine!
 ```
 
-Arguments are intentionally **not** converted to Unix paths.  The Windows binary resolves paths through Windows API calls, which the compatibility layer (e.g. Wine) intercepts and translates internally.  Passing Unix paths as arguments would break any program that treats those strings as Windows paths.
+**Z: drive paths are preserved** when passed to Wine. In Wine, `Z:` maps to the Unix root `/`, so `Z:\home\user\file.txt` correctly accesses `/home/user/file.txt`.
+
+Arguments are intentionally **not** converted to Unix paths. The Windows binary resolves paths through Windows API calls, which the compatibility layer (e.g. Wine) intercepts and translates internally. Passing Unix paths as arguments would break any program that treats those strings as Windows paths.
 
 ### Caveats
 

@@ -26,9 +26,48 @@ See [docs/lsp.md](docs/lsp.md) for editor setup and a full feature list.
 # Run a batch file
 msbatch script.bat [arg1 arg2 ...]
 
+# Run with /C (execute command and exit)
+msbatch /C "echo hello & set A=1"
+
+# Run with /K (execute command then enter interactive mode)
+msbatch /K "set MYVAR=hello"
+
 # Interactive REPL
 msbatch
 ```
+
+### Interactive Mode
+
+When run without arguments, `msbatch` starts an interactive session with:
+
+- **Tab completion** for commands and file paths
+- **Command history** (saved to `~/.msbatch_history`)
+- **Line continuation** with `^` (More? prompt)
+- **Batch file execution** — type `./script.bat` to run a batch file in the current session
+- **CMD-style prompt** (customizable via `PROMPT` variable)
+
+```batch
+C:\> echo hello
+hello
+C:\> set MYVAR=world
+C:\> echo %MYVAR%
+world
+C:\> ./myscript.bat arg1 arg2
+```
+
+### Wine Integration
+
+On Linux/macOS, `msbatch` can run Windows `.exe` files via Wine:
+
+```bash
+# Set the Wine prefix
+export MSBATCH_EXE_PREFIX=wine
+
+# Now Windows executables work
+msbatch myscript.bat
+```
+
+Z: drive paths work natively (`Z:\home\user\file` → `/home/user/file`), enabling full Wine compatibility.
 
 ## Library usage
 

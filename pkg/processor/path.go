@@ -13,7 +13,9 @@ import (
 //  1. MSBATCH_DRIVE_<LETTER>  — per-drive override, e.g. MSBATCH_DRIVE_C=/mnt/c
 //  2. MSBATCH_DRIVE_ROOT      — common prefix, e.g. MSBATCH_DRIVE_ROOT=/drives/
 //     → resolves to <prefix><lowercase-letter>
-//  3. Built-in default /mnt/<lowercase-letter>  (WSL2 convention)
+//  3. Built-in defaults:
+//     - Z: maps to "/" (Wine convention: Z: is the Unix root)
+//     - Other drives map to /mnt/<lowercase-letter> (WSL2 convention)
 func driveMount(letter byte) string {
 	lower := strings.ToLower(string(letter))
 	upper := strings.ToUpper(lower)
@@ -31,7 +33,13 @@ func driveMount(letter byte) string {
 		return strings.TrimRight(root+lower, "/")
 	}
 
-	// 3. Default WSL2-style mount.
+	// 3. Built-in defaults.
+	// Z: drive maps to Unix root (Wine convention)
+	if lower == "z" {
+		return ""
+	}
+
+	// Default WSL2-style mount for other drives.
 	return "/mnt/" + lower
 }
 
