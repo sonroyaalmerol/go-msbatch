@@ -177,7 +177,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		}
 		expandedPrompt := p.ExpandPrompt(prompt)
 		// Join with "" because we preserved whitespace in RawArgs
-		fmt.Fprintf(p.Stdout, "%s%s%s\n", expandedPrompt, expanded.Name, strings.Join(expanded.RawArgs, ""))
+		fmt.Fprintf(p.Console, "%s%s%s\n", expandedPrompt, expanded.Name, strings.Join(expanded.RawArgs, ""))
 	}
 
 	// Flow-control commands are handled directly by the Processor because they

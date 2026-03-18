@@ -22,6 +22,7 @@ type Processor struct {
 	Stdout   io.Writer
 	Stdin    io.Reader
 	Stderr   io.Writer
+	Console  io.Writer
 	Logger   *slog.Logger
 	Nodes     []parser.Node
 	PC        int
@@ -42,6 +43,7 @@ func New(env *Environment, args []string, exec CommandExecutor) *Processor {
 		Stdout:   os.Stdout,
 		Stdin:    os.Stdin,
 		Stderr:   os.Stderr,
+		Console:  os.Stdout,
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Executor: exec,
 	}

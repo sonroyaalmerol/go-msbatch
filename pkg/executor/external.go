@@ -311,6 +311,7 @@ func runBatchFile(p *processor.Processor, batPath string, args []string) error {
 	child.Stdout = p.Stdout
 	child.Stderr = p.Stderr
 	child.Stdin = p.Stdin
+	child.Console = p.Stdout
 	// Echo state is inherited from the caller; changes inside the called batch
 	// persist back to the caller (CMD global echo state behaviour).
 	child.Echo = p.Echo
