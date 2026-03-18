@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -265,6 +266,13 @@ func runInteractive() {
 			continue
 		}
 
+		if handled, err := handleInteractiveLine(proc, line, rl.Stdout()); handled {
+			if err != nil {
+				fmt.Fprintf(rl.Stdout(), "Error: %v\n", err)
+			}
+			continue
+		}
+
 		nodes := processor.ParseExpanded(line)
 		if err := proc.Execute(nodes); err != nil {
 			fmt.Fprintf(rl.Stdout(), "Error: %v\n", err)
@@ -305,9 +313,82 @@ func runInteractiveFallback(proc *processor.Processor) {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
+
+		if handled, err := handleInteractiveLine(proc, line, os.Stdout); handled {
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			}
+			continue
+		}
+
 		nodes := processor.ParseExpanded(line)
 		if err := proc.Execute(nodes); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		}
 	}
+}
+
+// isBatchFile checks if the given path looks like a batch file invocation.
+// It returns the cleaned file path and true if it is, or empty string and false otherwise.
+func isBatchFile(line string) (string, bool) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return "", false
+	}
+
+	// Split to get the first token (potential batch file path)
+	parts := strings.Fields(line)
+	if len(parts) == 0 {
+		return "", false
+	}
+
+	firstToken := parts[0]
+
+	// Check if it has a .bat or .cmd extension
+	lower := strings.ToLower(firstToken)
+	if !strings.HasSuffix(lower, ".bat") && !strings.HasSuffix(lower, ".cmd") {
+		return "", false
+	}
+
+	// Check if the file exists
+	if _, err := os.Stat(firstToken); err != nil {
+		return "", false
+	}
+
+	return firstToken, true
+}
+
+// handleInteractiveLine checks if the line is a batch file invocation and executes it.
+// Returns (true, nil) if handled, (true, error) if handled with error, (false, nil) if not a batch file.
+func handleInteractiveLine(proc *processor.Processor, line string, stdout io.Writer) (bool, error) {
+	batchFile, isBatch := isBatchFile(line)
+	if !isBatch {
+		return false, nil
+	}
+
+	// Read the batch file
+	content, err := os.ReadFile(batchFile)
+	if err != nil {
+		return true, fmt.Errorf("error reading file: %v", err)
+	}
+
+	// Strip Unix shebang so scripts can start with #!/usr/bin/env msbatch
+	raw := string(content)
+	if strings.HasPrefix(raw, "#!") {
+		if nl := strings.IndexByte(raw, '\n'); nl >= 0 {
+			raw = raw[nl+1:]
+		} else {
+			raw = ""
+		}
+	}
+
+	// Parse and execute in the current processor context
+	src := processor.Phase0ReadLine(raw)
+	nodes := processor.ParseExpanded(src)
+
+	if err := proc.Execute(nodes); err != nil {
+		return true, err
+	}
+
+	return true, nil
 }
