@@ -427,13 +427,17 @@ func (p *Processor) executeIf(n *parser.IfNode) error {
 
 	switch cond.Kind {
 	case parser.CondExist:
-		path := pathutil.MapPath(p.ProcessLine(cond.Arg))
+		rawPath := p.ProcessLine(cond.Arg)
+		path := pathutil.MapPath(rawPath)
+		cwd, _ := os.Getwd()
 		if strings.ContainsAny(path, "*?[") {
 			matches, err := pathutil.GlobCaseInsensitive(path)
 			conditionMet = (err == nil && len(matches) > 0)
+			p.Logger.Debug("IF EXIST check (wildcard)", "raw", rawPath, "mapped", path, "cwd", cwd, "matches", len(matches), "result", conditionMet)
 		} else {
 			_, err := os.Stat(path)
 			conditionMet = (err == nil)
+			p.Logger.Debug("IF EXIST check", "raw", rawPath, "mapped", path, "cwd", cwd, "error", err, "result", conditionMet)
 		}
 	case parser.CondCompare:
 		left := p.ProcessLine(cond.Left)
