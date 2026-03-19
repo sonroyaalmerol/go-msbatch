@@ -239,8 +239,7 @@ func (p *Parser) collectForSet() []string {
 
 		stoken := p.collectStoken()
 		if stoken != "" {
-			// Quoted strings are single items even if they contain commas.
-			if len(stoken) >= 2 && (stoken[0] == '"' || stoken[0] == '\'') && stoken[len(stoken)-1] == stoken[0] {
+			if len(stoken) >= 2 && (stoken[0] == '"' || stoken[0] == '\'' || stoken[0] == '`') && stoken[len(stoken)-1] == stoken[0] {
 				items = append(items, stoken)
 			} else {
 				// Commas are separators in FOR sets (equivalent to spaces).
@@ -299,16 +298,13 @@ func (p *Parser) collectStoken() string {
 			return p.collectQuotedString()
 
 		case lexer.TokenKeyword:
-			// A keyword adjacent to other tokens (e.g. "call" inside a path) is
-			// part of the same stoken; stop only when whitespace or an operator
-			// separates tokens.
 			sb.WriteString(val(p.consume()))
 
 		case lexer.TokenText, lexer.TokenWord, lexer.TokenNameVariable, lexer.TokenStringEscape, lexer.TokenNumber:
-			// Accumulate all adjacent word-class tokens as one stoken so that
-			// compound names like Variables\%PROCTYPE%_%ID%_Variables.bat
-			// (which the lexer emits as multiple tokens with no whitespace
-			// between them) are returned as a single string.
+			word := val(t)
+			if sb.Len() == 0 && strings.HasPrefix(word, "`") {
+				return p.collectBacktickString()
+			}
 			sb.WriteString(val(p.consume()))
 
 		case lexer.TokenPunctuation:
@@ -325,6 +321,34 @@ func (p *Parser) collectStoken() string {
 			}
 			sb.WriteString(val(p.consume()))
 
+		default:
+			sb.WriteString(val(p.consume()))
+		}
+	}
+	return sb.String()
+}
+
+func (p *Parser) collectBacktickString() string {
+	var sb strings.Builder
+	for p.pos < len(p.tokens) {
+		t := p.peek()
+		switch t.Type {
+		case lexer.TokenEOF, lexer.TokenNewline:
+			return sb.String()
+		case lexer.TokenWhitespace:
+			sb.WriteString(val(p.consume()))
+		case lexer.TokenText, lexer.TokenWord, lexer.TokenNameVariable, lexer.TokenStringEscape, lexer.TokenNumber:
+			word := val(t)
+			sb.WriteString(val(p.consume()))
+			if strings.HasSuffix(word, "`") && len(word) > 1 {
+				return sb.String()
+			}
+		case lexer.TokenPunctuation:
+			v := val(t)
+			if v == ")" {
+				return sb.String()
+			}
+			sb.WriteString(val(p.consume()))
 		default:
 			sb.WriteString(val(p.consume()))
 		}

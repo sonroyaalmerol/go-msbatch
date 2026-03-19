@@ -62,9 +62,6 @@ func (bl *BatchLexer) stateRoot() stateFn {
 	case r == '"':
 		bl.atCommandStart = false
 		return bl.lexStringDoubleBody(bl.stateRoot)()
-	case r == '`':
-		bl.atCommandStart = false
-		return bl.lexStringBTBody(bl.stateRoot)()
 	case r == '^':
 		bl.atCommandStart = false
 		r2 := bl.next()

@@ -100,7 +100,7 @@ func TestSingleTokens(t *testing.T) {
 		{"comment_rem_text", "rem hello", []tok{{TokenKeyword, "rem"}, {TokenComment, " hello"}}},
 		// :: comment — the "::" prefix is included in the value.
 		{"comment_double_colon", ":: a comment", []tok{{TokenComment, ":: a comment"}}},
-		{"comment_double_colon_empty", "::", []tok{{TokenComment, "::"}}}	,
+		{"comment_double_colon_empty", "::", []tok{{TokenComment, "::"}}},
 
 		// ── TokenNameLabel ────────────────────────────────────────────────
 		{"label_simple", ":myLabel", []tok{{TokenPunctuation, ":"}, {TokenNameLabel, "myLabel"}}},
@@ -125,10 +125,10 @@ func TestSingleTokens(t *testing.T) {
 		// unterminated string — EOF ends it
 		{"string_double_unclosed", `"hello`, []tok{{TokenStringDouble, `"hello`}}},
 
-		// ── TokenStringBT ─────────────────────────────────────────────────
-		{"string_bt", "`hello`", []tok{{TokenStringBT, "`hello`"}}},
-		{"string_bt_empty", "``", []tok{{TokenStringBT, "``"}}},
-		{"string_bt_unclosed", "`hello", []tok{{TokenStringBT, "`hello"}}},
+		// ── Backticks are regular characters (not string delimiters) ────────
+		{"backtick_as_word", "`hello`", []tok{{TokenWord, "`hello`"}}},
+		{"backtick_empty", "``", []tok{{TokenWord, "``"}}},
+		{"backtick_unclosed", "`hello", []tok{{TokenWord, "`hello"}}},
 
 		// ── TokenStringEscape ─────────────────────────────────────────────
 		{"escape_caret_char", "^a", []tok{{TokenStringEscape, "a"}}},
@@ -798,7 +798,7 @@ func TestEdgeCases(t *testing.T) {
 		// ── unterminated constructs ────────────────────────────────────────
 		// EOF terminates strings without error.
 		{"unclosed_double_quote", `"hello`, []tok{{TokenStringDouble, `"hello`}}},
-		{"unclosed_backtick", "`hello", []tok{{TokenStringBT, "`hello"}}},
+		{"unclosed_backtick", "`hello", []tok{{TokenWord, "`hello"}}},
 		// Unclosed delayed variable — reads to EOF.
 		{"unclosed_delayed_var", "!FOO", []tok{{TokenNameVariable, "!FOO"}}},
 
@@ -836,7 +836,7 @@ func TestEdgeCases(t *testing.T) {
 				{TokenWhitespace, " "},
 				{TokenWord, "is"},
 				{TokenWhitespace, " "},
-				{TokenWord, "not"},  // "not" in statement position is a keyword
+				{TokenWord, "not"}, // "not" in statement position is a keyword
 				// wait — "not" IS a keyword (modifier, next=nil) → Keyword "not" → stateFollow
 				// Actually "not" in keywordTable with next=nil → Keyword, then stateFollow
 				// Let me reconsider this test case...
