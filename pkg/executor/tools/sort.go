@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
@@ -37,7 +38,7 @@ func Sort(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		} else if strings.HasPrefix(lower, "/") && !strings.ContainsRune(lower[1:], '/') {
 			// ignore short Windows-style flags (/+n column sort, etc.)
 		} else {
-			f, err := os.Open(processor.MapPath(arg))
+			f, err := os.Open(pathutil.MapPath(arg))
 			if err != nil {
 				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
 				p.Failure()

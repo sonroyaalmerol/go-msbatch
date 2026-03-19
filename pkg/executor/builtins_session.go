@@ -10,6 +10,7 @@ import (
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/executor/tools"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
@@ -173,8 +174,8 @@ func cmdMklink(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		p.Failure()
 		return nil
 	}
-	linkPath := processor.MapPath(linkName)
-	targetPath := processor.MapPath(target)
+	linkPath := pathutil.MapPath(linkName)
+	targetPath := pathutil.MapPath(target)
 	var err error
 	if isHard {
 		err = os.Link(targetPath, linkPath)
@@ -203,7 +204,7 @@ func cmdRen(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 	srcPattern := cmd.Args[0]
 	dstPattern := cmd.Args[1]
-	src := processor.MapPath(srcPattern)
+	src := pathutil.MapPath(srcPattern)
 
 	matches := tools.GlobOrLiteral(src)
 
@@ -236,7 +237,7 @@ func cmdMore(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		if strings.HasPrefix(arg, "/") {
 			continue
 		}
-		content, err := os.ReadFile(processor.MapPath(arg))
+		content, err := os.ReadFile(pathutil.MapPath(arg))
 		if err != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
 			p.Failure()
@@ -277,7 +278,7 @@ func cmdStart(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		p.Success()
 		return nil
 	}
-	c := exec.Command(processor.MapPath(cmdArgs[0]), cmdArgs[1:]...)
+	c := exec.Command(pathutil.MapPath(cmdArgs[0]), cmdArgs[1:]...)
 	c.Stdout = p.Stdout
 	c.Stderr = p.Stderr
 	c.Stdin = p.Stdin

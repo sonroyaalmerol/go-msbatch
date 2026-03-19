@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
@@ -103,7 +104,7 @@ func parseFindstrArgs(args []string) (*findstrOptions, error) {
 		case strings.HasPrefix(upper, "/F:") || strings.HasPrefix(upper, "-F:"):
 			opts.fileList = arg[3:]
 		case strings.HasPrefix(upper, "/C:") || strings.HasPrefix(upper, "-C:"):
-			opts.patterns = append(opts.patterns, processor.StripQuotes(arg[3:]))
+			opts.patterns = append(opts.patterns, pathutil.StripQuotes(arg[3:]))
 		case strings.HasPrefix(upper, "/D:") || strings.HasPrefix(upper, "-D:"):
 			for d := range strings.SplitSeq(arg[3:], ",") {
 				if d != "" {
@@ -127,7 +128,7 @@ func parseFindstrArgs(args []string) (*findstrOptions, error) {
 					}
 				}
 			} else {
-				opts.files = append(opts.files, processor.MapPath(processor.StripQuotes(arg)))
+				opts.files = append(opts.files, pathutil.MapPath(pathutil.StripQuotes(arg)))
 			}
 		}
 	}
@@ -253,7 +254,7 @@ func Findstr(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 
 	if opts.stringsFile != "" {
-		path := processor.MapPath(opts.stringsFile)
+		path := pathutil.MapPath(opts.stringsFile)
 		lines, err := readLines(path)
 		if err != nil {
 			fmt.Fprintf(p.Stderr, "FINDSTR: cannot open %s\n", opts.stringsFile)
@@ -277,7 +278,7 @@ func Findstr(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 
 	if opts.fileList != "" {
-		path := processor.MapPath(opts.fileList)
+		path := pathutil.MapPath(opts.fileList)
 		lines, err := readLines(path)
 		if err != nil {
 			fmt.Fprintf(p.Stderr, "FINDSTR: cannot open %s\n", opts.fileList)
@@ -285,7 +286,7 @@ func Findstr(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			return nil
 		}
 		for _, l := range lines {
-			opts.files = append(opts.files, processor.MapPath(l))
+			opts.files = append(opts.files, pathutil.MapPath(l))
 		}
 	}
 
@@ -353,7 +354,7 @@ func Findstr(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			for _, dir := range opts.dirList {
 				for _, pat := range opts.files {
 					base := filepath.Base(pat)
-					full := filepath.Join(processor.MapPath(dir), base)
+					full := filepath.Join(pathutil.MapPath(dir), base)
 					targets = append(targets, full)
 				}
 			}

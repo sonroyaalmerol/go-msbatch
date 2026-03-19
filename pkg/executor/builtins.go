@@ -11,6 +11,7 @@ import (
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/executor/tools"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 	"golang.org/x/term"
 )
@@ -43,7 +44,7 @@ func cmdSet(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// Join raw args to preserve spacing, then trim exactly one leading delimiter run
 	arg := processor.ExtractRawArgString(cmd.RawArgs)
 
-	arg = processor.StripQuotes(arg)
+	arg = pathutil.StripQuotes(arg)
 
 	if strings.HasPrefix(strings.ToLower(arg), "/a") {
 		_, err := p.EvalArithmetic(arg[2:])
@@ -100,7 +101,7 @@ func cmdCd(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		p.Success()
 		return nil
 	}
-	if err := os.Chdir(processor.MapPath(args[0])); err != nil {
+	if err := os.Chdir(pathutil.MapPath(args[0])); err != nil {
 		fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
 		p.Failure()
 	} else {
@@ -112,7 +113,7 @@ func cmdCd(p *processor.Processor, cmd *parser.SimpleCommand) error {
 func cmdType(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	failed := false
 	for _, arg := range cmd.Args {
-		content, err := os.ReadFile(processor.MapPath(arg))
+		content, err := os.ReadFile(pathutil.MapPath(arg))
 		if err != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
 			failed = true
@@ -211,7 +212,7 @@ func cmdPushd(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	pwd, _ := os.Getwd()
 	p.DirStack = append(p.DirStack, pwd)
 	if len(cmd.Args) > 0 {
-		if err := os.Chdir(processor.MapPath(cmd.Args[0])); err != nil {
+		if err := os.Chdir(pathutil.MapPath(cmd.Args[0])); err != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
 			p.DirStack = p.DirStack[:len(p.DirStack)-1]
 			p.Failure()
@@ -239,7 +240,7 @@ func cmdMkdir(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		if strings.HasPrefix(arg, "/") {
 			continue
 		}
-		if err := os.MkdirAll(processor.MapPath(arg), 0755); err != nil {
+		if err := os.MkdirAll(pathutil.MapPath(arg), 0755); err != nil {
 			fmt.Fprintf(p.Stderr, "A subdirectory or file %s already exists.\n", arg)
 			p.Failure()
 			return nil
@@ -264,9 +265,9 @@ func cmdRmdir(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	for _, dirPath := range paths {
 		var err error
 		if recursive {
-			err = os.RemoveAll(processor.MapPath(dirPath))
+			err = os.RemoveAll(pathutil.MapPath(dirPath))
 		} else {
-			err = os.Remove(processor.MapPath(dirPath))
+			err = os.Remove(pathutil.MapPath(dirPath))
 		}
 		if err != nil {
 			fmt.Fprintf(p.Stderr, "The directory is not empty.\n")
@@ -294,7 +295,7 @@ func cmdDel(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 	}
 	for _, pat := range patterns {
-		mapped := processor.MapPath(pat)
+		mapped := pathutil.MapPath(pat)
 		if recursive {
 			base := filepath.Base(mapped)
 			filepath.Walk(filepath.Dir(mapped), func(path string, info os.FileInfo, err error) error {
@@ -364,9 +365,9 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	if !hasPlus {
 		if len(rawArgs) >= 2 {
 			dstPattern = rawArgs[len(rawArgs)-1]
-			dst = processor.MapPath(dstPattern)
+			dst = pathutil.MapPath(dstPattern)
 			for _, s := range rawArgs[:len(rawArgs)-1] {
-				mapped := processor.MapPath(s)
+				mapped := pathutil.MapPath(s)
 				if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
 					for _, m := range matches {
 						srcs = append(srcs, srcEntry{path: m, pattern: s})
@@ -376,7 +377,7 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 				}
 			}
 		} else {
-			srcs = []srcEntry{{path: processor.MapPath(rawArgs[0]), pattern: rawArgs[0]}}
+			srcs = []srcEntry{{path: pathutil.MapPath(rawArgs[0]), pattern: rawArgs[0]}}
 			dst, _ = os.Getwd()
 		}
 	} else {
@@ -386,7 +387,7 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			prev := rawArgs[len(rawArgs)-2]
 			if !strings.Contains(last, "+") && prev != "+" && !strings.HasSuffix(prev, "+") {
 				dstPattern = last
-				dst = processor.MapPath(last)
+				dst = pathutil.MapPath(last)
 				srcArgs = rawArgs[:len(rawArgs)-1]
 			}
 		}
@@ -399,7 +400,7 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 				if part == "" {
 					continue
 				}
-				mapped := processor.MapPath(part)
+				mapped := pathutil.MapPath(part)
 				if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
 					for _, m := range matches {
 						srcs = append(srcs, srcEntry{path: m, pattern: part})
@@ -526,8 +527,8 @@ func cmdMove(p *processor.Processor, cmd *parser.SimpleCommand) error {
 
 	srcPattern := args[0]
 	dstPattern := args[1]
-	src := processor.MapPath(srcPattern)
-	dst := processor.MapPath(dstPattern)
+	src := pathutil.MapPath(srcPattern)
+	dst := pathutil.MapPath(dstPattern)
 
 	srcs := tools.GlobOrLiteral(src)
 
@@ -566,7 +567,7 @@ func cmdDir(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			recursive = true
 		default:
 			if !strings.HasPrefix(arg, "/") || strings.ContainsRune(arg[1:], '/') {
-				dirPath = processor.MapPath(arg)
+				dirPath = pathutil.MapPath(arg)
 			}
 		}
 	}

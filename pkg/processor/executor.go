@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 )
 
 // Execute runs the AST nodes.
@@ -210,7 +211,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 
 	if !expanded.RedirectsApplied {
 		for _, r := range expanded.Redirects {
-			targetPath := MapPath(r.Target)
+			targetPath := pathutil.MapPath(r.Target)
 			switch r.Kind {
 			case parser.RedirectOut:
 				f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
@@ -426,7 +427,7 @@ func (p *Processor) executeIf(n *parser.IfNode) error {
 
 	switch cond.Kind {
 	case parser.CondExist:
-		path := MapPath(p.ProcessLine(cond.Arg))
+		path := pathutil.MapPath(p.ProcessLine(cond.Arg))
 		if strings.ContainsAny(path, "*?[") {
 			matches, err := filepath.Glob(path)
 			conditionMet = (err == nil && len(matches) > 0)
@@ -438,8 +439,8 @@ func (p *Processor) executeIf(n *parser.IfNode) error {
 		left := p.ProcessLine(cond.Left)
 		right := p.ProcessLine(cond.Right)
 
-		left = StripQuotes(left)
-		right = StripQuotes(right)
+		left = pathutil.StripQuotes(left)
+		right = pathutil.StripQuotes(right)
 
 		isNumeric := false
 		var lVal, rVal int
@@ -570,7 +571,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 		for _, item := range n.Set {
 			expandedItem := p.ProcessLine(item)
 			for _, part := range splitForSetItems(expandedItem) {
-				matches, err := filepath.Glob(MapPath(part))
+				matches, err := filepath.Glob(pathutil.MapPath(part))
 				if err != nil || len(matches) == 0 {
 					matches = []string{part}
 				}
@@ -626,7 +627,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 		for _, item := range n.Set {
 			expandedItem := p.ProcessLine(item)
 			for _, part := range splitForSetItems(expandedItem) {
-				mapped := MapPath(part)
+				mapped := pathutil.MapPath(part)
 				dir := filepath.Dir(mapped)
 				pattern := filepath.Base(mapped)
 				entries, err := os.ReadDir(dir)
@@ -663,7 +664,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 			if len(opt) >= 2 && opt[0] == '"' && opt[len(opt)-1] == '"' {
 				opt = opt[1 : len(opt)-1]
 			}
-			rootDir = MapPath(opt)
+			rootDir = pathutil.MapPath(opt)
 		}
 		var walkErr error
 		err := filepath.Walk(rootDir, func(dirPath string, info os.FileInfo, err error) error {
@@ -747,7 +748,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 				expanded := p.ProcessLine(rawItem)
 				lines = []string{expanded}
 			} else {
-				path := MapPath(p.ProcessLine(rawItem))
+				path := pathutil.MapPath(p.ProcessLine(rawItem))
 				content, err := os.ReadFile(path)
 				if err == nil {
 					lines = strings.Split(string(content), "\n")

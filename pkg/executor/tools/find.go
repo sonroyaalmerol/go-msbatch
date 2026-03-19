@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
@@ -59,7 +60,7 @@ func Find(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			if searchStr == "" {
 				searchStr = strings.Trim(arg, "\"")
 			} else {
-				files = append(files, processor.MapPath(arg))
+				files = append(files, pathutil.MapPath(arg))
 			}
 		}
 	}

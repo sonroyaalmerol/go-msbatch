@@ -28,8 +28,8 @@ type Processor struct {
 	Nodes        []parser.Node
 	PC           int
 	Exited       bool
-	CallDepth    int      // incremented inside CALL :label frames
-	DirStack     []string // directory stack for PUSHD/POPD
+	CallDepth    int             // incremented inside CALL :label frames
+	DirStack     []string        // directory stack for PUSHD/POPD
 	Executor     CommandExecutor // handles non-flow-control command dispatch
 }
 
@@ -199,27 +199,6 @@ func ExtractRawArgString(args []string) string {
 	return ""
 }
 
-// StripQuotes removes a single layer of surrounding quotes (", ', or `) from s.
-func StripQuotes(s string) string {
-	if len(s) >= 2 {
-		q := s[0]
-		if (q == '"' || q == '\'' || q == '`') && s[len(s)-1] == q {
-			return s[1 : len(s)-1]
-		}
-	}
-	return s
-}
-
-// ExpandPrompt expands all $X codes in a PROMPT string.
-// Supported codes (case-insensitive):
-//
-//	$$  →  $          $A  →  &        $B  →  |
-//	$C  →  (          $D  →  date     $E  →  ESC (\x1B)
-//	$F  →  )          $G  →  >        $H  →  backspace (\x08)
-//	$L  →  <          $M  →  (empty on non-UNC drives)
-//	$N  →  drive letter  $P  →  drive+path
-//	$Q  →  =          $S  →  (space)  $T  →  time
-//	$V  →  version    $_  →  newline
 func (p *Processor) ExpandPrompt(prompt string) string {
 	now := time.Now()
 	pwd, _ := os.Getwd()

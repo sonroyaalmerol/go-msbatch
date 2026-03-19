@@ -1,4 +1,4 @@
-package processor
+package pathutil
 
 import (
 	"os"
@@ -7,25 +7,24 @@ import (
 	"strings"
 )
 
-// driveMount returns the Unix mount point for a single drive letter.
-//
-// Lookup order (first non-empty value wins):
-//  1. MSBATCH_DRIVE_<LETTER>  — per-drive override, e.g. MSBATCH_DRIVE_C=/mnt/c
-//  2. MSBATCH_DRIVE_ROOT      — common prefix, e.g. MSBATCH_DRIVE_ROOT=/drives/
-//     → resolves to <prefix><lowercase-letter>
-//  3. Built-in defaults:
-//     - Z: maps to "/" (Wine convention: Z: is the Unix root)
-//     - Other drives map to /mnt/<lowercase-letter> (WSL2 convention)
-func driveMount(letter byte) string {
+func StripQuotes(s string) string {
+	if len(s) >= 2 {
+		q := s[0]
+		if (q == '"' || q == '\'' || q == '`') && s[len(s)-1] == q {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
+}
+
+func DriveMount(letter byte) string {
 	lower := strings.ToLower(string(letter))
 	upper := strings.ToUpper(lower)
 
-	// 1. Per-drive override.
 	if v := os.Getenv("MSBATCH_DRIVE_" + upper); v != "" {
 		return strings.TrimRight(v, "/")
 	}
 
-	// 2. Common prefix.
 	if root := os.Getenv("MSBATCH_DRIVE_ROOT"); root != "" {
 		if !strings.HasSuffix(root, "/") {
 			root += "/"
@@ -33,19 +32,13 @@ func driveMount(letter byte) string {
 		return strings.TrimRight(root+lower, "/")
 	}
 
-	// 3. Built-in defaults.
-	// Z: drive maps to Unix root (Wine convention)
 	if lower == "z" {
 		return ""
 	}
 
-	// Default WSL2-style mount for other drives.
 	return "/mnt/" + lower
 }
 
-// uncEnvKey converts a server or share name into an environment-variable-safe
-// identifier: uppercased, with runs of non-alphanumeric characters replaced
-// by a single underscore.
 func uncEnvKey(s string) string {
 	s = strings.ToUpper(s)
 	var b strings.Builder
@@ -62,33 +55,18 @@ func uncEnvKey(s string) string {
 	return strings.Trim(b.String(), "_")
 }
 
-// uncMount returns the Unix path for a UNC server+share pair.
-//
-// Lookup order (first non-empty value wins):
-//  1. MSBATCH_UNC_<SERVER>_<SHARE>  — exact mount for this server/share pair.
-//     \\myserver\docs  →  MSBATCH_UNC_MYSERVER_DOCS=/home/user/docs
-//  2. MSBATCH_UNC_<SERVER>           — root for all shares on this server;
-//     share name is appended as a subdirectory.
-//     \\myserver\docs  →  MSBATCH_UNC_MYSERVER=/mnt/myserver  →  /mnt/myserver/docs
-//  3. MSBATCH_UNC_ROOT               — root for all UNC paths;
-//     server and share are appended as subdirectories.
-//     \\myserver\docs  →  MSBATCH_UNC_ROOT=/mnt/unc  →  /mnt/unc/myserver/docs
-//  4. No default — returns "" to signal "unmapped".
 func uncMount(server, share string) string {
 	sk := uncEnvKey(server)
 	hk := uncEnvKey(share)
 
-	// 1. Per server+share.
 	if v := os.Getenv("MSBATCH_UNC_" + sk + "_" + hk); v != "" {
 		return strings.TrimRight(v, "/")
 	}
 
-	// 2. Per server.
 	if v := os.Getenv("MSBATCH_UNC_" + sk); v != "" {
 		return strings.TrimRight(v, "/") + "/" + strings.ToLower(share)
 	}
 
-	// 3. Common UNC root.
 	if root := os.Getenv("MSBATCH_UNC_ROOT"); root != "" {
 		return strings.TrimRight(root, "/") + "/" + strings.ToLower(server) + "/" + strings.ToLower(share)
 	}
@@ -122,7 +100,7 @@ func ResolveCaseInsensitive(path string) string {
 
 		entries, err := os.ReadDir(currentPath)
 		if err != nil {
-			return path // fallback
+			return path
 		}
 
 		matched := false
@@ -135,7 +113,7 @@ func ResolveCaseInsensitive(path string) string {
 		}
 
 		if !matched {
-			return path // fallback
+			return path
 		}
 	}
 
@@ -148,31 +126,21 @@ func ResolveCaseInsensitive(path string) string {
 	return currentPath
 }
 
-// MapPath converts a Windows-style path to a platform-appropriate path.
-// On non-Windows platforms, it maps backslashes to forward slashes and
-// resolves drive letters and UNC paths using the MSBATCH_* environment
-// variables described in driveMount and uncMount.
 func MapPath(path string) string {
 	if runtime.GOOS == "windows" {
 		return filepath.Clean(path)
 	}
 
-	// Strip outer quotes before processing the path.
 	path = StripQuotes(path)
 
-	// Replace backslashes with forward slashes.
 	p := strings.ReplaceAll(path, "\\", "/")
 
-	// UNC path: //server/share[/rest]
 	if strings.HasPrefix(p, "//") {
-		// Strip leading slashes and split into components.
 		parts := strings.SplitN(p[2:], "/", 3)
 		if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
 			server, share := parts[0], parts[1]
 			mount := uncMount(server, share)
 			if mount == "" {
-				// No mapping configured — return the path unchanged so callers
-				// can decide how to handle it.
 				return ResolveCaseInsensitive(filepath.Clean(p))
 			}
 			rest := ""
@@ -183,11 +151,71 @@ func MapPath(path string) string {
 		}
 	}
 
-	// Drive letter: C:/foo  →  <mount>/foo
 	if len(p) >= 2 && p[1] == ':' && ((p[0] >= 'a' && p[0] <= 'z') || (p[0] >= 'A' && p[0] <= 'Z')) {
-		mount := driveMount(p[0])
+		mount := DriveMount(p[0])
 		p = mount + p[2:]
 	}
 
 	return ResolveCaseInsensitive(filepath.Clean(p))
+}
+
+func IsPathLike(s string) bool {
+	return strings.HasPrefix(s, "/") ||
+		strings.HasPrefix(s, "./") ||
+		strings.HasPrefix(s, "../") ||
+		strings.Contains(s, "/")
+}
+
+func IsWindowsPathLike(s string) bool {
+	return strings.Contains(s, "\\") || (len(s) >= 2 && s[1] == ':')
+}
+
+func MapArg(arg string) string {
+	if IsWindowsPathLike(arg) {
+		return MapPath(arg)
+	}
+
+	if runtime.GOOS != "windows" && IsPathLike(arg) {
+		return ResolveCaseInsensitive(arg)
+	}
+
+	return arg
+}
+
+func MapArgForWine(arg string) string {
+	if IsWindowsPathLike(arg) {
+		unixPath := MapPath(arg)
+		resolved := ResolveCaseInsensitive(unixPath)
+		return UnixToWinePath(resolved)
+	}
+
+	if IsPathLike(arg) {
+		return ResolveCaseInsensitive(arg)
+	}
+
+	return arg
+}
+
+func UnixToWinePath(unixPath string) string {
+	if unixPath == "" || unixPath == "/" {
+		return "Z:\\"
+	}
+
+	if !strings.HasPrefix(unixPath, "/") {
+		return unixPath
+	}
+
+	for drive := 'C'; drive <= 'Z'; drive++ {
+		mount := DriveMount(byte(drive))
+		if mount == "" {
+			continue
+		}
+		if strings.HasPrefix(unixPath, mount+"/") || unixPath == mount {
+			rel := strings.TrimPrefix(unixPath, mount)
+			return string(drive) + ":" + strings.ReplaceAll(rel, "/", "\\")
+		}
+	}
+
+	rel := strings.TrimPrefix(unixPath, "/")
+	return "Z:\\" + strings.ReplaceAll(rel, "/", "\\")
 }

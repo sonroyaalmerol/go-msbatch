@@ -178,3 +178,157 @@ gawk "{print}" ./mydata/records.txt
 		t.Errorf("Gawk output mismatch\nGOT:\n%s\nWANT:\n%s", got, want)
 	}
 }
+
+func TestGawkAfterCdCaseInsensitive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping gawk test on Windows")
+	}
+
+	if _, err := os.Stat("/usr/bin/gawk"); os.IsNotExist(err) {
+		t.Skip("gawk not available, skipping test")
+	}
+
+	tmpDir := t.TempDir()
+
+	outerDir := filepath.Join(tmpDir, "OuterDir")
+	dataDir := filepath.Join(outerDir, "DataFolder")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatalf("Failed to create data directory: %v", err)
+	}
+
+	dataFile := filepath.Join(dataDir, "InputFile.txt")
+	content := "line1\nline2\nline3\n"
+	if err := os.WriteFile(dataFile, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to create input file: %v", err)
+	}
+
+	batContent := `@echo off
+cd ` + outerDir + `
+gawk "{print}" datafolder/inputfile.txt
+`
+
+	env := processor.NewEnvironment(true)
+	var stdout bytes.Buffer
+	proc := processor.New(env, []string{"test.bat"}, executor.New())
+	proc.Stdout = &stdout
+	proc.Echo = false
+
+	src := processor.Phase0ReadLine(batContent)
+	nodes := processor.ParseExpanded(src)
+
+	err := proc.Execute(nodes)
+	if err != nil {
+		t.Errorf("Execute failed: %v", err)
+	}
+
+	got := stdout.String()
+	want := "line1\nline2\nline3\n"
+
+	if got != want {
+		t.Errorf("Gawk output after cd mismatch\nGOT:\n%s\nWANT:\n%s", got, want)
+	}
+}
+
+func TestGawkAfterPushdCaseInsensitive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping gawk test on Windows")
+	}
+
+	if _, err := os.Stat("/usr/bin/gawk"); os.IsNotExist(err) {
+		t.Skip("gawk not available, skipping test")
+	}
+
+	tmpDir := t.TempDir()
+
+	outerDir := filepath.Join(tmpDir, "ProjectRoot")
+	dataDir := filepath.Join(outerDir, "SourceData")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatalf("Failed to create data directory: %v", err)
+	}
+
+	dataFile := filepath.Join(dataDir, "Records.txt")
+	content := "alpha\nbeta\ngamma\n"
+	if err := os.WriteFile(dataFile, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to create input file: %v", err)
+	}
+
+	batContent := `@echo off
+pushd ` + outerDir + `
+gawk "{print}" sourcedata/records.txt
+popd
+`
+
+	env := processor.NewEnvironment(true)
+	var stdout bytes.Buffer
+	proc := processor.New(env, []string{"test.bat"}, executor.New())
+	proc.Stdout = &stdout
+	proc.Echo = false
+
+	src := processor.Phase0ReadLine(batContent)
+	nodes := processor.ParseExpanded(src)
+
+	err := proc.Execute(nodes)
+	if err != nil {
+		t.Errorf("Execute failed: %v", err)
+	}
+
+	got := stdout.String()
+	want := "alpha\nbeta\ngamma\n"
+
+	if got != want {
+		t.Errorf("Gawk output after pushd mismatch\nGOT:\n%s\nWANT:\n%s", got, want)
+	}
+}
+
+func TestGawkNestedCdCaseInsensitive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping gawk test on Windows")
+	}
+
+	if _, err := os.Stat("/usr/bin/gawk"); os.IsNotExist(err) {
+		t.Skip("gawk not available, skipping test")
+	}
+
+	tmpDir := t.TempDir()
+
+	level1 := filepath.Join(tmpDir, "LevelOne")
+	level2 := filepath.Join(level1, "LevelTwo")
+	dataDir := filepath.Join(level2, "FinalData")
+
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatalf("Failed to create nested directories: %v", err)
+	}
+
+	dataFile := filepath.Join(dataDir, "File.txt")
+	content := "nested content\n"
+	if err := os.WriteFile(dataFile, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to create input file: %v", err)
+	}
+
+	batContent := `@echo off
+cd ` + level1 + `
+cd leveltwo
+gawk "{print}" finaldata/file.txt
+`
+
+	env := processor.NewEnvironment(true)
+	var stdout bytes.Buffer
+	proc := processor.New(env, []string{"test.bat"}, executor.New())
+	proc.Stdout = &stdout
+	proc.Echo = false
+
+	src := processor.Phase0ReadLine(batContent)
+	nodes := processor.ParseExpanded(src)
+
+	err := proc.Execute(nodes)
+	if err != nil {
+		t.Errorf("Execute failed: %v", err)
+	}
+
+	got := stdout.String()
+	want := "nested content\n"
+
+	if got != want {
+		t.Errorf("Gawk output after nested cd mismatch\nGOT:\n%s\nWANT:\n%s", got, want)
+	}
+}

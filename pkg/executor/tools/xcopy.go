@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
@@ -111,7 +112,7 @@ func Xcopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 
 	// Resolve source.
-	mappedSrc := processor.MapPath(srcArg)
+	mappedSrc := pathutil.MapPath(srcArg)
 	isGlob := HasWildcards(filepath.Base(srcArg))
 
 	var srcPaths []string
@@ -130,7 +131,7 @@ func Xcopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// Determine whether destination is a file path or a directory.
 	mappedDst := ""
 	if dstArg != "" {
-		mappedDst = processor.MapPath(dstArg)
+		mappedDst = pathutil.MapPath(dstArg)
 	}
 
 	srcInfo, _ := os.Lstat(mappedSrc)
@@ -448,7 +449,7 @@ func parseXcopyArgs(args []string) (*xcopyOpts, string, string, error) {
 		case strings.HasPrefix(lower, "/exclude:"):
 			parts := strings.Split(arg[9:], "+")
 			for _, f := range parts {
-				pats, err := loadExcludeFile(processor.MapPath(f))
+				pats, err := loadExcludeFile(pathutil.MapPath(f))
 				if err != nil {
 					return nil, "", "", fmt.Errorf("cannot open exclude file: %s", f)
 				}

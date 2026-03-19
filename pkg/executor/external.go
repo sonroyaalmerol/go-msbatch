@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
@@ -48,7 +49,7 @@ func exePrefix(p *processor.Processor) []string {
 //     binary resolves paths through its own Windows API calls (e.g. via Wine),
 //     so converting them to Unix paths beforehand would break path handling.
 func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	cmdName := processor.MapPath(cmd.Name)
+	cmdName := pathutil.MapPath(cmd.Name)
 	p.Logger.Debug("external dispatch", "original", cmd.Name, "mapped", cmdName)
 
 	// If the command doesn't have an extension, try to find a matching .exe or .com.
@@ -100,7 +101,7 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		// unquoted value (matching Windows CMD CALL semantics).
 		var batArgs []string
 		for _, arg := range cmdWords {
-			mapped := mapArg(stripExeArg(arg))
+			mapped := pathutil.MapArg(stripExeArg(arg))
 			if strings.ContainsAny(mapped, "*?[") {
 				if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
 					batArgs = append(batArgs, matches...)
@@ -153,18 +154,12 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		// Arguments are passed verbatim — no MapPath, no glob expansion.
 		// Wine/the Windows binary handles its own path translation internally.
 		//
-		// Exception: If an argument looks like a Unix absolute path (starts with /)
-		// and contains backslashes, we normalize the backslashes to forward slashes.
-		// This handles cases where a Unix path variable is joined with Windows-style
-		// subpaths (e.g. /home/user\data -> /home/user/data).
+		// Resolve case-insensitively for Wine calls. Wine passes paths
+		// directly to the Linux filesystem which is case-sensitive, so we
+		// need to fix the casing before passing to Wine.
 		exeArgs := make([]string, 0, len(cmdWords))
 		for _, arg := range cmdWords {
-			isUnixPath := strings.HasPrefix(arg, "/") || strings.HasPrefix(arg, "./") || strings.HasPrefix(arg, "../")
-			if runtime.GOOS != "windows" && isUnixPath && strings.Contains(arg, "\\") {
-				exeArgs = append(exeArgs, strings.ReplaceAll(arg, "\\", "/"))
-			} else {
-				exeArgs = append(exeArgs, arg)
-			}
+			exeArgs = append(exeArgs, pathutil.MapArgForWine(arg))
 		}
 
 		prefixArgs := make([]string, 0, len(prefix)-1+1+len(exeArgs))
@@ -177,7 +172,7 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// Native Unix command — map paths, expand globs, and strip CMD/CRT quoting.
 	var args []string
 	for _, arg := range cmdWords {
-		mapped := mapArg(stripExeArg(arg))
+		mapped := pathutil.MapArg(stripExeArg(arg))
 		if strings.ContainsAny(mapped, "*?[") {
 			if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
 				args = append(args, matches...)
@@ -253,15 +248,10 @@ func runExeViaWine(p *processor.Processor, cmd *parser.SimpleCommand, exeName st
 		}
 	}
 
-	// Build args for Wine execution
+	// Build args for Wine execution with case-insensitive path resolution
 	exeArgs := make([]string, 0, len(cmdWords))
 	for _, arg := range cmdWords {
-		isUnixPath := strings.HasPrefix(arg, "/") || strings.HasPrefix(arg, "./") || strings.HasPrefix(arg, "../")
-		if runtime.GOOS != "windows" && isUnixPath && strings.Contains(arg, "\\") {
-			exeArgs = append(exeArgs, strings.ReplaceAll(arg, "\\", "/"))
-		} else {
-			exeArgs = append(exeArgs, arg)
-		}
+		exeArgs = append(exeArgs, pathutil.MapArgForWine(arg))
 	}
 
 	prefixArgs := make([]string, 0, len(prefix)-1+1+len(exeArgs))
@@ -378,29 +368,6 @@ func stripExeArg(s string) string {
 	return b.String()
 }
 
-// mapArg applies MapPath to an argument only when it looks like a Windows path.
-func isPathLike(s string) bool {
-	return strings.HasPrefix(s, "/") ||
-		strings.HasPrefix(s, "./") ||
-		strings.HasPrefix(s, "../") ||
-		strings.Contains(s, "/")
-}
-
-func mapArg(arg string) string {
-	if strings.Contains(arg, "\\") || (len(arg) >= 2 && arg[1] == ':') {
-		return processor.MapPath(arg)
-	}
-
-	if runtime.GOOS != "windows" && isPathLike(arg) {
-		return processor.ResolveCaseInsensitive(arg)
-	}
-
-	return arg
-}
-
-// runOSCommand executes name with args via the host OS and updates ERRORLEVEL.
-// displayName is used in error messages (the original un-mapped command name).
-// Returns ErrCommandNotFound if the command executable doesn't exist.
 var ErrCommandNotFound = fmt.Errorf("command not found")
 
 func runOSCommand(p *processor.Processor, name string, args []string, displayName string) error {
@@ -449,7 +416,7 @@ func runOSCommand(p *processor.Processor, name string, args []string, displayNam
 // searching the current directory and then the PATH.
 // Returns the resolved path and true on success.
 func resolveBatchFile(name string) (string, bool) {
-	mappedName := processor.MapPath(name)
+	mappedName := pathutil.MapPath(name)
 	lower := strings.ToLower(mappedName)
 	isBatch := strings.HasSuffix(lower, ".bat") || strings.HasSuffix(lower, ".cmd")
 	hasPathSep := strings.ContainsAny(mappedName, "/\\")
@@ -474,14 +441,14 @@ func resolveBatchFile(name string) (string, bool) {
 
 	// Bare name: check current directory first, then every PATH directory.
 	for _, ext := range []string{".bat", ".cmd"} {
-		candidate := processor.MapPath(name + ext)
+		candidate := pathutil.MapPath(name + ext)
 		if fileExists(candidate) {
 			return candidate, true
 		}
 	}
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		for _, ext := range []string{".bat", ".cmd"} {
-			candidate := processor.MapPath(filepath.Join(dir, name+ext))
+			candidate := pathutil.MapPath(filepath.Join(dir, name+ext))
 			if fileExists(candidate) {
 				return candidate, true
 			}

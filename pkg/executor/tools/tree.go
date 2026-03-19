@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
@@ -26,7 +27,7 @@ func Tree(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		lower := strings.ToLower(arg)
 		isFlag := strings.HasPrefix(arg, "/") && !strings.ContainsRune(arg[1:], '/')
 		if !isFlag {
-			root = processor.MapPath(arg)
+			root = pathutil.MapPath(arg)
 		} else if lower == "/f" {
 			showFiles = true
 		}

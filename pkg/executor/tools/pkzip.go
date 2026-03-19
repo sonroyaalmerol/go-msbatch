@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
@@ -67,11 +68,11 @@ func run7z(p *processor.Processor, cmd *parser.SimpleCommand, defaultMode string
 		}
 
 		if zipFile == "" {
-			zipFile = processor.MapPath(word)
+			zipFile = pathutil.MapPath(word)
 		} else {
 			// In PKUNZIP, the last argument might be an output directory if it ends in \
 			if defaultMode == "x" && (strings.HasSuffix(word, "\\") || strings.HasSuffix(word, "/")) {
-				outDir = processor.MapPath(word)
+				outDir = pathutil.MapPath(word)
 			} else {
 				files = append(files, word)
 			}

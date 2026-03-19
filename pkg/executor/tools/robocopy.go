@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
@@ -245,8 +246,8 @@ func Robocopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		return nil
 	}
 
-	src := processor.MapPath(cmd.Args[0])
-	dst := processor.MapPath(cmd.Args[1])
+	src := pathutil.MapPath(cmd.Args[0])
+	dst := pathutil.MapPath(cmd.Args[1])
 
 	opts := rcParseOpts(cmd.Args[2:])
 
@@ -684,7 +685,7 @@ func rcSetupOutput(p *processor.Processor, opts *rcOpts) (io.Writer, func()) {
 	} else {
 		flag |= os.O_TRUNC
 	}
-	lf, err := os.OpenFile(processor.MapPath(opts.logPath), flag, 0644)
+	lf, err := os.OpenFile(pathutil.MapPath(opts.logPath), flag, 0644)
 	if err != nil {
 		return p.Stdout, nil
 	}
@@ -894,10 +895,10 @@ func rcParseOpts(args []string) *rcOpts {
 				opts.minSize = n
 			}
 		case strings.HasPrefix(lower, "/log+:"):
-			opts.logPath = processor.MapPath(arg[6:])
+			opts.logPath = pathutil.MapPath(arg[6:])
 			opts.logAppend = true
 		case strings.HasPrefix(lower, "/log:"):
-			opts.logPath = processor.MapPath(arg[5:])
+			opts.logPath = pathutil.MapPath(arg[5:])
 		case lower == "/tee":
 			opts.tee = true
 		case lower == "/np":
