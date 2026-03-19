@@ -50,7 +50,8 @@ func exePrefix(p *processor.Processor) []string {
 //     so converting them to Unix paths beforehand would break path handling.
 func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	cmdName := pathutil.MapPath(cmd.Name)
-	p.Logger.Debug("external dispatch", "original", cmd.Name, "mapped", cmdName)
+	cwd, _ := os.Getwd()
+	p.Logger.Debug("external dispatch", "original", cmd.Name, "mapped", cmdName, "cwd", cwd)
 
 	// If the command doesn't have an extension, try to find a matching .exe or .com.
 	// This matches CMD's search behavior where extensions are often omitted.
@@ -410,7 +411,8 @@ func processArgForNative(s string) string {
 var ErrCommandNotFound = fmt.Errorf("command not found")
 
 func runOSCommand(p *processor.Processor, name string, args []string, displayName string) error {
-	p.Logger.Debug("running OS command", "name", name, "args", args)
+	cwd, _ := os.Getwd()
+	p.Logger.Debug("running OS command", "name", name, "args", args, "cwd", cwd)
 	c := exec.Command(name, args...)
 	c.Stdout = p.Stdout
 	c.Stderr = p.Stderr
@@ -512,7 +514,8 @@ func resolveBatchFile(name string) (string, bool) {
 //   - A plain EXIT propagates the Exited flag to the parent, ending the whole
 //     session (matching CMD's "exit the session" behaviour).
 func runBatchFile(p *processor.Processor, batPath string, args []string) error {
-	p.Logger.Debug("running batch file", "path", batPath, "args", args)
+	cwd, _ := os.Getwd()
+	p.Logger.Debug("running batch file", "path", batPath, "args", args, "cwd", cwd)
 	content, err := os.ReadFile(batPath)
 	if err != nil {
 		fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command, operable program or batch file.\n", batPath)

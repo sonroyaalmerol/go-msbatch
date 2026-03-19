@@ -17,7 +17,7 @@ import (
 
 // Execute runs the AST nodes.
 func (p *Processor) Execute(nodes []parser.Node) error {
-	p.Logger.Debug("executing nodes", "count", len(nodes), "env", p.Env.Snapshot())
+	p.Logger.Debug("executing nodes", "count", len(nodes), "env", p.Env.Snapshot(), "cwd", func() string { cwd, _ := os.Getwd(); return cwd }())
 	p.Nodes = nodes
 	p.PC = 0
 	p.Exited = false
@@ -182,7 +182,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		expanded.Redirects[i].Target = strings.TrimSpace(p.ExpandPhase5(expanded.Redirects[i].Target))
 	}
 
-	p.Logger.Debug("executing command", "name", expanded.Name, "args", expanded.Args)
+	p.Logger.Debug("executing command", "name", expanded.Name, "args", expanded.Args, "cwd", func() string { cwd, _ := os.Getwd(); return cwd }())
 
 	// 5. Clean up args for commands that expect words (removing empty expanded arguments)
 	var filteredArgs []string

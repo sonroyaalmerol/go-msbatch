@@ -163,7 +163,8 @@ func run7z(p *processor.Processor, cmd *parser.SimpleCommand, defaultMode pkzipM
 
 	finalArgs = append(finalArgs, files...)
 
-	p.Logger.Debug("running 7z compatibility layer", "exe", exe, "args", finalArgs)
+	cwd, _ := os.Getwd()
+	p.Logger.Debug("running 7z compatibility layer", "exe", exe, "args", finalArgs, "cwd", cwd)
 	c := exec.Command(exe, finalArgs...)
 	c.Stdout = p.Stdout
 	c.Stderr = p.Stderr
