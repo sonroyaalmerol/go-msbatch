@@ -118,12 +118,17 @@ func (b *builder) buildSet(cmd *parser.SimpleCommand, line int) {
 
 	fullArg := processor.ExtractRawArgString(cmd.RawArgs)
 	fullArgLower := strings.ToLower(fullArg)
+	lineText := ""
+	if line < len(b.lines) {
+		lineText = b.lines[line]
+	}
 
 	switch {
 	case strings.HasPrefix(fullArgLower, "/a"):
 		expr := strings.TrimSpace(fullArg[2:])
 		for _, name := range extractSetAVars(expr) {
-			loc := Location{URI: b.uri, Line: line, Col: cmd.Col + len(cmd.Name) + 1}
+			nameCol := findVarColInLine(lineText, name, cmd.Col+len(cmd.Name)+1)
+			loc := Location{URI: b.uri, Line: line, Col: nameCol}
 			sym := b.result.Symbols.DefineVariable(name, loc)
 			sym.AddRef(loc, RefDefinition)
 		}
@@ -131,7 +136,8 @@ func (b *builder) buildSet(cmd *parser.SimpleCommand, line int) {
 		promptPart := strings.TrimSpace(fullArg[2:])
 		if idx := strings.IndexByte(promptPart, '='); idx > 0 {
 			name := promptPart[:idx]
-			loc := Location{URI: b.uri, Line: line, Col: cmd.Col + len(cmd.Name) + 1}
+			nameCol := findVarColInLine(lineText, name, cmd.Col+len(cmd.Name)+1)
+			loc := Location{URI: b.uri, Line: line, Col: nameCol}
 			sym := b.result.Symbols.DefineVariable(name, loc)
 			sym.AddRef(loc, RefDefinition)
 		}
@@ -143,12 +149,39 @@ func (b *builder) buildSet(cmd *parser.SimpleCommand, line int) {
 		if idx := strings.IndexByte(arg, '='); idx > 0 {
 			name := arg[:idx]
 			value := arg[idx+1:]
-			loc := Location{URI: b.uri, Line: line, Col: cmd.Col + len(cmd.Name) + 1}
+			nameCol := findVarColInLine(lineText, name, cmd.Col+len(cmd.Name)+1)
+			loc := Location{URI: b.uri, Line: line, Col: nameCol}
 			sym := b.result.Symbols.DefineVariable(name, loc)
 			sym.AddRef(loc, RefDefinition)
 			sym.InferredValue = value
 		}
 	}
+}
+
+func findVarColInLine(lineText, varName string, startSearch int) int {
+	if lineText == "" {
+		return startSearch
+	}
+	upperLine := strings.ToUpper(lineText)
+	target := strings.ToUpper(varName)
+	for i := startSearch; i <= len(upperLine)-len(target); i++ {
+		if upperLine[i:i+len(target)] == target {
+			afterEnd := i + len(target)
+			if afterEnd >= len(upperLine) || upperLine[afterEnd] == '=' || upperLine[afterEnd] == ' ' || upperLine[afterEnd] == '\t' || upperLine[afterEnd] == ',' {
+				if i == startSearch || !isWordChar(rune(upperLine[i-1])) {
+					if upperLine[i-1] != '/' {
+						return i
+					}
+				}
+			}
+		}
+	}
+	return startSearch
+}
+
+func isWordChar(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+		(r >= '0' && r <= '9') || r == '_' || r == '-'
 }
 
 func extractSetAVars(expr string) []string {

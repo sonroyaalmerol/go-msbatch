@@ -310,7 +310,13 @@ func (s *Server) hover(_ *glsp.Context, params *protocol.HoverParams) (*protocol
 	}
 
 	line := lineAt(doc.Content, int(params.Position.Line))
-	word := WordAtPosition(line, int(params.Position.Character))
+	col := int(params.Position.Character)
+
+	if hover := s.hoverVariable(doc, line, col); hover != nil {
+		return hover, nil
+	}
+
+	word := WordAtPosition(line, col)
 	if word == "" {
 		return nil, nil
 	}
@@ -326,6 +332,103 @@ func (s *Server) hover(_ *glsp.Context, params *protocol.HoverParams) (*protocol
 			Value: fmt.Sprintf("```\n%s\n```", help),
 		},
 	}, nil
+}
+
+func (s *Server) hoverVariable(doc *Document, lineText string, col int) *protocol.Hover {
+	if doc.Result == nil || doc.Result.Symbols == nil {
+		return nil
+	}
+
+	varName, _, _ := extractVarNameWithRange(lineText, col)
+	if varName == "" {
+		return nil
+	}
+
+	var sym *analyzer.Symbol
+	if doc.Result.Symbols.Vars[varName] != nil {
+		sym = doc.Result.Symbols.Vars[varName]
+	}
+
+	if sym == nil {
+		s.mu.RLock()
+		currentURI := doc.Result.URI
+		for _, target := range doc.Result.CallTargets {
+			resolvedURI := resolveCallTargetURI(currentURI, target, s.docs)
+			if resolvedURI == "" || resolvedURI == currentURI {
+				continue
+			}
+			calledDoc, ok := s.docs[resolvedURI]
+			if !ok || calledDoc.Result == nil || calledDoc.Result.Symbols == nil {
+				continue
+			}
+			if calledDoc.Result.Symbols.Vars[varName] != nil {
+				sym = calledDoc.Result.Symbols.Vars[varName]
+				break
+			}
+		}
+		s.mu.RUnlock()
+	}
+
+	if sym == nil {
+		return nil
+	}
+
+	var contents string
+	if sym.InferredValue != "" {
+		contents = fmt.Sprintf("**%s** = `%s`", sym.Name, sym.InferredValue)
+	} else {
+		contents = fmt.Sprintf("**%s**", sym.Name)
+	}
+
+	return &protocol.Hover{
+		Contents: protocol.MarkupContent{
+			Kind:  protocol.MarkupKindMarkdown,
+			Value: contents,
+		},
+	}
+}
+
+func extractVarNameWithRange(lineText string, col int) (string, int, int) {
+	if col < 0 || col >= len(lineText) {
+		return "", 0, 0
+	}
+
+	if col >= 1 && lineText[col-1] == '%' {
+		end := col
+		for end < len(lineText) {
+			c := rune(lineText[end])
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+				break
+			}
+			end++
+		}
+		if end < len(lineText) && lineText[end] == '%' {
+			return strings.ToUpper(lineText[col:end]), col - 1, end + 1
+		}
+	}
+
+	if col >= 1 && lineText[col-1] == '!' {
+		end := col
+		for end < len(lineText) {
+			c := rune(lineText[end])
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+				break
+			}
+			end++
+		}
+		if end < len(lineText) && lineText[end] == '!' {
+			return strings.ToUpper(lineText[col:end]), col - 1, end + 1
+		}
+	}
+
+	if col >= 2 && lineText[col-2] == '%' && lineText[col-1] == '%' {
+		c := rune(lineText[col])
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+			return strings.ToUpper(string(c)), col - 2, col + 1
+		}
+	}
+
+	return "", 0, 0
 }
 
 func (s *Server) completion(_ *glsp.Context, params *protocol.CompletionParams) (any, error) {

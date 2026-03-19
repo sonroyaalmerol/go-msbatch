@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/analyzer"
@@ -505,5 +506,234 @@ echo %MYVAR%
 
 	if defRef.Location.Col != 4 {
 		t.Errorf("expected definition Col 4, got %d", defRef.Location.Col)
+	}
+}
+
+func TestSetADefinitionColumn(t *testing.T) {
+	content := `@echo off
+set /a MYVAR=1+2
+echo %MYVAR%
+`
+	doc := &Document{
+		Content: content,
+		Result:  NewAnalyzer().Analyze("file:///test.bat", content),
+	}
+
+	sym := findSymbolAtPosition(doc, 1, 7)
+	if sym == nil {
+		t.Fatal("expected to find variable symbol for SET /A")
+	}
+	if sym.Name != "MYVAR" {
+		t.Errorf("expected MYVAR, got %s", sym.Name)
+	}
+
+	def := sym.Definition
+	if def.Col != 7 {
+		t.Errorf("expected definition Col 7 (position of M in MYVAR after 'set /a '), got %d", def.Col)
+	}
+}
+
+func TestSetPDefinitionColumn(t *testing.T) {
+	content := `@echo off
+set /p MYVAR=Enter value:
+echo %MYVAR%
+`
+	doc := &Document{
+		Content: content,
+		Result:  NewAnalyzer().Analyze("file:///test.bat", content),
+	}
+
+	sym := findSymbolAtPosition(doc, 1, 7)
+	if sym == nil {
+		t.Fatal("expected to find variable symbol for SET /P")
+	}
+	if sym.Name != "MYVAR" {
+		t.Errorf("expected MYVAR, got %s", sym.Name)
+	}
+
+	def := sym.Definition
+	if def.Col != 7 {
+		t.Errorf("expected definition Col 7 (position of M in MYVAR after 'set /p '), got %d", def.Col)
+	}
+}
+
+func TestSetADefinitionGoto(t *testing.T) {
+	content := `@echo off
+set /a COUNTER=1
+echo %COUNTER%
+`
+	workspace := map[string]*Document{
+		"file:///test.bat": {
+			Content: content,
+			Result:  NewAnalyzer().Analyze("file:///test.bat", content),
+		},
+	}
+
+	loc, found := DefinitionAt(workspace, "file:///test.bat", 2, 6)
+	if !found {
+		t.Fatal("expected to find definition for %COUNTER%")
+	}
+	if loc.Line != 1 {
+		t.Errorf("expected definition line 1, got %d", loc.Line)
+	}
+	if loc.Col != 7 {
+		t.Errorf("expected definition Col 7 (position of C in COUNTER after 'set /a '), got %d", loc.Col)
+	}
+}
+
+func TestSetAMultipleVariables(t *testing.T) {
+	content := `@echo off
+set /a A=1, B=2, C=3
+echo %A% %B% %C%
+`
+	doc := &Document{
+		Content: content,
+		Result:  NewAnalyzer().Analyze("file:///test.bat", content),
+	}
+
+	symA := findSymbolAtPosition(doc, 1, 7)
+	if symA == nil {
+		t.Fatal("expected to find variable A")
+	}
+	if symA.Name != "A" {
+		t.Errorf("expected A, got %s", symA.Name)
+	}
+	if symA.Definition.Col != 7 {
+		t.Errorf("expected A definition Col 7, got %d", symA.Definition.Col)
+	}
+}
+
+func TestHoverVariableValue(t *testing.T) {
+	content := `@echo off
+set MYVAR=hello world
+echo %MYVAR%
+`
+	result := NewAnalyzer().Analyze("file:///test.bat", content)
+	hover := result.HoverAt(1, 4)
+
+	if hover == nil {
+		t.Fatal("expected hover for variable definition")
+	}
+
+	if !containsAll(hover.Contents, "MYVAR", "hello world") {
+		t.Errorf("expected hover to contain variable name and value, got: %s", hover.Contents)
+	}
+}
+
+func TestHoverVariableValueFromReference(t *testing.T) {
+	content := `@echo off
+set MYVAR=hello world
+echo %MYVAR%
+`
+	result := NewAnalyzer().Analyze("file:///test.bat", content)
+	hover := result.HoverAt(2, 6)
+
+	if hover == nil {
+		t.Fatal("expected hover for variable reference")
+	}
+
+	if !containsAll(hover.Contents, "MYVAR", "hello world") {
+		t.Errorf("expected hover to contain variable name and value, got: %s", hover.Contents)
+	}
+}
+
+func TestHoverDelayedExpansionVariable(t *testing.T) {
+	content := `@echo off
+setlocal enabledelayedexpansion
+set MYVAR=hello
+echo !MYVAR!
+`
+	result := NewAnalyzer().Analyze("file:///test.bat", content)
+	hover := result.HoverAt(3, 6)
+
+	if hover == nil {
+		t.Fatal("expected hover for delayed expansion variable")
+	}
+
+	if !containsAll(hover.Contents, "MYVAR", "hello") {
+		t.Errorf("expected hover to contain variable name and value, got: %s", hover.Contents)
+	}
+}
+
+func containsAll(s string, substrs ...string) bool {
+	for _, substr := range substrs {
+		if !strings.Contains(s, substr) {
+			return false
+		}
+	}
+	return true
+}
+
+func TestHoverMultiFileVariable(t *testing.T) {
+	mainContent := `@echo off
+call helper.bat
+echo %SHARED_VAR%
+`
+	helperContent := `@echo off
+set SHARED_VAR=from helper
+`
+
+	workspace := map[string]*Document{
+		"file:///test/main.bat": {
+			Content: mainContent,
+			Result:  NewAnalyzer().Analyze("file:///test/main.bat", mainContent),
+		},
+		"file:///test/helper.bat": {
+			Content: helperContent,
+			Result:  NewAnalyzer().Analyze("file:///test/helper.bat", helperContent),
+		},
+	}
+
+	loc, found := DefinitionAt(workspace, "file:///test/main.bat", 2, 6)
+	if !found {
+		t.Fatal("expected to find definition for SHARED_VAR")
+	}
+	if loc.URI != "file:///test/helper.bat" {
+		t.Errorf("expected definition in helper.bat, got %s", loc.URI)
+	}
+}
+
+func TestDefinitionAtSetAFromReference(t *testing.T) {
+	content := `@echo off
+set /a RESULT=10+5
+echo %RESULT%
+`
+	workspace := map[string]*Document{
+		"file:///test.bat": {
+			Content: content,
+			Result:  NewAnalyzer().Analyze("file:///test.bat", content),
+		},
+	}
+
+	loc, found := DefinitionAt(workspace, "file:///test.bat", 2, 6)
+	if !found {
+		t.Fatal("expected to find definition for %RESULT%")
+	}
+	if loc.Line != 1 {
+		t.Errorf("expected definition line 1, got %d", loc.Line)
+	}
+	if loc.Col != 7 {
+		t.Errorf("expected definition Col 7 (position of R in RESULT), got %d", loc.Col)
+	}
+}
+
+func TestExtractVarNameWithRange(t *testing.T) {
+	tests := []struct {
+		line     string
+		col      int
+		expected string
+	}{
+		{"echo %MYVAR%", 6, "MYVAR"},
+		{"echo %MY_VAR%", 6, "MY_VAR"},
+		{"set MYVAR=hello", 5, ""},
+		{"echo !MYVAR!", 6, "MYVAR"},
+		{"for %%i in (*) do echo %%i", 25, "I"},
+	}
+
+	for _, tt := range tests {
+		name, _, _ := extractVarNameWithRange(tt.line, tt.col)
+		if name != tt.expected {
+			t.Errorf("extractVarNameWithRange(%q, %d) = %q, want %q", tt.line, tt.col, name, tt.expected)
+		}
 	}
 }

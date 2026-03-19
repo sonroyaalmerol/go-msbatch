@@ -122,11 +122,91 @@ func DefinitionAt(workspace map[string]*Document, uri string, line, col int) (an
 		return sym.Definition, true
 	}
 
+	if sym := findSymbolInCalledFiles(workspace, uri, doc, line, col); sym != nil {
+		return sym.Definition, true
+	}
+
 	if targetLoc, ok := findCallTargetAtPosition(workspace, uri, doc, line, col); ok {
 		return targetLoc, true
 	}
 
 	return analyzer.Location{}, false
+}
+
+func findSymbolInCalledFiles(workspace map[string]*Document, uri string, doc *Document, line, col int) *analyzer.Symbol {
+	if doc.Result == nil {
+		return nil
+	}
+
+	lineText := ""
+	lines := strings.Split(doc.Content, "\n")
+	if line >= 0 && line < len(lines) {
+		lineText = lines[line]
+	}
+
+	varName := extractVarNameAtPosition(lineText, col)
+	if varName == "" {
+		return nil
+	}
+
+	for _, target := range doc.Result.CallTargets {
+		resolvedURI := resolveCallTargetURI(uri, target, workspace)
+		if resolvedURI == "" || resolvedURI == uri {
+			continue
+		}
+		calledDoc, ok := workspace[resolvedURI]
+		if !ok || calledDoc.Result == nil || calledDoc.Result.Symbols == nil {
+			continue
+		}
+		if sym := calledDoc.Result.Symbols.Vars[varName]; sym != nil {
+			return sym
+		}
+	}
+
+	return nil
+}
+
+func extractVarNameAtPosition(lineText string, col int) string {
+	if col < 0 || col >= len(lineText) {
+		return ""
+	}
+
+	if col >= 1 && lineText[col-1] == '%' {
+		end := col
+		for end < len(lineText) {
+			c := rune(lineText[end])
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+				break
+			}
+			end++
+		}
+		if end < len(lineText) && lineText[end] == '%' {
+			return strings.ToUpper(lineText[col:end])
+		}
+	}
+
+	if col >= 1 && lineText[col-1] == '!' {
+		end := col
+		for end < len(lineText) {
+			c := rune(lineText[end])
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+				break
+			}
+			end++
+		}
+		if end < len(lineText) && lineText[end] == '!' {
+			return strings.ToUpper(lineText[col:end])
+		}
+	}
+
+	if col >= 2 && lineText[col-2] == '%' && lineText[col-1] == '%' {
+		c := rune(lineText[col])
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+			return strings.ToUpper(string(c))
+		}
+	}
+
+	return ""
 }
 
 func findCallTargetAtPosition(workspace map[string]*Document, uri string, doc *Document, line, col int) (analyzer.Location, bool) {
