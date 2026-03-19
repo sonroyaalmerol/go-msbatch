@@ -25,10 +25,9 @@ func newProcessor(env *processor.Environment, args []string, exec processor.Comm
 func main() {
 	// If the executable name matches a registered tool (e.g. via symlink),
 	// run that tool directly with the provided arguments.
-	// We ignore "msbatch" and "msbatch-lsp" to allow normal operation.
 	exeName := strings.ToLower(filepath.Base(os.Args[0]))
 	exeName = strings.TrimSuffix(exeName, ".exe")
-	if exeName != "msbatch" && exeName != "msbatch-lsp" {
+	if exeName != "msbatch" {
 		reg := executor.New()
 		if _, ok := reg.NamesMap()[exeName]; ok {
 			runAsTool(exeName, os.Args[1:])
