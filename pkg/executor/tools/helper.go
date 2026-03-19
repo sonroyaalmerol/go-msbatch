@@ -61,11 +61,21 @@ func GlobOrLiteral(pattern string) []string {
 
 func ResolveWildcardDst(srcPath, srcPattern, dstPattern, dst string) string {
 	srcBase := filepath.Base(srcPath)
-	srcPatBase := filepath.Base(srcPattern)
-	dstPatBase := filepath.Base(dstPattern)
-	dstDir := filepath.Dir(dst)
+	srcPatBase := patternBase(srcPattern)
+	dstPatBase := patternBase(dstPattern)
 	newDstBase := SubstituteWildcard(srcBase, srcPatBase, dstPatBase)
-	return filepath.Join(dstDir, newDstBase)
+	if HasWildcards(dst) {
+		return filepath.Join(filepath.Dir(dst), newDstBase)
+	}
+	return filepath.Join(dst, newDstBase)
+}
+
+// patternBase extracts the base (filename) part of a pattern that may contain
+// either Unix-style (/) or Windows-style (\) path separators. It normalizes
+// the separators first to ensure filepath.Base works correctly on all platforms.
+func patternBase(pattern string) string {
+	normalized := strings.ReplaceAll(pattern, "\\", "/")
+	return filepath.Base(normalized)
 }
 
 type WildcardPos struct {
