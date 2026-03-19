@@ -171,13 +171,17 @@ func cmdPause(p *processor.Processor, _ *parser.SimpleCommand) error {
 		}
 	}
 
-	if fd != -1 && term.IsTerminal(fd) {
-		if old, err := term.MakeRaw(fd); err == nil {
-			defer term.Restore(fd, old)         //nolint:errcheck
-			io.ReadFull(input, make([]byte, 1)) //nolint:errcheck
-		} else {
-			io.ReadFull(input, make([]byte, 1)) //nolint:errcheck
-		}
+	// If no terminal is available (e.g., Docker container without TTY), skip waiting.
+	// io.ReadFull would return immediately with EOF, causing PAUSE to not actually pause.
+	if fd == -1 || !term.IsTerminal(fd) {
+		fmt.Fprintln(p.Stdout)
+		fmt.Fprintln(p.Stdout, "(No terminal available, continuing...)")
+		return p.Success()
+	}
+
+	if old, err := term.MakeRaw(fd); err == nil {
+		defer term.Restore(fd, old)         //nolint:errcheck
+		io.ReadFull(input, make([]byte, 1)) //nolint:errcheck
 	} else {
 		io.ReadFull(input, make([]byte, 1)) //nolint:errcheck
 	}
