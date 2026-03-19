@@ -165,3 +165,28 @@ func TestCallLabel(t *testing.T) {
 		t.Errorf("expected name=call, got %q", cmd.Name)
 	}
 }
+
+// TestCommandRedirectAfterQuotedArg verifies redirect is parsed after a quoted argument.
+func TestCommandRedirectAfterQuotedArg(t *testing.T) {
+	nodes := parse("gawk \"BEGIN {print systime()}\" > timetemp.txt\n")
+	if len(nodes) == 0 {
+		t.Fatal("expected at least one node")
+	}
+	cmd, ok := nodes[0].(*parser.SimpleCommand)
+	if !ok {
+		t.Fatalf("expected *SimpleCommand, got %T", nodes[0])
+	}
+	if cmd.Name != "gawk" {
+		t.Errorf("expected name=gawk, got %q", cmd.Name)
+	}
+	if len(cmd.Redirects) == 0 {
+		t.Fatalf("expected redirect, got none. Args=%v, RawArgs=%v", cmd.Args, cmd.RawArgs)
+	}
+	r := cmd.Redirects[0]
+	if r.Kind != parser.RedirectOut {
+		t.Errorf("expected RedirectOut, got %v", r.Kind)
+	}
+	if r.Target != "timetemp.txt" {
+		t.Errorf("expected target=timetemp.txt, got %q", r.Target)
+	}
+}

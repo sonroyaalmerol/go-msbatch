@@ -626,6 +626,21 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenNewline, "\n"},
 			},
 		},
+		{
+			"redirect_after_quoted_string",
+			// Quoted string followed by redirect should tokenize correctly
+			`gawk "BEGIN {print systime()}" > timetemp.txt` + "\n",
+			[]tok{
+				{TokenWord, "gawk"},
+				{TokenWhitespace, " "},
+				{TokenStringDouble, `"BEGIN {print systime()}"`},
+				{TokenWhitespace, " "},
+				{TokenRedirect, ">"},
+				{TokenWhitespace, " "},
+				{TokenWord, "timetemp.txt"},
+				{TokenNewline, "\n"},
+			},
+		},
 
 		// ── operators and pipes ───────────────────────────────────────────
 		{

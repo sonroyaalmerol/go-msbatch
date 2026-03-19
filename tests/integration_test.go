@@ -576,3 +576,232 @@ if exist DATAFOLDER\gps*.lst (
 		t.Errorf("IF EXIST with wildcard no-match failed\nGOT: %q\nWANT: %q", got, want)
 	}
 }
+
+func TestGawkRedirectOutWithQuotedProgram(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping gawk test on Windows")
+	}
+
+	if _, err := os.Stat("/usr/bin/gawk"); os.IsNotExist(err) {
+		t.Skip("gawk not available, skipping test")
+	}
+
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	batContent := `@echo off
+gawk "BEGIN {print systime()}" > timetemp.txt
+`
+
+	env := processor.NewEnvironment(true)
+	var stdout bytes.Buffer
+	proc := processor.New(env, []string{"test.bat"}, executor.New())
+	proc.Stdout = &stdout
+	proc.Stderr = &stdout
+	proc.Echo = false
+
+	src := processor.Phase0ReadLine(batContent)
+	nodes := processor.ParseExpanded(src)
+
+	err = proc.Execute(nodes)
+	if err != nil {
+		t.Errorf("Execute failed: %v", err)
+	}
+
+	content, err := os.ReadFile("timetemp.txt")
+	if err != nil {
+		t.Fatalf("timetemp.txt was not created: %v", err)
+	}
+
+	timestamp := strings.TrimSpace(string(content))
+	if len(timestamp) < 10 {
+		t.Errorf("Expected timestamp in timetemp.txt, got: %q", timestamp)
+	}
+}
+
+func TestEchoRedirectAfterQuotedArg(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	batContent := `@echo off
+echo "hello world" > output.txt
+`
+
+	env := processor.NewEnvironment(true)
+	var stdout bytes.Buffer
+	proc := processor.New(env, []string{"test.bat"}, executor.New())
+	proc.Stdout = &stdout
+	proc.Stderr = &stdout
+	proc.Echo = false
+
+	src := processor.Phase0ReadLine(batContent)
+	nodes := processor.ParseExpanded(src)
+
+	err = proc.Execute(nodes)
+	if err != nil {
+		t.Errorf("Execute failed: %v", err)
+	}
+
+	content, err := os.ReadFile("output.txt")
+	if err != nil {
+		t.Fatalf("output.txt was not created: %v", err)
+	}
+
+	got := strings.TrimSpace(string(content))
+	want := `"hello world"`
+	if got != want {
+		t.Errorf("Expected %q in output.txt, got: %q", want, got)
+	}
+}
+
+func TestGawkNoRedirect(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping gawk test on Windows")
+	}
+
+	if _, err := os.Stat("/usr/bin/gawk"); os.IsNotExist(err) {
+		t.Skip("gawk not available, skipping test")
+	}
+
+	batContent := `@echo off
+gawk "BEGIN {print 12345}"
+`
+
+	env := processor.NewEnvironment(true)
+	var stdout bytes.Buffer
+	proc := processor.New(env, []string{"test.bat"}, executor.New())
+	proc.Stdout = &stdout
+	proc.Stderr = &stdout
+	proc.Echo = false
+
+	src := processor.Phase0ReadLine(batContent)
+	nodes := processor.ParseExpanded(src)
+
+	err := proc.Execute(nodes)
+	if err != nil {
+		t.Errorf("Execute failed: %v", err)
+	}
+
+	got := strings.TrimSpace(stdout.String())
+	want := "12345"
+	if got != want {
+		t.Errorf("Expected %q, got: %q", want, got)
+	}
+}
+
+func TestGawkRedirectAppendWithQuotedProgram(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping gawk test on Windows")
+	}
+
+	if _, err := os.Stat("/usr/bin/gawk"); os.IsNotExist(err) {
+		t.Skip("gawk not available, skipping test")
+	}
+
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	if err := os.WriteFile("timetemp.txt", []byte("1234567890\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	batContent := `@echo off
+gawk "{print systime()-$1 \" seconds to process GRV1_TA\" }  " timetemp.txt >> time.txt
+`
+
+	env := processor.NewEnvironment(true)
+	var stdout bytes.Buffer
+	proc := processor.New(env, []string{"test.bat"}, executor.New())
+	proc.Stdout = &stdout
+	proc.Stderr = &stdout
+	proc.Echo = false
+
+	src := processor.Phase0ReadLine(batContent)
+	nodes := processor.ParseExpanded(src)
+
+	err = proc.Execute(nodes)
+	if err != nil {
+		t.Errorf("Execute failed: %v", err)
+	}
+
+	content, err := os.ReadFile("time.txt")
+	if err != nil {
+		t.Fatalf("time.txt was not created: %v", err)
+	}
+
+	output := strings.TrimSpace(string(content))
+	if !strings.Contains(output, "seconds to process GRV1_TA") {
+		t.Errorf("Expected output containing 'seconds to process GRV1_TA', got: %q", output)
+	}
+}
+
+func TestEmbeddedQuotesPreserved(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping test on Windows")
+	}
+
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	// Create a script that prints its arguments to verify they're passed correctly
+	script := filepath.Join(tmpDir, "print_args.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/bash\nfor arg in \"$@\"; do echo \"ARG: [$arg]\"; done\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test that embedded quotes are preserved when passed as arguments
+	// This simulates: myprogram Instrument="King Radar"
+	// The program should receive: Instrument="King Radar" (with quotes)
+	batContent := `@echo off
+bash ` + script + ` Instrument="King Radar"
+`
+
+	env := processor.NewEnvironment(true)
+	var stdout bytes.Buffer
+	proc := processor.New(env, []string{"test.bat"}, executor.New())
+	proc.Stdout = &stdout
+	proc.Stderr = &stdout
+	proc.Echo = false
+
+	src := processor.Phase0ReadLine(batContent)
+	nodes := processor.ParseExpanded(src)
+
+	err = proc.Execute(nodes)
+	if err != nil {
+		t.Errorf("Execute failed: %v", err)
+	}
+
+	got := strings.TrimSpace(stdout.String())
+	want := `ARG: [Instrument="King Radar"]`
+	if got != want {
+		t.Errorf("Expected %q, got: %q", want, got)
+	}
+}

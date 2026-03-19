@@ -171,12 +171,14 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 
 	// Native Unix command — map paths, expand globs, and process quoting.
-	// Use processArgForNative to preserve quotes (unlike stripExeArg which
-	// removes them), ensuring arguments with spaces remain as single args
-	// when passed via execve().
+	// Use stripExeArg to remove CMD/CRT-style quoting (outer quotes are stripped,
+	// escaped quotes \" become literal "). On Unix, exec.Command passes
+	// arguments directly via execve() - each array element is already a
+	// separate argument, so preserving quotes would incorrectly pass them
+	// to the program.
 	var args []string
 	for _, arg := range cmdWords {
-		mapped := pathutil.MapArg(processArgForNative(arg))
+		mapped := pathutil.MapArg(stripExeArg(arg))
 		if strings.ContainsAny(mapped, "*?[") {
 			if matches, err := pathutil.GlobCaseInsensitive(mapped); err == nil && len(matches) > 0 {
 				args = append(args, matches...)
@@ -343,56 +345,54 @@ func ensureWineBridge(p *processor.Processor) string {
 // we must do it ourselves.
 //
 // Rules (matching the Windows CRT argv parser):
-//   - A '"' toggles quoting mode; quote characters themselves are dropped.
-//   - Inside a quoted section, '\"' is a literal '"' (not a closing quote).
-//   - Outside quoted sections characters are taken literally.
+//   - If the argument starts with ", it's a quoted string: strip outer quotes
+//     and unescape inner \" to literal "
+//   - If the argument doesn't start with ", it contains embedded quotes (like
+//     Instrument="King Radar"): preserve the structure but still unescape \" to "
 func stripExeArg(s string) string {
-	var b strings.Builder
-	i := 0
-	for i < len(s) {
-		if s[i] == '"' {
-			i++ // consume opening "
-			for i < len(s) {
-				if s[i] == '\\' && i+1 < len(s) && s[i+1] == '"' {
-					b.WriteByte('"')
-					i += 2
-				} else if s[i] == '"' {
-					i++ // consume closing "
-					break
-				} else {
-					b.WriteByte(s[i])
-					i++
-				}
-			}
-		} else {
-			b.WriteByte(s[i])
-			i++
-		}
+	if len(s) == 0 {
+		return s
 	}
-	return b.String()
-}
 
-// processArgForNative processes an argument for native Unix command execution.
-// Unlike stripExeArg which removes quotes entirely, this function:
-//   - Converts escaped quotes (\" to ") so programs receive literal quote chars
-//   - Preserves outer quotes to maintain word boundaries in arguments
-//
-// This is necessary because on Unix, exec.Command passes arguments directly
-// via execve() - there's no shell re-parsing. Preserving quotes ensures
-// arguments with spaces (e.g., Instrument="King Radar") remain as single args.
-func processArgForNative(s string) string {
+	// If the entire argument is wrapped in quotes, strip them
+	if s[0] == '"' {
+		var b strings.Builder
+		i := 0
+		// Skip opening quote
+		i++
+		for i < len(s) {
+			if s[i] == '\\' && i+1 < len(s) && s[i+1] == '"' {
+				b.WriteByte('"')
+				i += 2
+			} else if s[i] == '"' {
+				// Closing quote - stop here (ignore any trailing content after final quote)
+				break
+			} else {
+				b.WriteByte(s[i])
+				i++
+			}
+		}
+		return b.String()
+	}
+
+	// Not wrapped in outer quotes - just unescape \" to "
 	var b strings.Builder
 	i := 0
 	for i < len(s) {
-		if s[i] == '"' {
-			b.WriteByte('"') // preserve opening quote
+		if s[i] == '\\' && i+1 < len(s) && s[i+1] == '"' {
+			b.WriteByte('"')
+			i += 2
+		} else if s[i] == '"' {
+			// Embedded quote - preserve it but handle the quote state
+			b.WriteByte('"')
 			i++
+			// Now we're inside quotes - read until closing quote
 			for i < len(s) {
 				if s[i] == '\\' && i+1 < len(s) && s[i+1] == '"' {
 					b.WriteByte('"')
 					i += 2
 				} else if s[i] == '"' {
-					b.WriteByte('"') // preserve closing quote
+					b.WriteByte('"')
 					i++
 					break
 				} else {
