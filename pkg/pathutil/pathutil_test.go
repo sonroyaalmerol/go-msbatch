@@ -229,6 +229,16 @@ func TestResolveCaseInsensitive(t *testing.T) {
 			input:    "./some/path",
 			expected: "./some/path",
 		},
+		{
+			name:     "wildcard pattern with wrong case dir",
+			input:    filepath.Join(tmpDir, "LOWERCASE", "*.txt"),
+			expected: lowerDir + "/*.txt",
+		},
+		{
+			name:     "wildcard pattern with nested wrong case",
+			input:    filepath.Join(tmpDir, "MIXEDCASE", "*.txt"),
+			expected: mixedDir + "/*.txt",
+		},
 	}
 
 	for _, tt := range tests {

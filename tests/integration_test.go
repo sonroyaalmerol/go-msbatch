@@ -456,3 +456,123 @@ copy sourcedir\*.txt destdir\
 		t.Errorf("Expected 2 copied files, got %d: %v", len(copied), copied)
 	}
 }
+
+func TestIfExistWildcardCaseInsensitive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping case-insensitive test on Windows")
+	}
+
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	dataDir := "DataFolder"
+	if err := os.Mkdir(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	testFiles := []string{
+		filepath.Join(dataDir, "gpsfile1.lst"),
+		filepath.Join(dataDir, "gpsfile2.lst"),
+	}
+	for _, f := range testFiles {
+		if err := os.WriteFile(f, []byte("content"), 0644); err != nil {
+			t.Fatalf("Failed to create test file: %v", err)
+		}
+	}
+
+	batContent := `@echo off
+if exist DATAFOLDER\gps*.lst (
+    echo found
+) else (
+    echo not found
+)
+`
+
+	env := processor.NewEnvironment(true)
+	var stdout bytes.Buffer
+	proc := processor.New(env, []string{"test.bat"}, executor.New())
+	proc.Stdout = &stdout
+	proc.Stderr = &stdout
+	proc.Echo = false
+
+	src := processor.Phase0ReadLine(batContent)
+	nodes := processor.ParseExpanded(src)
+
+	err = proc.Execute(nodes)
+	if err != nil {
+		t.Errorf("Execute failed: %v", err)
+	}
+
+	got := strings.TrimSpace(stdout.String())
+	want := "found"
+	if got != want {
+		t.Errorf("IF EXIST with wildcard and wrong-case dir failed\nGOT: %q\nWANT: %q", got, want)
+	}
+}
+
+func TestIfExistWildcardNoMatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping case-insensitive test on Windows")
+	}
+
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	dataDir := "DataFolder"
+	if err := os.Mkdir(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	testFiles := []string{
+		filepath.Join(dataDir, "other1.txt"),
+		filepath.Join(dataDir, "other2.txt"),
+	}
+	for _, f := range testFiles {
+		if err := os.WriteFile(f, []byte("content"), 0644); err != nil {
+			t.Fatalf("Failed to create test file: %v", err)
+		}
+	}
+
+	batContent := `@echo off
+if exist DATAFOLDER\gps*.lst (
+    echo found
+) else (
+    echo not found
+)
+`
+
+	env := processor.NewEnvironment(true)
+	var stdout bytes.Buffer
+	proc := processor.New(env, []string{"test.bat"}, executor.New())
+	proc.Stdout = &stdout
+	proc.Stderr = &stdout
+	proc.Echo = false
+
+	src := processor.Phase0ReadLine(batContent)
+	nodes := processor.ParseExpanded(src)
+
+	err = proc.Execute(nodes)
+	if err != nil {
+		t.Errorf("Execute failed: %v", err)
+	}
+
+	got := strings.TrimSpace(stdout.String())
+	want := "not found"
+	if got != want {
+		t.Errorf("IF EXIST with wildcard no-match failed\nGOT: %q\nWANT: %q", got, want)
+	}
+}

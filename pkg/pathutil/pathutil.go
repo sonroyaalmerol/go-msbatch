@@ -92,7 +92,7 @@ func ResolveCaseInsensitive(path string) string {
 		currentPath = "."
 	}
 
-	for _, part := range parts {
+	for i, part := range parts {
 		if part == "" || part == "." || part == ".." {
 			currentPath = filepath.Join(currentPath, part)
 			continue
@@ -100,6 +100,9 @@ func ResolveCaseInsensitive(path string) string {
 
 		entries, err := os.ReadDir(currentPath)
 		if err != nil {
+			if strings.ContainsAny(part, "*?[") {
+				return currentPath + "/" + part
+			}
 			return path
 		}
 
@@ -113,6 +116,12 @@ func ResolveCaseInsensitive(path string) string {
 		}
 
 		if !matched {
+			if strings.ContainsAny(part, "*?[") {
+				if filepath.IsAbs(path) && currentPath == "/" {
+					return "/" + part
+				}
+				return currentPath + "/" + strings.Join(parts[i:], "/")
+			}
 			return path
 		}
 	}
