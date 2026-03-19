@@ -372,8 +372,7 @@ func Findstr(p *processor.Processor, cmd *parser.SimpleCommand) error {
 						return nil
 					}
 					if !d.IsDir() {
-						matched, _ := filepath.Match(base, filepath.Base(path))
-						if matched {
+						if pathutil.MatchCaseInsensitive(base, filepath.Base(path)) {
 							allMatches = append(allMatches, path)
 						}
 					}
@@ -383,7 +382,7 @@ func Findstr(p *processor.Processor, cmd *parser.SimpleCommand) error {
 					fmt.Fprintf(p.Stderr, "FINDSTR: error walking %s\n", dir)
 				}
 			} else {
-				matches, err := filepath.Glob(pat)
+				matches, err := pathutil.GlobCaseInsensitive(pat)
 				if err != nil || len(matches) == 0 {
 					matches = []string{pat}
 				}

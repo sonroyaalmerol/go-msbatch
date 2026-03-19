@@ -117,7 +117,7 @@ func Xcopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 
 	var srcPaths []string
 	if isGlob {
-		matches, err := filepath.Glob(mappedSrc)
+		matches, err := pathutil.GlobCaseInsensitive(mappedSrc)
 		if err != nil || len(matches) == 0 {
 			fmt.Fprintf(p.Stderr, "File not found - %s\n", srcArg)
 			p.Failure()

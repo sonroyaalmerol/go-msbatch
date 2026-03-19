@@ -977,7 +977,7 @@ func rcParseAge(s string, days *int, date **time.Time) {
 // glob patterns (case-insensitive).
 func rcMatchesFilePattern(name string, patterns []string) bool {
 	for _, pat := range patterns {
-		if matched, _ := filepath.Match(strings.ToLower(pat), strings.ToLower(name)); matched {
+		if pathutil.MatchCaseInsensitive(pat, name) {
 			return true
 		}
 	}
@@ -986,16 +986,14 @@ func rcMatchesFilePattern(name string, patterns []string) bool {
 
 // rcFileExcluded reports whether name (or its path) matches any /XF pattern.
 func rcFileExcluded(name, path string, patterns []string) bool {
-	nameLower := strings.ToLower(name)
 	pathLower := strings.ToLower(path)
 	for _, pat := range patterns {
-		patLower := strings.ToLower(pat)
-		if matched, _ := filepath.Match(patLower, nameLower); matched {
+		if pathutil.MatchCaseInsensitive(pat, name) {
 			return true
 		}
 		// Also allow full-path substring matching for path-style patterns.
 		if strings.Contains("/", pat) || strings.Contains("\\", pat) {
-			if strings.Contains(pathLower, patLower) {
+			if strings.Contains(pathLower, strings.ToLower(pat)) {
 				return true
 			}
 		}
@@ -1005,17 +1003,15 @@ func rcFileExcluded(name, path string, patterns []string) bool {
 
 // rcDirExcluded reports whether name (or its path) matches any /XD pattern.
 func rcDirExcluded(name, path string, patterns []string) bool {
-	nameLower := strings.ToLower(name)
 	pathLower := strings.ToLower(path)
 	for _, pat := range patterns {
-		patLower := strings.ToLower(pat)
-		if matched, _ := filepath.Match(patLower, nameLower); matched {
+		if pathutil.MatchCaseInsensitive(pat, name) {
 			return true
 		}
 		// Only do path-substring matching when the pattern itself contains a
 		// separator, to avoid false positives from patterns like "excluded"
 		// matching a path component named "included".
-		if strings.ContainsAny(pat, "/\\") && strings.Contains(pathLower, patLower) {
+		if strings.ContainsAny(pat, "/\\") && strings.Contains(pathLower, strings.ToLower(pat)) {
 			return true
 		}
 	}

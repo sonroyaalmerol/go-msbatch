@@ -575,3 +575,128 @@ func TestMapArgForWineWindowsPathCaseResolution(t *testing.T) {
 		t.Errorf("MapArgForWine(%q) = %q, want %q", windowsPath, resolved, expected)
 	}
 }
+
+func TestHasWildcard(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{"*.txt", true},
+		{"file?.txt", true},
+		{"file[abc].txt", true},
+		{"file.txt", false},
+		{"", false},
+		{"path/to/file", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := HasWildcard(tt.input); got != tt.expected {
+				t.Errorf("HasWildcard(%q) = %v, want %v", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestMatchCaseInsensitive(t *testing.T) {
+	tests := []struct {
+		pattern  string
+		name     string
+		expected bool
+	}{
+		{"*.txt", "FILE.TXT", true},
+		{"*.txt", "file.txt", true},
+		{"*.TXT", "file.txt", true},
+		{"file?.txt", "FILE1.TXT", true},
+		{"file?.txt", "file1.txt", true},
+		{"FILE?.TXT", "file1.txt", true},
+		{"*.txt", "file.log", false},
+		{"file?.txt", "file.txt", false},
+		{"file*", "file.txt", true},
+		{"FILE*", "file.txt", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.pattern+"_"+tt.name, func(t *testing.T) {
+			if got := MatchCaseInsensitive(tt.pattern, tt.name); got != tt.expected {
+				t.Errorf("MatchCaseInsensitive(%q, %q) = %v, want %v", tt.pattern, tt.name, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGlobCaseInsensitive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping case-insensitive glob test on Windows")
+	}
+
+	tmpDir := t.TempDir()
+
+	files := []string{
+		filepath.Join(tmpDir, "File1.txt"),
+		filepath.Join(tmpDir, "File2.TXT"),
+		filepath.Join(tmpDir, "Other.log"),
+		filepath.Join(tmpDir, "DataFolder", "InputFile.txt"),
+	}
+
+	dataDir := filepath.Join(tmpDir, "DataFolder")
+	if err := os.Mkdir(dataDir, 0755); err != nil {
+		t.Fatalf("Failed to create test directory: %v", err)
+	}
+
+	for _, f := range files {
+		if err := os.WriteFile(f, []byte("test"), 0644); err != nil {
+			t.Fatalf("Failed to create test file %s: %v", f, err)
+		}
+	}
+
+	t.Run("lowercase pattern with uppercase files", func(t *testing.T) {
+		matches, err := GlobCaseInsensitive(filepath.Join(tmpDir, "*.txt"))
+		if err != nil {
+			t.Fatalf("GlobCaseInsensitive failed: %v", err)
+		}
+		if len(matches) != 2 {
+			t.Errorf("Expected 2 matches, got %d: %v", len(matches), matches)
+		}
+	})
+
+	t.Run("uppercase pattern with mixed case files", func(t *testing.T) {
+		matches, err := GlobCaseInsensitive(filepath.Join(tmpDir, "*.TXT"))
+		if err != nil {
+			t.Fatalf("GlobCaseInsensitive failed: %v", err)
+		}
+		if len(matches) != 2 {
+			t.Errorf("Expected 2 matches, got %d: %v", len(matches), matches)
+		}
+	})
+
+	t.Run("question mark wildcard case insensitive", func(t *testing.T) {
+		matches, err := GlobCaseInsensitive(filepath.Join(tmpDir, "file?.txt"))
+		if err != nil {
+			t.Fatalf("GlobCaseInsensitive failed: %v", err)
+		}
+		if len(matches) != 2 {
+			t.Errorf("Expected 2 matches, got %d: %v", len(matches), matches)
+		}
+	})
+
+	t.Run("no matches returns empty slice", func(t *testing.T) {
+		matches, err := GlobCaseInsensitive(filepath.Join(tmpDir, "*.nonexistent"))
+		if err != nil {
+			t.Fatalf("GlobCaseInsensitive failed: %v", err)
+		}
+		if len(matches) != 0 {
+			t.Errorf("Expected 0 matches, got %d: %v", len(matches), matches)
+		}
+	})
+
+	t.Run("nested path case insensitive", func(t *testing.T) {
+		matches, err := GlobCaseInsensitive(filepath.Join(tmpDir, "datafolder", "*.txt"))
+		if err != nil {
+			t.Fatalf("GlobCaseInsensitive failed: %v", err)
+		}
+		if len(matches) != 1 {
+			t.Errorf("Expected 1 match, got %d: %v", len(matches), matches)
+		}
+	})
+}

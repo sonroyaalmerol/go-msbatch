@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
@@ -119,7 +118,7 @@ func Find(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		scan(p.Stdin, "")
 	} else {
 		for _, pat := range files {
-			matches, err := filepath.Glob(pat)
+			matches, err := pathutil.GlobCaseInsensitive(pat)
 			if err != nil || len(matches) == 0 {
 				matches = []string{pat}
 			}

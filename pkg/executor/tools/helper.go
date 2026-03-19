@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 )
 
 func isDirEmpty(path string) (bool, error) {
@@ -50,7 +52,7 @@ func HasWildcards(pattern string) bool {
 }
 
 func GlobOrLiteral(pattern string) []string {
-	matches, err := filepath.Glob(pattern)
+	matches, err := pathutil.GlobCaseInsensitive(pattern)
 	if err != nil || len(matches) == 0 {
 		return []string{pattern}
 	}

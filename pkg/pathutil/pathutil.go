@@ -219,3 +219,52 @@ func UnixToWinePath(unixPath string) string {
 	rel := strings.TrimPrefix(unixPath, "/")
 	return "Z:\\" + strings.ReplaceAll(rel, "/", "\\")
 }
+
+func HasWildcard(pattern string) bool {
+	return strings.ContainsAny(pattern, "*?[")
+}
+
+func MatchCaseInsensitive(pattern, name string) bool {
+	if runtime.GOOS == "windows" {
+		matched, _ := filepath.Match(pattern, name)
+		return matched
+	}
+
+	matched, _ := filepath.Match(strings.ToLower(pattern), strings.ToLower(name))
+	return matched
+}
+
+func GlobCaseInsensitive(pattern string) ([]string, error) {
+	if runtime.GOOS == "windows" {
+		return filepath.Glob(pattern)
+	}
+
+	if !HasWildcard(pattern) {
+		return filepath.Glob(pattern)
+	}
+
+	dir := filepath.Dir(pattern)
+	base := filepath.Base(pattern)
+
+	if dir == "" || dir == "." {
+		dir = "."
+	} else {
+		dir = ResolveCaseInsensitive(dir)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, nil
+	}
+
+	patternLower := strings.ToLower(base)
+	var result []string
+
+	for _, entry := range entries {
+		if matched, _ := filepath.Match(patternLower, strings.ToLower(entry.Name())); matched {
+			result = append(result, filepath.Join(dir, entry.Name()))
+		}
+	}
+
+	return result, nil
+}

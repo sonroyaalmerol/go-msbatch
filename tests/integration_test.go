@@ -189,6 +189,11 @@ func TestGawkAfterCdCaseInsensitive(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
 
 	outerDir := filepath.Join(tmpDir, "OuterDir")
 	dataDir := filepath.Join(outerDir, "DataFolder")
@@ -216,7 +221,7 @@ gawk "{print}" datafolder/inputfile.txt
 	src := processor.Phase0ReadLine(batContent)
 	nodes := processor.ParseExpanded(src)
 
-	err := proc.Execute(nodes)
+	err = proc.Execute(nodes)
 	if err != nil {
 		t.Errorf("Execute failed: %v", err)
 	}
@@ -290,6 +295,11 @@ func TestGawkNestedCdCaseInsensitive(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
 
 	level1 := filepath.Join(tmpDir, "LevelOne")
 	level2 := filepath.Join(level1, "LevelTwo")
@@ -320,7 +330,7 @@ gawk "{print}" finaldata/file.txt
 	src := processor.Phase0ReadLine(batContent)
 	nodes := processor.ParseExpanded(src)
 
-	err := proc.Execute(nodes)
+	err = proc.Execute(nodes)
 	if err != nil {
 		t.Errorf("Execute failed: %v", err)
 	}
@@ -330,5 +340,119 @@ gawk "{print}" finaldata/file.txt
 
 	if got != want {
 		t.Errorf("Gawk output after nested cd mismatch\nGOT:\n%s\nWANT:\n%s", got, want)
+	}
+}
+
+func TestDelCaseInsensitiveWildcard(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping case-insensitive wildcard test on Windows")
+	}
+
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	files := []string{
+		"File1.txt",
+		"File2.TXT",
+		"File3.log",
+		"Other.txt",
+	}
+
+	for _, f := range files {
+		if err := os.WriteFile(f, []byte("content"), 0644); err != nil {
+			t.Fatalf("Failed to create test file: %v", err)
+		}
+	}
+
+	batContent := `@echo off
+del *.txt
+`
+
+	env := processor.NewEnvironment(true)
+	var stdout bytes.Buffer
+	proc := processor.New(env, []string{"test.bat"}, executor.New())
+	proc.Stdout = &stdout
+	proc.Stderr = &stdout
+	proc.Echo = false
+
+	src := processor.Phase0ReadLine(batContent)
+	nodes := processor.ParseExpanded(src)
+
+	err = proc.Execute(nodes)
+	if err != nil {
+		t.Errorf("Execute failed: %v", err)
+	}
+
+	remaining, _ := filepath.Glob("*")
+	expectedRemaining := []string{"File3.log"}
+	if len(remaining) != len(expectedRemaining) {
+		t.Errorf("Expected %d remaining files, got %d: %v", len(expectedRemaining), len(remaining), remaining)
+	}
+}
+
+func TestCopyCaseInsensitiveWildcard(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping case-insensitive wildcard test on Windows")
+	}
+
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	srcDir := "SourceDir"
+	dstDir := "DestDir"
+	if err := os.Mkdir(srcDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dstDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	files := []string{
+		filepath.Join(srcDir, "File1.txt"),
+		filepath.Join(srcDir, "File2.TXT"),
+	}
+
+	for _, f := range files {
+		if err := os.WriteFile(f, []byte("content"), 0644); err != nil {
+			t.Fatalf("Failed to create test file: %v", err)
+		}
+	}
+
+	batContent := `@echo off
+copy sourcedir\*.txt destdir\
+`
+
+	env := processor.NewEnvironment(true)
+	var stdout bytes.Buffer
+	proc := processor.New(env, []string{"test.bat"}, executor.New())
+	proc.Stdout = &stdout
+	proc.Stderr = &stdout
+	proc.Echo = false
+
+	src := processor.Phase0ReadLine(batContent)
+	nodes := processor.ParseExpanded(src)
+
+	err = proc.Execute(nodes)
+	if err != nil {
+		t.Errorf("Execute failed: %v", err)
+	}
+
+	copied, _ := filepath.Glob(filepath.Join(dstDir, "*"))
+	if len(copied) != 2 {
+		t.Errorf("Expected 2 copied files, got %d: %v", len(copied), copied)
 	}
 }

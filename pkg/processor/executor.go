@@ -429,7 +429,7 @@ func (p *Processor) executeIf(n *parser.IfNode) error {
 	case parser.CondExist:
 		path := pathutil.MapPath(p.ProcessLine(cond.Arg))
 		if strings.ContainsAny(path, "*?[") {
-			matches, err := filepath.Glob(path)
+			matches, err := pathutil.GlobCaseInsensitive(path)
 			conditionMet = (err == nil && len(matches) > 0)
 		} else {
 			_, err := os.Stat(path)
@@ -571,7 +571,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 		for _, item := range n.Set {
 			expandedItem := p.ProcessLine(item)
 			for _, part := range splitForSetItems(expandedItem) {
-				matches, err := filepath.Glob(pathutil.MapPath(part))
+				matches, err := pathutil.GlobCaseInsensitive(pathutil.MapPath(part))
 				if err != nil || len(matches) == 0 {
 					matches = []string{part}
 				}
@@ -638,7 +638,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 					if !e.IsDir() {
 						continue
 					}
-					if matched, _ := filepath.Match(pattern, e.Name()); matched {
+					if pathutil.MatchCaseInsensitive(pattern, e.Name()) {
 						p.ForVars[n.Variable] = filepath.Join(dir, e.Name())
 						if err := p.ExecuteNode(n.Do); err != nil {
 							return err
@@ -676,7 +676,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 				for _, part := range splitForSetItems(expandedItem) {
 					fullPattern := filepath.Join(dirPath, part)
 					if strings.ContainsAny(part, "*?") {
-						matches, err := filepath.Glob(fullPattern)
+						matches, err := pathutil.GlobCaseInsensitive(fullPattern)
 						if err != nil || len(matches) == 0 {
 							continue
 						}

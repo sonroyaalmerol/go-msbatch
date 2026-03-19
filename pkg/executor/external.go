@@ -103,7 +103,7 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		for _, arg := range cmdWords {
 			mapped := pathutil.MapArg(stripExeArg(arg))
 			if strings.ContainsAny(mapped, "*?[") {
-				if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
+				if matches, err := pathutil.GlobCaseInsensitive(mapped); err == nil && len(matches) > 0 {
 					batArgs = append(batArgs, matches...)
 					continue
 				}
@@ -174,7 +174,7 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	for _, arg := range cmdWords {
 		mapped := pathutil.MapArg(stripExeArg(arg))
 		if strings.ContainsAny(mapped, "*?[") {
-			if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
+			if matches, err := pathutil.GlobCaseInsensitive(mapped); err == nil && len(matches) > 0 {
 				args = append(args, matches...)
 				continue
 			}

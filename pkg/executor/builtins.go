@@ -302,13 +302,13 @@ func cmdDel(p *processor.Processor, cmd *parser.SimpleCommand) error {
 				if err != nil || info.IsDir() {
 					return nil
 				}
-				if matched, _ := filepath.Match(base, filepath.Base(path)); matched {
+				if matched := pathutil.MatchCaseInsensitive(base, filepath.Base(path)); matched {
 					os.Remove(path)
 				}
 				return nil
 			})
 		} else {
-			matches, err := filepath.Glob(mapped)
+			matches, err := pathutil.GlobCaseInsensitive(mapped)
 			if err == nil && len(matches) > 0 {
 				for _, m := range matches {
 					os.Remove(m)
@@ -368,7 +368,7 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			dst = pathutil.MapPath(dstPattern)
 			for _, s := range rawArgs[:len(rawArgs)-1] {
 				mapped := pathutil.MapPath(s)
-				if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
+				if matches, err := pathutil.GlobCaseInsensitive(mapped); err == nil && len(matches) > 0 {
 					for _, m := range matches {
 						srcs = append(srcs, srcEntry{path: m, pattern: s})
 					}
@@ -401,7 +401,7 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 					continue
 				}
 				mapped := pathutil.MapPath(part)
-				if matches, err := filepath.Glob(mapped); err == nil && len(matches) > 0 {
+				if matches, err := pathutil.GlobCaseInsensitive(mapped); err == nil && len(matches) > 0 {
 					for _, m := range matches {
 						srcs = append(srcs, srcEntry{path: m, pattern: part})
 					}
