@@ -101,10 +101,14 @@ func cmdCd(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		p.Success()
 		return nil
 	}
-	if err := os.Chdir(pathutil.MapPath(args[0])); err != nil {
+	mappedPath := pathutil.MapPath(args[0])
+	oldDir, _ := os.Getwd()
+	if err := os.Chdir(mappedPath); err != nil {
+		p.Logger.Debug("directory change failed", "from", oldDir, "to", mappedPath, "error", err.Error())
 		fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
 		p.Failure()
 	} else {
+		p.Logger.Debug("directory changed", "from", oldDir, "to", mappedPath)
 		p.Success()
 	}
 	return nil
@@ -212,12 +216,16 @@ func cmdPushd(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	pwd, _ := os.Getwd()
 	p.DirStack = append(p.DirStack, pwd)
 	if len(cmd.Args) > 0 {
-		if err := os.Chdir(pathutil.MapPath(cmd.Args[0])); err != nil {
+		mappedPath := pathutil.MapPath(cmd.Args[0])
+		oldDir, _ := os.Getwd()
+		if err := os.Chdir(mappedPath); err != nil {
+			p.Logger.Debug("directory change failed (pushd)", "from", oldDir, "to", mappedPath, "error", err.Error())
 			fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
 			p.DirStack = p.DirStack[:len(p.DirStack)-1]
 			p.Failure()
 			return nil
 		}
+		p.Logger.Debug("directory changed (pushd)", "from", oldDir, "to", mappedPath)
 	}
 	return p.Success()
 }
@@ -226,11 +234,14 @@ func cmdPopd(p *processor.Processor, _ *parser.SimpleCommand) error {
 	if len(p.DirStack) > 0 {
 		dir := p.DirStack[len(p.DirStack)-1]
 		p.DirStack = p.DirStack[:len(p.DirStack)-1]
+		oldDir, _ := os.Getwd()
 		if err := os.Chdir(dir); err != nil {
+			p.Logger.Debug("directory change failed (popd)", "from", oldDir, "to", dir, "error", err.Error())
 			fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
 			p.Failure()
 			return nil
 		}
+		p.Logger.Debug("directory changed (popd)", "from", oldDir, "to", dir)
 	}
 	return p.Success()
 }
