@@ -2,8 +2,8 @@ package lexer
 
 // Item is a single lexed token.
 type Item struct {
-	Line  int       // 0-based line number within the input (set by lineOffset)
-	Col   int       // 0-based rune column within the input line
+	Line  int // 0-based line number within the input (set by lineOffset)
+	Col   int // 0-based rune column within the input line
 	Type  TokenType
 	Value []rune
 }
@@ -23,6 +23,8 @@ const (
 	TokenComment
 	TokenNameLabel
 	TokenNameVariable
+	TokenNameDelayedVar // !var! delayed expansion variable
+	TokenNameForVar     // %%i FOR loop variable
 	TokenStringDouble
 	TokenStringSingle
 	TokenStringBT
@@ -40,7 +42,8 @@ func (t TokenType) String() string {
 		TokenEOF: "EOF", TokenText: "Text",
 		TokenPunctuation: "Punctuation", TokenKeyword: "Keyword",
 		TokenComment: "Comment", TokenNameLabel: "Name.Label",
-		TokenNameVariable: "Name.Variable", TokenStringDouble: "String.Double",
+		TokenNameVariable: "Name.Variable", TokenNameDelayedVar: "Name.DelayedVar",
+		TokenNameForVar: "Name.ForVar", TokenStringDouble: "String.Double",
 		TokenStringSingle: "String.Single", TokenStringBT: "String.Backtick",
 		TokenStringEscape: "String.Escape", TokenNumber: "Number",
 		TokenOperator: "Operator",

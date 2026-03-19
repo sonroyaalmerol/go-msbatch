@@ -34,11 +34,30 @@ func (bl *BatchLexer) lexPercent() {
 	r := bl.next()
 	switch {
 	case r == '%':
-		bl.emit(TokenStringEscape)
+		// %% could be an escaped literal % or a FOR variable (%%X or %%~modsX)
+		r2 := bl.next()
+		if r2 == '~' {
+			// %%~modsX — FOR variable with modifiers
+			bl.acceptRun(func(r rune) bool {
+				return r != 0 && !isNL(r) && !IsWS(r) && !isPunct(r) && r != '"' && r != '\'' && r != '`'
+			})
+			bl.emit(TokenNameForVar)
+		} else if (r2 >= 'a' && r2 <= 'z') || (r2 >= 'A' && r2 <= 'Z') {
+			// %%X — FOR variable
+			bl.emit(TokenNameForVar)
+		} else {
+			// %% alone or followed by non-letter — literal %
+			if r2 != 0 {
+				bl.prev()
+			}
+			bl.emit(TokenStringEscape)
+		}
 	case r >= '0' && r <= '9' || r == '*':
 		bl.emit(TokenNameVariable)
 	case r == '~':
-		bl.acceptRun(func(r rune) bool { return r != 0 && !isNL(r) && !IsWS(r) && !isPunct(r) && r != '"' && r != '\'' && r != '`' })
+		bl.acceptRun(func(r rune) bool {
+			return r != 0 && !isNL(r) && !IsWS(r) && !isPunct(r) && r != '"' && r != '\'' && r != '`'
+		})
 		bl.emit(TokenNameVariable)
 	case r == 0 || isNL(r):
 		if r != 0 {
@@ -72,7 +91,7 @@ func (bl *BatchLexer) lexDelayedVar() {
 			break
 		}
 	}
-	bl.emit(TokenNameVariable)
+	bl.emit(TokenNameDelayedVar)
 }
 
 // lexStringDoubleBody returns a stateFn that scans the body of a "…" string,

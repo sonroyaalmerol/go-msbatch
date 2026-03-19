@@ -26,6 +26,14 @@ const (
 // Node is the interface implemented by all AST nodes.
 type Node interface {
 	Kind() NodeKind
+	Pos() Position
+	EndPos() Position
+}
+
+// Position represents a source location.
+type Position struct {
+	Line int // 0-based line number
+	Col  int // 0-based column number
 }
 
 // RedirectKind classifies a redirection operator.
@@ -41,7 +49,7 @@ const (
 
 // Redirect represents a single I/O redirection.
 type Redirect struct {
-	FD     int          // source file descriptor (default 1 for out, 0 for in)
+	FD     int // source file descriptor (default 1 for out, 0 for in)
 	Kind   RedirectKind
 	Target string // file path, or FD string for FD redirections
 }
@@ -50,6 +58,8 @@ type Redirect struct {
 type SimpleCommand struct {
 	Line             int  // 0-based source line of the command name token
 	Col              int  // 0-based source column of the command name token
+	EndLine          int  // 0-based source line of the end of the command
+	EndCol           int  // 0-based source column of the end of the command
 	Suppressed       bool // true when preceded by @
 	RedirectsApplied bool // internal flag to avoid re-applying redirections in recursive dispatches
 	Name             string
@@ -58,7 +68,9 @@ type SimpleCommand struct {
 	Redirects        []Redirect
 }
 
-func (c *SimpleCommand) Kind() NodeKind { return NodeSimpleCommand }
+func (c *SimpleCommand) Kind() NodeKind   { return NodeSimpleCommand }
+func (c *SimpleCommand) Pos() Position    { return Position{Line: c.Line, Col: c.Col} }
+func (c *SimpleCommand) EndPos() Position { return Position{Line: c.EndLine, Col: c.EndCol} }
 
 // Words returns RawArgs grouped by true whitespace. This is useful for
 // external commands where delimiters like '=' or ',' should only split
@@ -99,10 +111,13 @@ type Block struct {
 	Line    int // 0-based source line of the opening '('
 	Col     int // 0-based source column of the opening '('
 	EndLine int // 0-based source line of the closing ')'; same as Line if unclosed
+	EndCol  int // 0-based source column after the closing ')'
 	Body    []Node
 }
 
-func (b *Block) Kind() NodeKind { return NodeBlock }
+func (b *Block) Kind() NodeKind   { return NodeBlock }
+func (b *Block) Pos() Position    { return Position{Line: b.Line, Col: b.Col} }
+func (b *Block) EndPos() Position { return Position{Line: b.EndLine, Col: b.EndCol} }
 
 // CondKind classifies an IF condition.
 type CondKind int
@@ -141,15 +156,19 @@ type Condition struct {
 
 // IfNode represents an IF statement.
 type IfNode struct {
-	Line            int  // 0-based source line of the "if" keyword
-	Col             int  // 0-based source column of the "if" keyword
+	Line            int // 0-based source line of the "if" keyword
+	Col             int // 0-based source column of the "if" keyword
+	EndLine         int // 0-based source line of the end of the IF statement
+	EndCol          int // 0-based source column of the end of the IF statement
 	CaseInsensitive bool
 	Cond            Condition
 	Then            Node
 	Else            Node // nil if absent
 }
 
-func (n *IfNode) Kind() NodeKind { return NodeIf }
+func (n *IfNode) Kind() NodeKind   { return NodeIf }
+func (n *IfNode) Pos() Position    { return Position{Line: n.Line, Col: n.Col} }
+func (n *IfNode) EndPos() Position { return Position{Line: n.EndLine, Col: n.EndCol} }
 
 // ForKind classifies a FOR variant.
 type ForKind int
@@ -164,10 +183,12 @@ const (
 
 // ForNode represents a FOR loop.
 type ForNode struct {
-	Line     int      // 0-based source line of the "for" keyword
-	Col      int      // 0-based source column of the "for" keyword
-	VarLine  int      // 0-based source line of the loop variable token
-	VarCol   int      // 0-based source column of the loop variable letter
+	Line     int // 0-based source line of the "for" keyword
+	Col      int // 0-based source column of the "for" keyword
+	EndLine  int // 0-based source line of the end of the FOR statement
+	EndCol   int // 0-based source column of the end of the FOR statement
+	VarLine  int // 0-based source line of the loop variable token
+	VarCol   int // 0-based source column of the loop variable letter
 	Variant  ForKind
 	Options  string   // FOR /F option string (content of quotes, single-quotes, or backticks)
 	Variable string   // loop variable name, e.g. "i" for %%i
@@ -175,44 +196,61 @@ type ForNode struct {
 	Do       Node
 }
 
-func (n *ForNode) Kind() NodeKind { return NodeFor }
+func (n *ForNode) Kind() NodeKind   { return NodeFor }
+func (n *ForNode) Pos() Position    { return Position{Line: n.Line, Col: n.Col} }
+func (n *ForNode) EndPos() Position { return Position{Line: n.EndLine, Col: n.EndCol} }
 
 // PipeNode represents cmd1 | cmd2.
 type PipeNode struct {
-	Line  int // 0-based source line of the left operand
-	Col   int // 0-based source column of the left operand
-	Left  Node
-	Right Node
+	Line    int // 0-based source line of the left operand
+	Col     int // 0-based source column of the left operand
+	EndLine int // 0-based source line of the end of the pipe
+	EndCol  int // 0-based source column of the end of the pipe
+	Left    Node
+	Right   Node
 }
 
-func (n *PipeNode) Kind() NodeKind { return NodePipe }
+func (n *PipeNode) Kind() NodeKind   { return NodePipe }
+func (n *PipeNode) Pos() Position    { return Position{Line: n.Line, Col: n.Col} }
+func (n *PipeNode) EndPos() Position { return Position{Line: n.EndLine, Col: n.EndCol} }
 
 // BinaryNode handles &&, ||, &.
 type BinaryNode struct {
-	Line  int      // 0-based source line of the left operand
-	Col   int      // 0-based source column of the left operand
-	Op    NodeKind // NodeConcat, NodeOrElse, NodeAndThen
-	Left  Node
-	Right Node
+	Line    int      // 0-based source line of the left operand
+	Col     int      // 0-based source column of the left operand
+	EndLine int      // 0-based source line of the end of the binary expression
+	EndCol  int      // 0-based source column of the end of the binary expression
+	Op      NodeKind // NodeConcat, NodeOrElse, NodeAndThen
+	Left    Node
+	Right   Node
 }
 
-func (n *BinaryNode) Kind() NodeKind { return n.Op }
+func (n *BinaryNode) Kind() NodeKind   { return n.Op }
+func (n *BinaryNode) Pos() Position    { return Position{Line: n.Line, Col: n.Col} }
+func (n *BinaryNode) EndPos() Position { return Position{Line: n.EndLine, Col: n.EndCol} }
 
 // LabelNode is a label definition (:name).
 type LabelNode struct {
-	Line int    // 0-based source line of the ':' token
-	Col  int    // 0-based source column of the label name (after ':')
-	Name string
+	Line    int // 0-based source line of the ':' token
+	Col     int // 0-based source column of the label name (after ':')
+	EndLine int // 0-based source line of the end of the label
+	EndCol  int // 0-based source column after the label name
+	Name    string
 }
 
-func (n *LabelNode) Kind() NodeKind { return NodeLabel }
+func (n *LabelNode) Kind() NodeKind   { return NodeLabel }
+func (n *LabelNode) Pos() Position    { return Position{Line: n.Line, Col: n.Col} }
+func (n *LabelNode) EndPos() Position { return Position{Line: n.EndLine, Col: n.EndCol} }
 
 // CommentNode holds a REM comment or :: comment.
 type CommentNode struct {
-	Line int    // 0-based source line
-	Col  int    // 0-based source column of the comment token
-	Text string
+	Line    int // 0-based source line
+	Col     int // 0-based source column of the comment token
+	EndLine int // 0-based source line of the end of the comment
+	EndCol  int // 0-based source column after the comment
+	Text    string
 }
 
-func (n *CommentNode) Kind() NodeKind { return NodeComment }
-
+func (n *CommentNode) Kind() NodeKind   { return NodeComment }
+func (n *CommentNode) Pos() Position    { return Position{Line: n.Line, Col: n.Col} }
+func (n *CommentNode) EndPos() Position { return Position{Line: n.EndLine, Col: n.EndCol} }

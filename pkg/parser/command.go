@@ -40,9 +40,24 @@ func (p *Parser) parseBinary() Node {
 			break
 		}
 		if op == NodePipe {
-			left = &PipeNode{Left: left, Right: right}
+			left = &PipeNode{
+				Line:    left.Pos().Line,
+				Col:     left.Pos().Col,
+				EndLine: right.EndPos().Line,
+				EndCol:  right.EndPos().Col,
+				Left:    left,
+				Right:   right,
+			}
 		} else {
-			left = &BinaryNode{Op: op, Left: left, Right: right}
+			left = &BinaryNode{
+				Line:    left.Pos().Line,
+				Col:     left.Pos().Col,
+				EndLine: right.EndPos().Line,
+				EndCol:  right.EndPos().Col,
+				Op:      op,
+				Left:    left,
+				Right:   right,
+			}
 		}
 	}
 	return left
@@ -73,7 +88,13 @@ func (p *Parser) parsePrimary() Node {
 	// :: comment
 	if t.Type == lexer.TokenComment {
 		p.consume()
-		return &CommentNode{Line: t.Line, Col: t.Col, Text: val(t)}
+		return &CommentNode{
+			Line:    t.Line,
+			Col:     t.Col,
+			EndLine: t.Line,
+			EndCol:  t.Col + len(t.Value),
+			Text:    val(t),
+		}
 	}
 
 	// Label definition :name
@@ -83,9 +104,16 @@ func (p *Parser) parsePrimary() Node {
 		lt := p.peek()
 		if lt.Type == lexer.TokenNameLabel {
 			p.consume()
-			return &LabelNode{Line: colonLine, Col: lt.Col, Name: val(lt)}
+			labelVal := val(lt)
+			return &LabelNode{
+				Line:    colonLine,
+				Col:     lt.Col,
+				EndLine: lt.Line,
+				EndCol:  lt.Col + len(lt.Value),
+				Name:    labelVal,
+			}
 		}
-		return &LabelNode{Line: colonLine, Col: colonCol}
+		return &LabelNode{Line: colonLine, Col: colonCol, EndLine: colonLine, EndCol: colonCol + 1}
 	}
 
 	// Keyword-dispatch
@@ -103,7 +131,13 @@ func (p *Parser) parsePrimary() Node {
 	// Bare label name token (seen after : in some lexer paths)
 	if t.Type == lexer.TokenNameLabel {
 		p.consume()
-		return &LabelNode{Line: t.Line, Col: t.Col, Name: val(t)}
+		return &LabelNode{
+			Line:    t.Line,
+			Col:     t.Col,
+			EndLine: t.Line,
+			EndCol:  t.Col + len(t.Value),
+			Name:    val(t),
+		}
 	}
 
 	// Skip standalone ; or , tokens (not valid command names in CMD)
@@ -140,6 +174,8 @@ func (p *Parser) parseSimpleCommand(suppressed bool) *SimpleCommand {
 	cmd := &SimpleCommand{Suppressed: suppressed, Line: t.Line, Col: t.Col}
 	firstTok := p.consume()
 	cmd.Name = val(firstTok)
+	endLine := firstTok.Line
+	endCol := firstTok.Col + len(firstTok.Value)
 
 	// Support commands that the lexer might have split (e.g. C:\bin\ls.exe
 	// being lexed as "C" [Word] and ":\bin\ls.exe" [Text]).  Join any
@@ -165,17 +201,30 @@ func (p *Parser) parseSimpleCommand(suppressed bool) *SimpleCommand {
 			if strings.HasPrefix(val(t), "/") {
 				break
 			}
-			cmd.Name += val(p.consume())
+			consumed := p.consume()
+			cmd.Name += val(consumed)
+			endLine = consumed.Line
+			endCol = consumed.Col + len(consumed.Value)
 		}
 	}
 
-	p.collectArgs(cmd)
+	endLine, endCol = p.collectArgs(cmd, endLine, endCol)
+	cmd.EndLine = endLine
+	cmd.EndCol = endCol
 	return cmd
 }
 
 // collectArgs reads tokens after the command name and fills cmd.Args and cmd.Redirects.
-func (p *Parser) collectArgs(cmd *SimpleCommand) {
+// Returns the end line and column after processing.
+func (p *Parser) collectArgs(cmd *SimpleCommand, endLine, endCol int) (int, int) {
 	var cur strings.Builder
+
+	updateEnd := func(t lexer.Item) {
+		if t.Line > endLine || (t.Line == endLine && t.Col+len(t.Value) > endCol) {
+			endLine = t.Line
+			endCol = t.Col + len(t.Value)
+		}
+	}
 
 	flushArg := func() {
 		if cur.Len() > 0 {
@@ -191,22 +240,28 @@ func (p *Parser) collectArgs(cmd *SimpleCommand) {
 		switch t.Type {
 		case lexer.TokenEOF, lexer.TokenNewline:
 			flushArg()
-			return
+			return endLine, endCol
 
 		case lexer.TokenWhitespace:
 			flushArg()
-			cmd.RawArgs = append(cmd.RawArgs, val(p.consume()))
+			consumed := p.consume()
+			updateEnd(consumed)
+			cmd.RawArgs = append(cmd.RawArgs, val(consumed))
 
 		case lexer.TokenKeyword:
 			// Structural keywords emitted by specialised lexer states (e.g. "in"
 			// from stateFor) are never arg terminators; include them verbatim.
-			cur.WriteString(val(p.consume()))
+			consumed := p.consume()
+			cur.WriteString(val(consumed))
+			updateEnd(consumed)
 
 		case lexer.TokenWord:
 			v := val(t)
 			if v == "," || v == ";" {
 				flushArg()
-				cmd.RawArgs = append(cmd.RawArgs, val(p.consume()))
+				consumed := p.consume()
+				updateEnd(consumed)
+				cmd.RawArgs = append(cmd.RawArgs, val(consumed))
 				continue
 			}
 			// "else" at the top level (compoundDepth == 0) terminates the
@@ -214,40 +269,57 @@ func (p *Parser) collectArgs(cmd *SimpleCommand) {
 			// Inside a compound block the word is a plain argument.
 			if strings.ToLower(v) == "else" && p.compoundDepth == 0 {
 				flushArg()
-				return
+				return endLine, endCol
 			}
-			cur.WriteString(val(p.consume()))
+			consumed := p.consume()
+			cur.WriteString(val(consumed))
+			updateEnd(consumed)
 
 		case lexer.TokenPunctuation:
 			v := val(t)
 			if v == "=" {
 				flushArg()
-				cmd.RawArgs = append(cmd.RawArgs, val(p.consume()))
+				consumed := p.consume()
+				updateEnd(consumed)
+				cmd.RawArgs = append(cmd.RawArgs, val(consumed))
 				continue
 			}
 			if isPipeOrAmpVal(v) || (v == ")" && p.compoundDepth > 0) {
 				flushArg()
-				return
+				return endLine, endCol
 			}
-			cur.WriteString(val(p.consume()))
+			consumed := p.consume()
+			cur.WriteString(val(consumed))
+			updateEnd(consumed)
 
 		case lexer.TokenRedirect:
 			flushArg()
-			p.collectRedirect(cmd)
+			el, ec := p.collectRedirect(cmd, endLine, endCol)
+			endLine, endCol = el, ec
 
 		case lexer.TokenStringDouble, lexer.TokenStringSingle, lexer.TokenStringBT:
-			cur.WriteString(p.collectQuotedString())
+			quoted, lastTok := p.collectQuotedStringWithToken()
+			cur.WriteString(quoted)
+			updateEnd(lastTok)
 
 		default:
-			cur.WriteString(val(p.consume()))
+			consumed := p.consume()
+			cur.WriteString(val(consumed))
+			updateEnd(consumed)
 		}
 	}
 	flushArg()
+	return endLine, endCol
 }
 
 // collectRedirect reads a TokenRedirect and its target from the stream.
-func (p *Parser) collectRedirect(cmd *SimpleCommand) {
+// Returns the end line and column after processing.
+func (p *Parser) collectRedirect(cmd *SimpleCommand, endLine, endCol int) (int, int) {
 	rt := p.consume() // TokenRedirect
+	if rt.Line > endLine || (rt.Line == endLine && rt.Col+len(rt.Value) > endCol) {
+		endLine = rt.Line
+		endCol = rt.Col + len(rt.Value)
+	}
 	v := val(rt)
 	r := Redirect{}
 
@@ -259,18 +331,28 @@ func (p *Parser) collectRedirect(cmd *SimpleCommand) {
 		r.Kind = RedirectOutFD
 		r.FD = extractFD(v, ">&", 1)
 		if p.pos < len(p.tokens) && p.tokens[p.pos].Type == lexer.TokenNumber {
-			r.Target = val(p.consume())
+			numTok := p.consume()
+			r.Target = val(numTok)
+			if numTok.Line > endLine || (numTok.Line == endLine && numTok.Col+len(numTok.Value) > endCol) {
+				endLine = numTok.Line
+				endCol = numTok.Col + len(numTok.Value)
+			}
 		}
 		cmd.Redirects = append(cmd.Redirects, r)
-		return
+		return endLine, endCol
 	case strings.Contains(v, "<&"):
 		r.Kind = RedirectInFD
 		r.FD = extractFD(v, "<&", 0)
 		if p.pos < len(p.tokens) && p.tokens[p.pos].Type == lexer.TokenNumber {
-			r.Target = val(p.consume())
+			numTok := p.consume()
+			r.Target = val(numTok)
+			if numTok.Line > endLine || (numTok.Line == endLine && numTok.Col+len(numTok.Value) > endCol) {
+				endLine = numTok.Line
+				endCol = numTok.Col + len(numTok.Value)
+			}
 		}
 		cmd.Redirects = append(cmd.Redirects, r)
-		return
+		return endLine, endCol
 	case strings.Contains(v, ">"):
 		r.Kind = RedirectOut
 		r.FD = extractFD(v, ">", 1)
@@ -282,9 +364,10 @@ func (p *Parser) collectRedirect(cmd *SimpleCommand) {
 	p.skipWS() // skip to target
 	t := p.peek()
 	if t.Type != lexer.TokenEOF && t.Type != lexer.TokenNewline && t.Type != lexer.TokenPunctuation {
-		r.Target = p.collectStoken()
+		r.Target, endLine, endCol = p.collectStokenWithPos(endLine, endCol)
 	}
 	cmd.Redirects = append(cmd.Redirects, r)
+	return endLine, endCol
 }
 
 // extractFD parses an optional leading digit from a redirect token like "2>".
@@ -303,17 +386,30 @@ func extractFD(token, op string, defaultFD int) int {
 // parseRem consumes "rem" and its comment body.
 func (p *Parser) parseRem() Node {
 	remTok := p.consume() // "rem" keyword
+	endLine := remTok.Line
+	endCol := remTok.Col + len(remTok.Value)
 	var sb strings.Builder
 	for p.pos < len(p.tokens) {
 		t := p.peek()
 		if t.Type == lexer.TokenComment {
-			sb.WriteString(val(p.consume()))
+			consumed := p.consume()
+			sb.WriteString(val(consumed))
+			endLine = consumed.Line
+			endCol = consumed.Col + len(consumed.Value)
 			break
 		}
 		if t.Type == lexer.TokenNewline || t.Type == lexer.TokenEOF {
 			break
 		}
-		p.consume()
+		consumed := p.consume()
+		endLine = consumed.Line
+		endCol = consumed.Col + len(consumed.Value)
 	}
-	return &CommentNode{Line: remTok.Line, Col: remTok.Col, Text: sb.String()}
+	return &CommentNode{
+		Line:    remTok.Line,
+		Col:     remTok.Col,
+		EndLine: endLine,
+		EndCol:  endCol,
+		Text:    sb.String(),
+	}
 }

@@ -165,7 +165,7 @@ func (bl *BatchLexer) stateFor() stateFn {
 		bl.skipWS()
 	}
 
-	// Consume loop variable: %%X or %X → emit as TokenNameVariable.
+	// Consume loop variable: %%X or %X → emit as TokenNameForVar.
 	if bl.check(func(r rune) bool { return r == '%' }) {
 		bl.next() // first %
 		if bl.check(func(r rune) bool { return r == '%' }) {
@@ -174,7 +174,7 @@ func (bl *BatchLexer) stateFor() stateFn {
 		bl.acceptRun(func(r rune) bool {
 			return r != 0 && !isNL(r) && !IsWS(r) && !isPunct(r) && r != '(' && r != ')'
 		})
-		bl.emit(TokenNameVariable)
+		bl.emit(TokenNameForVar)
 		bl.skipWS()
 	}
 
