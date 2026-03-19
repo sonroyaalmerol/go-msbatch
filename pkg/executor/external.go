@@ -169,10 +169,13 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		return runOSCommand(p, prefix[0], prefixArgs, cmd.Name)
 	}
 
-	// Native Unix command — map paths, expand globs, and strip CMD/CRT quoting.
+	// Native Unix command — map paths, expand globs, and process quoting.
+	// Use processArgForNative to preserve quotes (unlike stripExeArg which
+	// removes them), ensuring arguments with spaces remain as single args
+	// when passed via execve().
 	var args []string
 	for _, arg := range cmdWords {
-		mapped := pathutil.MapArg(stripExeArg(arg))
+		mapped := pathutil.MapArg(processArgForNative(arg))
 		if strings.ContainsAny(mapped, "*?[") {
 			if matches, err := pathutil.GlobCaseInsensitive(mapped); err == nil && len(matches) > 0 {
 				args = append(args, matches...)
@@ -354,6 +357,42 @@ func stripExeArg(s string) string {
 					i += 2
 				} else if s[i] == '"' {
 					i++ // consume closing "
+					break
+				} else {
+					b.WriteByte(s[i])
+					i++
+				}
+			}
+		} else {
+			b.WriteByte(s[i])
+			i++
+		}
+	}
+	return b.String()
+}
+
+// processArgForNative processes an argument for native Unix command execution.
+// Unlike stripExeArg which removes quotes entirely, this function:
+//   - Converts escaped quotes (\" to ") so programs receive literal quote chars
+//   - Preserves outer quotes to maintain word boundaries in arguments
+//
+// This is necessary because on Unix, exec.Command passes arguments directly
+// via execve() - there's no shell re-parsing. Preserving quotes ensures
+// arguments with spaces (e.g., Instrument="King Radar") remain as single args.
+func processArgForNative(s string) string {
+	var b strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == '"' {
+			b.WriteByte('"') // preserve opening quote
+			i++
+			for i < len(s) {
+				if s[i] == '\\' && i+1 < len(s) && s[i+1] == '"' {
+					b.WriteByte('"')
+					i += 2
+				} else if s[i] == '"' {
+					b.WriteByte('"') // preserve closing quote
+					i++
 					break
 				} else {
 					b.WriteByte(s[i])
