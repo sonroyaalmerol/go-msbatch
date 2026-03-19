@@ -70,7 +70,7 @@ func Timeout(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		fmt.Fprint(p.Stdout, "Waiting for key press, press a key to continue ...")
 		if fd != -1 && term.IsTerminal(fd) {
 			if old, err := term.MakeRaw(fd); err == nil {
-				defer term.Restore(fd, old) //nolint:errcheck
+				defer term.Restore(fd, old)         //nolint:errcheck
 				io.ReadFull(input, make([]byte, 1)) //nolint:errcheck
 			} else {
 				io.ReadFull(input, make([]byte, 1)) //nolint:errcheck
@@ -85,34 +85,33 @@ func Timeout(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	if noBreak {
 		fmt.Fprintf(p.Stdout, "Waiting for %d seconds, press CTRL+C to quit ...\n", seconds)
 		time.Sleep(time.Duration(seconds) * time.Second)
-	} else {
-		fmt.Fprintf(p.Stdout, "Waiting for %d seconds, press a key to continue ...\n", seconds)
+		return p.Success()
+	}
 
-		keyChan := make(chan struct{})
-		go func() {
-			// If we're in a terminal, we need to set raw mode to catch any key
-			// but we can't easily do it from the goroutine because we need to
-			// restore it in the main thread if the timeout expires.
-			// So we assume the main thread handled raw mode if possible.
-			io.ReadFull(input, make([]byte, 1)) //nolint:errcheck
-			close(keyChan)
-		}()
+	// If we have a terminal fd (either /dev/tty or stdin), enable keypress detection.
+	// This mirrors CMD's behavior of reading from the console (conin$) for keypresses.
+	if fd == -1 || !term.IsTerminal(fd) {
+		fmt.Fprintf(p.Stdout, "Waiting for %d seconds ...\n", seconds)
+		time.Sleep(time.Duration(seconds) * time.Second)
+		return p.Success()
+	}
 
-		var oldState *term.State
-		if fd != -1 && term.IsTerminal(fd) {
-			oldState, _ = term.MakeRaw(fd)
-		}
+	fmt.Fprintf(p.Stdout, "Waiting for %d seconds, press a key to continue ...\n", seconds)
 
-		select {
-		case <-keyChan:
-			// Key pressed
-		case <-time.After(time.Duration(seconds) * time.Second):
-			// Timed out
-		}
+	keyChan := make(chan struct{})
+	go func() {
+		io.ReadFull(input, make([]byte, 1)) //nolint:errcheck
+		close(keyChan)
+	}()
 
-		if oldState != nil {
-			term.Restore(fd, oldState) //nolint:errcheck
-		}
+	oldState, _ := term.MakeRaw(fd)
+	if oldState != nil {
+		defer term.Restore(fd, oldState) //nolint:errcheck
+	}
+
+	select {
+	case <-keyChan:
+	case <-time.After(time.Duration(seconds) * time.Second):
 	}
 
 	return p.Success()
