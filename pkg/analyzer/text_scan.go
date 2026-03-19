@@ -40,7 +40,7 @@ func scanVariableRefs(result *Result, lines []string, uri string) {
 	for _, ref := range varRefs {
 		if ref.IsForVar {
 			if sym := result.Symbols.ResolveForVar(ref.Name, ref.Line); sym != nil {
-				loc := Location{URI: uri, Line: ref.Line, Col: ref.Col}
+				loc := Location{URI: uri, Line: ref.Line, Col: ref.Col, EndCol: ref.EndCol}
 				sym.AddRef(loc, RefRead)
 			} else {
 				result.Diagnostics = append(result.Diagnostics, Diagnostic{
@@ -56,7 +56,7 @@ func scanVariableRefs(result *Result, lines []string, uri string) {
 			}
 		} else {
 			if sym := result.Symbols.ResolveVariable(ref.Name, ref.Line); sym != nil {
-				loc := Location{URI: uri, Line: ref.Line, Col: ref.Col}
+				loc := Location{URI: uri, Line: ref.Line, Col: ref.Col, EndCol: ref.EndCol}
 				sym.AddRef(loc, RefRead)
 			}
 		}

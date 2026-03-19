@@ -122,7 +122,80 @@ func DefinitionAt(workspace map[string]*Document, uri string, line, col int) (an
 		return sym.Definition, true
 	}
 
+	if targetLoc, ok := findCallTargetAtPosition(workspace, uri, doc, line, col); ok {
+		return targetLoc, true
+	}
+
 	return analyzer.Location{}, false
+}
+
+func findCallTargetAtPosition(workspace map[string]*Document, uri string, doc *Document, line, col int) (analyzer.Location, bool) {
+	if doc.Result == nil {
+		return analyzer.Location{}, false
+	}
+
+	for _, target := range doc.Result.CallTargets {
+		targetLower := strings.ToLower(target)
+		if !strings.HasSuffix(targetLower, ".bat") && !strings.HasSuffix(targetLower, ".cmd") {
+			continue
+		}
+
+		for _, cmdLine := range strings.Split(doc.Content, "\n") {
+			if strings.Contains(strings.ToLower(cmdLine), targetLower) {
+				lineIdx := strings.Index(doc.Content, cmdLine)
+				lineNum := strings.Count(doc.Content[:lineIdx], "\n")
+
+				if lineNum == line {
+					colIdx := strings.Index(strings.ToLower(cmdLine), targetLower)
+					if col >= colIdx && col < colIdx+len(target) {
+						resolvedURI := resolveCallTargetURI(uri, target, workspace)
+						if resolvedURI != "" {
+							return analyzer.Location{URI: resolvedURI, Line: 0, Col: 0}, true
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return analyzer.Location{}, false
+}
+
+func resolveCallTargetURI(fromURI, target string, workspace map[string]*Document) string {
+	targetLower := strings.ToLower(target)
+
+	for uri := range workspace {
+		if strings.HasSuffix(strings.ToLower(uri), targetLower) {
+			return uri
+		}
+	}
+
+	fromDir := ""
+	if idx := strings.LastIndex(fromURI, "/"); idx >= 0 {
+		fromDir = fromURI[:idx]
+	}
+	candidate := fromDir + "/" + target
+	candidateLower := strings.ToLower(candidate)
+
+	for uri := range workspace {
+		if strings.ToLower(uri) == candidateLower {
+			return uri
+		}
+	}
+
+	for uri := range workspace {
+		uriBase := ""
+		if idx := strings.LastIndex(uri, "/"); idx >= 0 {
+			uriBase = uri[idx+1:]
+		} else {
+			uriBase = uri
+		}
+		if strings.ToLower(uriBase) == targetLower {
+			return uri
+		}
+	}
+
+	return ""
 }
 
 func findSymbolAtPosition(doc *Document, line, col int) *analyzer.Symbol {
@@ -136,8 +209,14 @@ func findSymbolAtPosition(doc *Document, line, col int) *analyzer.Symbol {
 			return sym
 		}
 		for _, ref := range sym.References {
-			if ref.Location.Line == line && col >= ref.Location.Col && col <= ref.Location.Col+len(sym.Name) {
-				return sym
+			if ref.Location.EndCol > 0 {
+				if ref.Location.Line == line && col >= ref.Location.Col && col < ref.Location.EndCol {
+					return sym
+				}
+			} else {
+				if ref.Location.Line == line && col >= ref.Location.Col && col <= ref.Location.Col+len(sym.Name) {
+					return sym
+				}
 			}
 		}
 	}
@@ -147,8 +226,14 @@ func findSymbolAtPosition(doc *Document, line, col int) *analyzer.Symbol {
 			return sym
 		}
 		for _, ref := range sym.References {
-			if ref.Location.Line == line && col >= ref.Location.Col && col <= ref.Location.Col+len(sym.Name) {
-				return sym
+			if ref.Location.EndCol > 0 {
+				if ref.Location.Line == line && col >= ref.Location.Col && col < ref.Location.EndCol {
+					return sym
+				}
+			} else {
+				if ref.Location.Line == line && col >= ref.Location.Col && col <= ref.Location.Col+len(sym.Name) {
+					return sym
+				}
 			}
 		}
 	}
@@ -158,8 +243,14 @@ func findSymbolAtPosition(doc *Document, line, col int) *analyzer.Symbol {
 			return sym
 		}
 		for _, ref := range sym.References {
-			if ref.Location.Line == line && col >= ref.Location.Col && col <= ref.Location.Col+2 {
-				return sym
+			if ref.Location.EndCol > 0 {
+				if ref.Location.Line == line && col >= ref.Location.Col && col < ref.Location.EndCol {
+					return sym
+				}
+			} else {
+				if ref.Location.Line == line && col >= ref.Location.Col && col <= ref.Location.Col+2 {
+					return sym
+				}
 			}
 		}
 	}

@@ -189,7 +189,7 @@ func (b *builder) buildLabel(label *parser.LabelNode) {
 	if label.Name == "" {
 		return
 	}
-	loc := Location{URI: b.uri, Line: label.Line, Col: label.Col}
+	loc := Location{URI: b.uri, Line: label.Line, Col: label.Col, EndCol: label.Col + len(label.Name)}
 	sym := b.result.Symbols.DefineLabel(label.Name, loc)
 	sym.AddRef(loc, RefDefinition)
 }
@@ -199,7 +199,7 @@ func (b *builder) buildGoto(cmd *parser.SimpleCommand, line int) {
 		return
 	}
 	target := strings.TrimPrefix(cmd.Args[0], ":")
-	loc := Location{URI: b.uri, Line: line, Col: cmd.Col + len(cmd.Name) + 1}
+	loc := Location{URI: b.uri, Line: line, Col: cmd.Col + len(cmd.Name) + 1, EndCol: cmd.Col + len(cmd.Name) + 1 + len(target)}
 	b.pendingLabelRefs = append(b.pendingLabelRefs, pendingLabelRef{
 		target: target,
 		loc:    loc,
@@ -215,7 +215,7 @@ func (b *builder) buildCall(cmd *parser.SimpleCommand, line int) {
 		return
 	}
 	arg0 := cmd.Args[0]
-	loc := Location{URI: b.uri, Line: line, Col: cmd.Col + len(cmd.Name) + 1}
+	loc := Location{URI: b.uri, Line: line, Col: cmd.Col + len(cmd.Name) + 1, EndCol: cmd.Col + len(cmd.Name) + 1 + len(arg0)}
 
 	if strings.HasPrefix(arg0, ":") {
 		name := arg0[1:]
@@ -249,13 +249,17 @@ func (b *builder) buildFor(node *parser.ForNode) {
 	if node.Variable != "" {
 		char := node.Variable[0]
 		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') {
-			loc := Location{URI: b.uri, Line: node.VarLine, Col: node.VarCol}
+			defCol := node.VarCol - 2
+			if defCol < 0 {
+				defCol = node.VarCol
+			}
+			loc := Location{URI: b.uri, Line: node.VarLine, Col: defCol, EndCol: defCol + 3}
 			sym := b.result.Symbols.DefineForVar(node.Variable, loc, scope)
 			sym.AddRef(loc, RefDefinition)
 
 			additionalVars := extractAdditionalForVars(node.Options, char)
 			for _, addVar := range additionalVars {
-				addLoc := Location{URI: b.uri, Line: node.VarLine, Col: node.VarCol}
+				addLoc := Location{URI: b.uri, Line: node.VarLine, Col: defCol, EndCol: defCol + 3}
 				addSym := b.result.Symbols.DefineForVar(string(addVar), addLoc, scope)
 				addSym.AddRef(addLoc, RefDefinition)
 			}
