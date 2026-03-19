@@ -717,12 +717,8 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 			rawItem := item
 
 			if strings.HasPrefix(item, "\"") && strings.HasSuffix(item, "\"") {
-				if !opts.usebackq {
-					isString = true
-					rawItem = item[1 : len(item)-1]
-				} else {
-					rawItem = item[1 : len(item)-1]
-				}
+				isString = true
+				rawItem = item[1 : len(item)-1]
 			} else if strings.HasPrefix(item, "'") && strings.HasSuffix(item, "'") {
 				if opts.usebackq {
 					isString = true

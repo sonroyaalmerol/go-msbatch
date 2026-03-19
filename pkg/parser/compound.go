@@ -302,8 +302,8 @@ func (p *Parser) collectStoken() string {
 
 		case lexer.TokenText, lexer.TokenWord, lexer.TokenNameVariable, lexer.TokenStringEscape, lexer.TokenNumber:
 			word := val(t)
-			if sb.Len() == 0 && strings.HasPrefix(word, "`") {
-				return p.collectBacktickString()
+			if sb.Len() == 0 && (strings.HasPrefix(word, "`") || strings.HasPrefix(word, "'")) {
+				return p.collectQuotedCommandString(word[0])
 			}
 			sb.WriteString(val(p.consume()))
 
@@ -328,8 +328,9 @@ func (p *Parser) collectStoken() string {
 	return sb.String()
 }
 
-func (p *Parser) collectBacktickString() string {
+func (p *Parser) collectQuotedCommandString(quoteChar byte) string {
 	var sb strings.Builder
+	quoteRune := string(rune(quoteChar))
 	for p.pos < len(p.tokens) {
 		t := p.peek()
 		switch t.Type {
@@ -340,7 +341,7 @@ func (p *Parser) collectBacktickString() string {
 		case lexer.TokenText, lexer.TokenWord, lexer.TokenNameVariable, lexer.TokenStringEscape, lexer.TokenNumber:
 			word := val(t)
 			sb.WriteString(val(p.consume()))
-			if strings.HasSuffix(word, "`") && len(word) > 1 {
+			if strings.HasSuffix(word, quoteRune) && len(word) > 1 {
 				return sb.String()
 			}
 		case lexer.TokenPunctuation:

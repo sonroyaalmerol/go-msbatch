@@ -1,0 +1,10 @@
+Test 1: usebackq with backtick command
+CmdOut: hello world
+Test 2: usebackq with single quote string
+SingleQuote: part1 part2
+Test 3: usebackq with double quote string
+DoubleQuote: partA partB
+Test 4: without usebackq, single quote executes command
+NoUsebackqCmd: cmd output
+Test 5: without usebackq, double quote is string
+NoUsebackqString: item1 item2
