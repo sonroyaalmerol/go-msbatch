@@ -237,12 +237,24 @@ func (p *Parser) collectForSet() []string {
 			break
 		}
 
-		stoken := p.collectStoken()
+		var stoken string
+		if t.Type == lexer.TokenStringDouble || t.Type == lexer.TokenStringSingle || t.Type == lexer.TokenStringBT {
+			stoken = p.collectQuotedString()
+		} else if t.Type == lexer.TokenText || t.Type == lexer.TokenWord {
+			word := val(t)
+			if strings.HasPrefix(word, "`") || strings.HasPrefix(word, "'") {
+				stoken = p.collectQuotedCommandString(word[0])
+			} else {
+				stoken = p.collectStoken()
+			}
+		} else {
+			stoken = p.collectStoken()
+		}
+
 		if stoken != "" {
 			if len(stoken) >= 2 && (stoken[0] == '"' || stoken[0] == '\'' || stoken[0] == '`') && stoken[len(stoken)-1] == stoken[0] {
 				items = append(items, stoken)
 			} else {
-				// Commas are separators in FOR sets (equivalent to spaces).
 				for part := range strings.SplitSeq(stoken, ",") {
 					part = strings.TrimSpace(part)
 					if part != "" {
@@ -301,10 +313,6 @@ func (p *Parser) collectStoken() string {
 			sb.WriteString(val(p.consume()))
 
 		case lexer.TokenText, lexer.TokenWord, lexer.TokenNameVariable, lexer.TokenStringEscape, lexer.TokenNumber:
-			word := val(t)
-			if sb.Len() == 0 && (strings.HasPrefix(word, "`") || strings.HasPrefix(word, "'")) {
-				return p.collectQuotedCommandString(word[0])
-			}
 			sb.WriteString(val(p.consume()))
 
 		case lexer.TokenPunctuation:

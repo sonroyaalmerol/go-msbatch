@@ -1,0 +1,29 @@
+=== Regular commands ===
+
+Double quote string: "hello world"
+Single quote chars: 'hello world'
+Backtick chars: `hello world`
+
+=== IF comparisons ===
+
+Single quote comparison works
+Double quote comparison works
+
+=== FOR /F without usebackq ===
+
+Double quoted string: test
+Single quoted command: cmd
+Backtick filename: file
+
+=== FOR /F with usebackq ===
+
+usebackq double: test
+usebackq single: literal
+usebackq backtick: backtick
+
+=== Filenames with quotes ===
+
+content
+content
+
+Done with quotation tests
