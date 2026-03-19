@@ -11,33 +11,55 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
-// Pkzip provides a compatibility layer for PKZIP using the host's 7-Zip (7z or 7za).
+type pkzipMode int
+
+const (
+	pkzipAdd pkzipMode = iota
+	pkzipExtract
+	pkzipUpdate
+)
+
 func Pkzip(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	return run7z(p, cmd, "a")
+	return run7z(p, cmd, pkzipAdd)
 }
 
-// Pkunzip provides a compatibility layer for PKUNZIP using the host's 7-Zip (7z or 7za).
 func Pkunzip(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	return run7z(p, cmd, "x")
+	return run7z(p, cmd, pkzipExtract)
 }
 
-// Pkzipc provides a compatibility layer for PKZIPC using the host's 7-Zip (7z or 7za).
 func Pkzipc(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	// PKZIPC is the command-line version of PKZIP.
-	// We handle it similarly but may need to skip some specific flags.
-	return run7z(p, cmd, "a")
+	return run7zipc(p, cmd)
 }
 
-func run7z(p *processor.Processor, cmd *parser.SimpleCommand, defaultMode string) error {
+func run7zipc(p *processor.Processor, cmd *parser.SimpleCommand) error {
+	words := cmd.Words()
+	mode := pkzipAdd
+
+	for _, word := range words {
+		lower := strings.ToLower(word)
+		if strings.HasPrefix(word, "-") || strings.HasPrefix(word, "/") {
+			flag := strings.TrimPrefix(strings.TrimPrefix(lower, "-"), "/")
+			if flag == "extract" || flag == "x" || flag == "e" {
+				mode = pkzipExtract
+				break
+			}
+		}
+	}
+
+	return run7z(p, cmd, mode)
+}
+
+func run7z(p *processor.Processor, cmd *parser.SimpleCommand, defaultMode pkzipMode) error {
 	words := cmd.Words()
 	var z7Args []string
 	mode := defaultMode
 	var zipFile string
 	var files []string
 	var outDir string
+	var recurse bool
+	var overwrite bool
+	var storePaths bool
 
-	// 7z doesn't have a direct equivalent for every PKZIP flag.
-	// We'll map the most common ones.
 	for i := range words {
 		word := words[i]
 		lower := strings.ToLower(word)
@@ -46,23 +68,32 @@ func run7z(p *processor.Processor, cmd *parser.SimpleCommand, defaultMode string
 			flag := strings.TrimPrefix(strings.TrimPrefix(lower, "-"), "/")
 			switch {
 			case flag == "u":
-				mode = "u" // update
+				mode = pkzipUpdate
 			case flag == "n":
-				// newer files only - 7z 'u' with some switches or just 'x' with overwrite mode
-				// For pkunzip -n, it often means "newer". 7z -aoa (overwrite all) or -aos (skip)
-				z7Args = append(z7Args, "-aos")
+				if defaultMode == pkzipExtract {
+					z7Args = append(z7Args, "-aos")
+				}
+			case flag == "o":
+				overwrite = true
+			case flag == "r":
+				recurse = true
+			case flag == "p":
+				storePaths = true
+			case flag == "d":
+				if defaultMode == pkzipExtract {
+					z7Args = append(z7Args, "-y")
+				}
 			case strings.HasPrefix(flag, "lev="):
-				// compression level
 				level := strings.TrimPrefix(flag, "lev=")
 				z7Args = append(z7Args, "-mx="+level)
 			case flag == "config":
-				// ignore pkzipc config flag
 			case strings.HasPrefix(flag, "archivedate="):
-				// ignore
 			case strings.HasPrefix(flag, "times="):
-				// ignore
-			default:
-				// ignore unknown flags for now to avoid breaking 7z
+			case strings.HasPrefix(flag, "s"):
+			case strings.HasPrefix(flag, "extract"):
+				mode = pkzipExtract
+			case flag == "add":
+				mode = pkzipAdd
 			}
 			continue
 		}
@@ -70,8 +101,7 @@ func run7z(p *processor.Processor, cmd *parser.SimpleCommand, defaultMode string
 		if zipFile == "" {
 			zipFile = pathutil.MapPath(word)
 		} else {
-			// In PKUNZIP, the last argument might be an output directory if it ends in \
-			if defaultMode == "x" && (strings.HasSuffix(word, "\\") || strings.HasSuffix(word, "/")) {
+			if defaultMode == pkzipExtract && (strings.HasSuffix(word, "\\") || strings.HasSuffix(word, "/")) {
 				outDir = pathutil.MapPath(word)
 			} else {
 				files = append(files, word)
@@ -79,7 +109,6 @@ func run7z(p *processor.Processor, cmd *parser.SimpleCommand, defaultMode string
 		}
 	}
 
-	// Find 7z, 7za, or 7zz
 	exe, err := exec.LookPath("7z")
 	if err != nil {
 		exe, err = exec.LookPath("7za")
@@ -92,12 +121,46 @@ func run7z(p *processor.Processor, cmd *parser.SimpleCommand, defaultMode string
 			}
 		}
 	}
-	finalArgs := []string{mode}
+
+	var modeStr string
+	switch mode {
+	case pkzipAdd:
+		modeStr = "a"
+	case pkzipExtract:
+		modeStr = "x"
+	case pkzipUpdate:
+		modeStr = "u"
+	}
+
+	finalArgs := []string{modeStr}
+
+	if recurse && (mode == pkzipAdd || mode == pkzipUpdate) {
+		finalArgs = append(finalArgs, "-r")
+	}
+
+	if storePaths && (mode == pkzipAdd || mode == pkzipUpdate) {
+	}
+
+	if overwrite && mode == pkzipExtract {
+		finalArgs = append(finalArgs, "-y")
+		finalArgs = append(finalArgs, "-aoa")
+	}
+
 	finalArgs = append(finalArgs, z7Args...)
 	finalArgs = append(finalArgs, zipFile)
+
 	if outDir != "" {
 		finalArgs = append(finalArgs, "-o"+outDir)
 	}
+
+	if recurse && (mode == pkzipAdd || mode == pkzipUpdate) && len(files) > 0 {
+		for i, f := range files {
+			if !strings.Contains(f, "*") && !strings.Contains(f, "?") {
+				files[i] = f + "/*"
+			}
+		}
+	}
+
 	finalArgs = append(finalArgs, files...)
 
 	p.Logger.Debug("running 7z compatibility layer", "exe", exe, "args", finalArgs)
@@ -105,7 +168,7 @@ func run7z(p *processor.Processor, cmd *parser.SimpleCommand, defaultMode string
 	c.Stdout = p.Stdout
 	c.Stderr = p.Stderr
 	c.Stdin = p.Stdin
-	c.Env = os.Environ() // Basic env inheritance
+	c.Env = os.Environ()
 
 	if err := c.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
