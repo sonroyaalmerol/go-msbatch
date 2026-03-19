@@ -93,13 +93,15 @@ func (bl *BatchLexer) ignore() {
 
 // emit sends the current buffer as a token of type t and advances start.
 func (bl *BatchLexer) emit(t TokenType) {
-	// Calculate the line/col for the start of this token
 	startLine, startCol := bl.lineColAt(bl.start)
+	endLine, endCol := bl.lineColAt(bl.pos)
 	bl.items <- Item{
-		Line:  startLine,
-		Col:   startCol,
-		Type:  t,
-		Value: bl.input[bl.start:bl.pos],
+		Line:    startLine,
+		Col:     startCol,
+		EndLine: endLine,
+		EndCol:  endCol,
+		Type:    t,
+		Value:   bl.input[bl.start:bl.pos],
 	}
 	bl.start = bl.pos
 }

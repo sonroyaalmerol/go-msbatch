@@ -28,6 +28,21 @@ builds:
       - -X main.commit={{.Commit}}
       - -X main.date={{.Date}}
 
+  - id: msbatch-lsp
+    main: ./cmd/msbatch-lsp
+    binary: msbatch-lsp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
 archives:
   - id: msbatch
     builds:
@@ -40,6 +55,13 @@ archives:
     files:
       - README.md
       - docs/**
+
+  - id: msbatch-lsp
+    builds:
+      - msbatch-lsp
+    name_template: "msbatch-lsp_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
 
 checksum:
   name_template: "checksums.txt"

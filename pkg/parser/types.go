@@ -23,6 +23,16 @@ const (
 	NodeComment
 )
 
+// Diagnostic represents a parse error or warning with source location.
+type Diagnostic struct {
+	Line     int    // 0-based line number
+	Col      int    // 0-based column number
+	EndLine  int    // 0-based end line (inclusive)
+	EndCol   int    // 0-based end column (exclusive)
+	Severity string // "error", "warning", "information", "hint"
+	Message  string // human-readable diagnostic message
+}
+
 // Node is the interface implemented by all AST nodes.
 type Node interface {
 	Kind() NodeKind

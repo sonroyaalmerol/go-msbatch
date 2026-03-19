@@ -9,6 +9,7 @@ type Parser struct {
 	tokens        []lexer.Item
 	pos           int
 	compoundDepth int
+	Diagnostics   []Diagnostic
 }
 
 // New drains all tokens from src into a Parser.
@@ -43,7 +44,11 @@ func (p *Parser) Parse() []Node {
 		if n := p.parseCommand(); n != nil {
 			nodes = append(nodes, n)
 		} else {
-			p.pos++ // skip unrecognised token
+			t := p.peek()
+			if t.Type != lexer.TokenEOF {
+				p.addErrorAtToken(t, "unexpected token: "+string(t.Value))
+			}
+			p.pos++
 		}
 	}
 	return nodes
@@ -103,4 +108,21 @@ func (p *Parser) updatePos(endLine, endCol int, t lexer.Item) (int, int) {
 		return t.Line, t.Col + len(t.Value)
 	}
 	return endLine, endCol
+}
+
+// addError records a parse error at the given location.
+func (p *Parser) addError(line, col, endLine, endCol int, message string) {
+	p.Diagnostics = append(p.Diagnostics, Diagnostic{
+		Line:     line,
+		Col:      col,
+		EndLine:  endLine,
+		EndCol:   endCol,
+		Severity: "error",
+		Message:  message,
+	})
+}
+
+// addErrorAtToken records a parse error spanning the given token.
+func (p *Parser) addErrorAtToken(t lexer.Item, message string) {
+	p.addError(t.Line, t.Col, t.EndLine, t.EndCol, message)
 }
