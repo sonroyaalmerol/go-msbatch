@@ -11,47 +11,10 @@ import (
 
 // Phase0ReadLine applies phase-0 line-reading rules:
 //   - Replace 0x1A (Ctrl-Z) with '\n'.
-//   - Line continuity: Merge lines ending with ^ (if not escaped by another ^).
+//
+// Line continuation (^<newline>) is handled by the lexer.
 func Phase0ReadLine(src string) string {
-	src = strings.ReplaceAll(src, "\x1a", "\n")
-
-	lines := strings.Split(src, "\n")
-	var result []string
-
-	for i := 0; i < len(lines); i++ {
-		line := lines[i]
-		hasCR := strings.HasSuffix(line, "\r")
-		if hasCR {
-			line = line[:len(line)-1]
-		}
-
-		for strings.HasSuffix(line, "^") {
-			// Check if the caret itself is escaped (e.g. ^^ at the end)
-			if strings.HasSuffix(line, "^^") {
-				break
-			}
-			line = line[:len(line)-1]
-			if i+1 < len(lines) {
-				i++
-				nextLine := lines[i]
-				if strings.HasSuffix(nextLine, "\r") {
-					nextLine = nextLine[:len(nextLine)-1]
-					hasCR = true
-				} else {
-					hasCR = false
-				}
-				line += strings.TrimLeft(nextLine, " \t")
-			} else {
-				break
-			}
-		}
-		if hasCR {
-			line += "\r"
-		}
-		result = append(result, line)
-	}
-
-	return strings.Join(result, "\n")
+	return strings.ReplaceAll(src, "\x1a", "\n")
 }
 
 // dynamicVar returns the value of a CMD dynamic variable (one whose value

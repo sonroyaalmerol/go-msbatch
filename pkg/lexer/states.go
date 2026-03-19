@@ -70,9 +70,10 @@ func (bl *BatchLexer) stateRoot() stateFn {
 			return nil
 		}
 		if isNL(r2) {
+			bl.acceptRun(isNL)
 			bl.ignore()
 		} else {
-			bl.start++ // skip '^'
+			bl.start++
 			bl.emit(TokenStringEscape)
 		}
 		return bl.stateRoot

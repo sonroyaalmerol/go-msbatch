@@ -11,7 +11,10 @@ type BatchLexer struct {
 	pos        int
 	state      stateFn
 	items      chan Item
-	lineOffset int // 0-based line number stamped on all emitted Items
+	lineOffset int // 0-based line number offset (for embedding in larger documents)
+	// position tracking for LSP
+	currentLine int // current 0-based line number
+	currentCol  int // current 0-based column number
 	// batch-specific state
 	compoundDepth  int
 	atCommandStart bool // true when : would start a label (no content on line yet)
@@ -94,13 +97,35 @@ func (bl *BatchLexer) ignore() {
 
 // emit sends the current buffer as a token of type t and advances start.
 func (bl *BatchLexer) emit(t TokenType) {
+	// Calculate the line/col for the start of this token
+	startLine, startCol := bl.lineColAt(bl.start)
 	bl.items <- Item{
-		Line:  bl.lineOffset,
-		Col:   bl.start,
+		Line:  startLine,
+		Col:   startCol,
 		Type:  t,
 		Value: bl.input[bl.start:bl.pos],
 	}
 	bl.start = bl.pos
+}
+
+// lineColAt returns the line and column at a given position.
+// This is O(n) where n is the position, but provides accurate LSP positions.
+func (bl *BatchLexer) lineColAt(pos int) (line, col int) {
+	line = bl.lineOffset
+	col = 0
+	for i := 0; i < pos && i < len(bl.input); i++ {
+		r := bl.input[i]
+		if r == '\n' {
+			line++
+			col = 0
+		} else if r == '\r' {
+			// Skip CR (CRLF is handled by LF)
+			continue
+		} else {
+			col++
+		}
+	}
+	return line, col
 }
 
 // check reports whether the rune at the current position satisfies fn
