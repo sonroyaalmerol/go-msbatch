@@ -87,7 +87,7 @@ func scanPercentVars(line string, lineIdx int) []VarRef {
 			char := rest[pct+2]
 			if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') {
 				refs = append(refs, VarRef{
-					Name:     "%" + strings.ToUpper(string(char)),
+					Name:     strings.ToUpper(string(char)),
 					Line:     lineIdx,
 					Col:      offset + pct,
 					EndCol:   offset + pct + 3,

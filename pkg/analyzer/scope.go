@@ -87,8 +87,5 @@ func (s *Scope) AddChild(child *Scope) {
 }
 
 func canonicalName(name string, kind SymbolKind) string {
-	if kind == SymbolForVar {
-		return name
-	}
 	return strings.ToUpper(name)
 }

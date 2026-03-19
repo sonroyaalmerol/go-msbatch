@@ -100,8 +100,8 @@ for %%i in (*.txt) do echo %%i
 		t.Error("expected FOR variables to be defined")
 	}
 
-	if _, ok := result.Symbols.ForVars["i"]; !ok {
-		t.Errorf("expected 'i' FOR variable to be defined, got keys: %v", getForVarKeys(result.Symbols.ForVars))
+	if _, ok := result.Symbols.ForVars["I"]; !ok {
+		t.Errorf("expected 'I' FOR variable to be defined, got keys: %v", getForVarKeys(result.Symbols.ForVars))
 	}
 }
 
@@ -357,5 +357,165 @@ echo test
 	diags := result.GetDiagnostics()
 	if len(diags) == 0 {
 		t.Error("expected diagnostics for unused label")
+	}
+}
+
+func TestForVariableResolution(t *testing.T) {
+	a := NewAnalyzer()
+	content := `@echo off
+for /L %%n in (1, 1, 3) do echo Step %%n
+`
+	result := a.Analyze("file:///test.bat", content)
+
+	forVarDiags := 0
+	for _, d := range result.Diagnostics {
+		if d.Message == "Undefined FOR loop variable: N" {
+			forVarDiags++
+		}
+	}
+	if forVarDiags > 0 {
+		t.Errorf("expected no undefined FOR variable diagnostics, got %d", forVarDiags)
+	}
+
+	if sym := result.Symbols.ForVars["N"]; sym == nil {
+		t.Error("expected FOR variable N to be defined")
+	} else if sym.RefCount() == 0 {
+		t.Error("expected FOR variable N to have references")
+	}
+}
+
+func TestForwardLabelReference(t *testing.T) {
+	a := NewAnalyzer()
+	content := `@echo off
+goto :end
+echo middle
+:end
+echo end
+`
+	result := a.Analyze("file:///test.bat", content)
+
+	endLabel := result.Symbols.Labels["end"]
+	if endLabel == nil {
+		t.Fatal("expected 'end' label to be defined")
+	}
+
+	if endLabel.RefCount() == 0 {
+		t.Error("expected 'end' label to have references (forward goto)")
+	}
+}
+
+func TestUserDefinedEOFLabel(t *testing.T) {
+	a := NewAnalyzer()
+	content := `@echo off
+goto eof
+echo middle
+:EOF
+echo custom eof
+`
+	result := a.Analyze("file:///test.bat", content)
+
+	eofLabel := result.Symbols.Labels["eof"]
+	if eofLabel == nil {
+		t.Fatal("expected 'eof' label to be defined")
+	}
+
+	if eofLabel.RefCount() == 0 {
+		t.Error("expected user-defined 'eof' label to have references")
+	}
+}
+
+func TestCallWithoutSpace(t *testing.T) {
+	a := NewAnalyzer()
+	content := `@echo off
+call:subroutine
+echo done
+:subroutine
+echo in subroutine
+`
+	result := a.Analyze("file:///test.bat", content)
+
+	subLabel := result.Symbols.Labels["subroutine"]
+	if subLabel == nil {
+		t.Fatal("expected 'subroutine' label to be defined")
+	}
+
+	if subLabel.RefCount() == 0 {
+		t.Error("expected 'subroutine' label to have references (call without space)")
+	}
+}
+
+func TestNestedForVariableResolution(t *testing.T) {
+	a := NewAnalyzer()
+	content := `@echo off
+if "x"=="x" (
+    for /L %%i in (1, 1, 2) do (
+        echo Loop %%i inside nested IF
+    )
+)
+`
+	result := a.Analyze("file:///test.bat", content)
+
+	forVarDiags := 0
+	for _, d := range result.Diagnostics {
+		if d.Message == "Undefined FOR loop variable: I" {
+			forVarDiags++
+		}
+	}
+	if forVarDiags > 0 {
+		t.Errorf("expected no undefined FOR variable diagnostics in nested context, got %d", forVarDiags)
+	}
+}
+
+func TestForFTokenVariables(t *testing.T) {
+	a := NewAnalyzer()
+	content := `@echo off
+for /F "tokens=1,2,3 delims=," %%a in ("one,two,three") do (
+    echo First: %%a
+    echo Second: %%b
+    echo Third: %%c
+)
+`
+	result := a.Analyze("file:///test.bat", content)
+
+	for _, d := range result.Diagnostics {
+		if d.Message == "Undefined FOR loop variable: B" || d.Message == "Undefined FOR loop variable: C" {
+			t.Errorf("unexpected diagnostic: %s", d.Message)
+		}
+	}
+
+	if sym := result.Symbols.ForVars["A"]; sym == nil {
+		t.Error("expected FOR variable A to be defined")
+	}
+	if sym := result.Symbols.ForVars["B"]; sym == nil {
+		t.Error("expected FOR variable B to be defined (from tokens=1,2,3)")
+	}
+	if sym := result.Symbols.ForVars["C"]; sym == nil {
+		t.Error("expected FOR variable C to be defined (from tokens=1,2,3)")
+	}
+}
+
+func TestForFTokenRangeVariables(t *testing.T) {
+	a := NewAnalyzer()
+	content := `@echo off
+for /F "tokens=1-3" %%x in ("one two three") do (
+    echo %%x %%y %%z
+)
+`
+	result := a.Analyze("file:///test.bat", content)
+
+	for _, d := range result.Diagnostics {
+		if d.Message == "Undefined FOR loop variable: Y" || d.Message == "Undefined FOR loop variable: Z" {
+			t.Errorf("unexpected diagnostic: %s", d.Message)
+		}
+	}
+
+	if sym := result.Symbols.ForVars["X"]; sym == nil {
+		t.Error("expected FOR variable X to be defined")
+	}
+	if sym := result.Symbols.ForVars["Y"]; sym == nil {
+		t.Error("expected FOR variable Y to be defined (from tokens=1-3)")
+	}
+	if sym := result.Symbols.ForVars["Z"]; sym == nil {
+		t.Error("expected FOR variable Z to be defined (from tokens=1-3)")
 	}
 }

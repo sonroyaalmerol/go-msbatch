@@ -7,6 +7,12 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
+type pendingLabelRef struct {
+	target string
+	loc    Location
+	kind   ReferenceKind
+}
+
 type builder struct {
 	result                  *Result
 	lines                   []string
@@ -16,14 +22,16 @@ type builder struct {
 	hasDynamicJumps         bool
 	callTargets             []string
 	setlocalDepth           int
+	pendingLabelRefs        []pendingLabelRef
 }
 
 func newBuilder(result *Result, lines []string, uri string) *builder {
 	b := &builder{
-		result:      result,
-		lines:       lines,
-		uri:         uri,
-		callTargets: []string{},
+		result:           result,
+		lines:            lines,
+		uri:              uri,
+		callTargets:      []string{},
+		pendingLabelRefs: []pendingLabelRef{},
 	}
 	b.scopeStack = []*Scope{result.Symbols.Global}
 	return b
@@ -191,13 +199,12 @@ func (b *builder) buildGoto(cmd *parser.SimpleCommand, line int) {
 		return
 	}
 	target := strings.TrimPrefix(cmd.Args[0], ":")
-	if strings.ToLower(target) == "eof" {
-		return
-	}
 	loc := Location{URI: b.uri, Line: line, Col: cmd.Col + len(cmd.Name) + 1}
-	if sym := b.result.Symbols.ResolveLabel(target); sym != nil {
-		sym.AddRef(loc, RefGoto)
-	}
+	b.pendingLabelRefs = append(b.pendingLabelRefs, pendingLabelRef{
+		target: target,
+		loc:    loc,
+		kind:   RefGoto,
+	})
 	if strings.Contains(target, "%") {
 		b.hasDynamicJumps = true
 	}
@@ -212,13 +219,13 @@ func (b *builder) buildCall(cmd *parser.SimpleCommand, line int) {
 
 	if strings.HasPrefix(arg0, ":") {
 		name := arg0[1:]
-		if strings.ToLower(name) != "eof" {
-			if sym := b.result.Symbols.ResolveLabel(name); sym != nil {
-				sym.AddRef(loc, RefCall)
-			}
-			if strings.Contains(name, "%") {
-				b.hasDynamicJumps = true
-			}
+		b.pendingLabelRefs = append(b.pendingLabelRefs, pendingLabelRef{
+			target: name,
+			loc:    loc,
+			kind:   RefCall,
+		})
+		if strings.Contains(name, "%") {
+			b.hasDynamicJumps = true
 		}
 	} else {
 		pathLower := strings.ToLower(arg0)
@@ -245,11 +252,82 @@ func (b *builder) buildFor(node *parser.ForNode) {
 			loc := Location{URI: b.uri, Line: node.VarLine, Col: node.VarCol}
 			sym := b.result.Symbols.DefineForVar(node.Variable, loc, scope)
 			sym.AddRef(loc, RefDefinition)
+
+			additionalVars := extractAdditionalForVars(node.Options, char)
+			for _, addVar := range additionalVars {
+				addLoc := Location{URI: b.uri, Line: node.VarLine, Col: node.VarCol}
+				addSym := b.result.Symbols.DefineForVar(string(addVar), addLoc, scope)
+				addSym.AddRef(addLoc, RefDefinition)
+			}
 		}
 	}
 
 	b.Build(node.Do)
 	b.popScope(scope.EndLine)
+}
+
+func extractAdditionalForVars(options string, baseVar byte) []byte {
+	var additionalVars []byte
+
+	tokensMatch := strings.Split(options, "tokens=")
+	if len(tokensMatch) < 2 {
+		return nil
+	}
+
+	afterTokens := tokensMatch[1]
+	end := strings.IndexAny(afterTokens, " \t\"'")
+	if end > 0 {
+		afterTokens = afterTokens[:end]
+	}
+
+	tokenCount := 1
+	for _, part := range strings.Split(afterTokens, ",") {
+		part = strings.TrimSpace(part)
+		if strings.Contains(part, "-") {
+			rangeParts := strings.Split(part, "-")
+			if len(rangeParts) == 2 {
+				start := 0
+				end := 0
+				for _, c := range rangeParts[0] {
+					if c >= '0' && c <= '9' {
+						start = start*10 + int(c-'0')
+					}
+				}
+				for _, c := range rangeParts[1] {
+					if c >= '0' && c <= '9' {
+						end = end*10 + int(c-'0')
+					}
+				}
+				if end > tokenCount {
+					tokenCount = end
+				}
+			}
+		} else {
+			num := 0
+			for _, c := range part {
+				if c >= '0' && c <= '9' {
+					num = num*10 + int(c-'0')
+				}
+			}
+			if num > tokenCount {
+				tokenCount = num
+			}
+		}
+	}
+
+	for i := 2; i <= tokenCount; i++ {
+		nextVar := baseVar + byte(i-1)
+		if nextVar > 'z' && baseVar >= 'a' && baseVar <= 'z' {
+			nextVar = 'a' + byte(i-1) - ('z' - baseVar + 1)
+		} else if nextVar > 'Z' && baseVar >= 'A' && baseVar <= 'Z' {
+			nextVar = 'A' + byte(i-1) - ('Z' - baseVar + 1)
+		}
+		if (nextVar >= 'a' && nextVar <= 'z') || (nextVar >= 'A' && nextVar <= 'Z') {
+			additionalVars = append(additionalVars, nextVar)
+		}
+	}
+
+	return additionalVars
 }
 
 func (b *builder) buildBlock(block *parser.Block) {
@@ -292,6 +370,8 @@ func nodeLastLine(node parser.Node) int {
 }
 
 func (b *builder) ComputeDiagnostics() {
+	b.resolveLabelRefs()
+
 	definedLabels := make(map[string]bool)
 	for _, sym := range b.result.Symbols.Labels {
 		definedLabels[sym.Name] = true
@@ -317,6 +397,17 @@ func (b *builder) ComputeDiagnostics() {
 				Message:  "Unused label: " + name,
 				Severity: SeverityHint,
 			})
+		}
+	}
+}
+
+func (b *builder) resolveLabelRefs() {
+	for _, ref := range b.pendingLabelRefs {
+		if strings.ToLower(ref.target) == "eof" && b.result.Symbols.ResolveLabel(ref.target) == nil {
+			continue
+		}
+		if sym := b.result.Symbols.ResolveLabel(ref.target); sym != nil {
+			sym.AddRef(ref.loc, ref.kind)
 		}
 	}
 }

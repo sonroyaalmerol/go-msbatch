@@ -15,7 +15,7 @@ func NewVariableSymbol(name string, loc Location) *Symbol {
 
 func NewForVarSymbol(name string, loc Location) *Symbol {
 	return &Symbol{
-		Name:       name,
+		Name:       strings.ToUpper(name),
 		Kind:       SymbolForVar,
 		Definition: loc,
 		References: []Reference{},
@@ -73,8 +73,7 @@ func (st *SymbolTable) DefineForVar(name string, loc Location, scope *Scope) *Sy
 	sym := NewForVarSymbol(name, loc)
 	sym.Scope = scope
 	scope.Define(sym)
-	key := name
-	st.ForVars[key] = sym
+	st.ForVars[strings.ToUpper(name)] = sym
 	return sym
 }
 
@@ -105,7 +104,7 @@ func (st *SymbolTable) ResolveForVar(name string, line int) *Symbol {
 			return sym
 		}
 	}
-	return st.ForVars[name]
+	return st.ForVars[strings.ToUpper(name)]
 }
 
 func (st *SymbolTable) ResolveLabel(name string) *Symbol {
