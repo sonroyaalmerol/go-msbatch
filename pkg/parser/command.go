@@ -102,7 +102,7 @@ func (p *Parser) parsePrimary() Node {
 		colonLine, colonCol := t.Line, t.Col
 		p.consume()
 		lt := p.peek()
-		if lt.Type == lexer.TokenNameLabel {
+		if lt.Type == lexer.TokenLabel {
 			p.consume()
 			labelVal := val(lt)
 			return &LabelNode{
@@ -129,7 +129,7 @@ func (p *Parser) parsePrimary() Node {
 	}
 
 	// Bare label name token (seen after : in some lexer paths)
-	if t.Type == lexer.TokenNameLabel {
+	if t.Type == lexer.TokenLabel {
 		p.consume()
 		return &LabelNode{
 			Line:    t.Line,
@@ -219,13 +219,6 @@ func (p *Parser) parseSimpleCommand(suppressed bool) *SimpleCommand {
 func (p *Parser) collectArgs(cmd *SimpleCommand, endLine, endCol int) (int, int) {
 	var cur strings.Builder
 
-	updateEnd := func(t lexer.Item) {
-		if t.Line > endLine || (t.Line == endLine && t.Col+len(t.Value) > endCol) {
-			endLine = t.Line
-			endCol = t.Col + len(t.Value)
-		}
-	}
-
 	flushArg := func() {
 		if cur.Len() > 0 {
 			v := cur.String()
@@ -245,42 +238,37 @@ func (p *Parser) collectArgs(cmd *SimpleCommand, endLine, endCol int) (int, int)
 		case lexer.TokenWhitespace:
 			flushArg()
 			consumed := p.consume()
-			updateEnd(consumed)
+			endLine, endCol = p.updatePos(endLine, endCol, consumed)
 			cmd.RawArgs = append(cmd.RawArgs, val(consumed))
 
 		case lexer.TokenKeyword:
-			// Structural keywords emitted by specialised lexer states (e.g. "in"
-			// from stateFor) are never arg terminators; include them verbatim.
 			consumed := p.consume()
 			cur.WriteString(val(consumed))
-			updateEnd(consumed)
+			endLine, endCol = p.updatePos(endLine, endCol, consumed)
 
 		case lexer.TokenWord:
 			v := val(t)
 			if v == "," || v == ";" {
 				flushArg()
 				consumed := p.consume()
-				updateEnd(consumed)
+				endLine, endCol = p.updatePos(endLine, endCol, consumed)
 				cmd.RawArgs = append(cmd.RawArgs, val(consumed))
 				continue
 			}
-			// "else" at the top level (compoundDepth == 0) terminates the
-			// then-branch of an IF statement written without enclosing parens.
-			// Inside a compound block the word is a plain argument.
 			if strings.ToLower(v) == "else" && p.compoundDepth == 0 {
 				flushArg()
 				return endLine, endCol
 			}
 			consumed := p.consume()
 			cur.WriteString(val(consumed))
-			updateEnd(consumed)
+			endLine, endCol = p.updatePos(endLine, endCol, consumed)
 
 		case lexer.TokenPunctuation:
 			v := val(t)
 			if v == "=" {
 				flushArg()
 				consumed := p.consume()
-				updateEnd(consumed)
+				endLine, endCol = p.updatePos(endLine, endCol, consumed)
 				cmd.RawArgs = append(cmd.RawArgs, val(consumed))
 				continue
 			}
@@ -290,22 +278,22 @@ func (p *Parser) collectArgs(cmd *SimpleCommand, endLine, endCol int) (int, int)
 			}
 			consumed := p.consume()
 			cur.WriteString(val(consumed))
-			updateEnd(consumed)
+			endLine, endCol = p.updatePos(endLine, endCol, consumed)
 
 		case lexer.TokenRedirect:
 			flushArg()
 			el, ec := p.collectRedirect(cmd, endLine, endCol)
 			endLine, endCol = el, ec
 
-		case lexer.TokenStringDouble, lexer.TokenStringSingle, lexer.TokenStringBT:
+		case lexer.TokenStringDouble, lexer.TokenStringSingle, lexer.TokenStringBacktick:
 			quoted, lastTok := p.collectQuotedStringWithToken()
 			cur.WriteString(quoted)
-			updateEnd(lastTok)
+			endLine, endCol = p.updatePos(endLine, endCol, lastTok)
 
 		default:
 			consumed := p.consume()
 			cur.WriteString(val(consumed))
-			updateEnd(consumed)
+			endLine, endCol = p.updatePos(endLine, endCol, consumed)
 		}
 	}
 	flushArg()
@@ -315,11 +303,8 @@ func (p *Parser) collectArgs(cmd *SimpleCommand, endLine, endCol int) (int, int)
 // collectRedirect reads a TokenRedirect and its target from the stream.
 // Returns the end line and column after processing.
 func (p *Parser) collectRedirect(cmd *SimpleCommand, endLine, endCol int) (int, int) {
-	rt := p.consume() // TokenRedirect
-	if rt.Line > endLine || (rt.Line == endLine && rt.Col+len(rt.Value) > endCol) {
-		endLine = rt.Line
-		endCol = rt.Col + len(rt.Value)
-	}
+	rt := p.consume()
+	endLine, endCol = p.updatePos(endLine, endCol, rt)
 	v := val(rt)
 	r := Redirect{}
 
@@ -333,10 +318,7 @@ func (p *Parser) collectRedirect(cmd *SimpleCommand, endLine, endCol int) (int, 
 		if p.pos < len(p.tokens) && p.tokens[p.pos].Type == lexer.TokenNumber {
 			numTok := p.consume()
 			r.Target = val(numTok)
-			if numTok.Line > endLine || (numTok.Line == endLine && numTok.Col+len(numTok.Value) > endCol) {
-				endLine = numTok.Line
-				endCol = numTok.Col + len(numTok.Value)
-			}
+			endLine, endCol = p.updatePos(endLine, endCol, numTok)
 		}
 		cmd.Redirects = append(cmd.Redirects, r)
 		return endLine, endCol
@@ -346,10 +328,7 @@ func (p *Parser) collectRedirect(cmd *SimpleCommand, endLine, endCol int) (int, 
 		if p.pos < len(p.tokens) && p.tokens[p.pos].Type == lexer.TokenNumber {
 			numTok := p.consume()
 			r.Target = val(numTok)
-			if numTok.Line > endLine || (numTok.Line == endLine && numTok.Col+len(numTok.Value) > endCol) {
-				endLine = numTok.Line
-				endCol = numTok.Col + len(numTok.Value)
-			}
+			endLine, endCol = p.updatePos(endLine, endCol, numTok)
 		}
 		cmd.Redirects = append(cmd.Redirects, r)
 		return endLine, endCol
@@ -361,7 +340,7 @@ func (p *Parser) collectRedirect(cmd *SimpleCommand, endLine, endCol int) (int, 
 		r.FD = extractFD(v, "<", 0)
 	}
 
-	p.skipWS() // skip to target
+	p.skipWS()
 	t := p.peek()
 	if t.Type != lexer.TokenEOF && t.Type != lexer.TokenNewline && t.Type != lexer.TokenPunctuation {
 		r.Target, endLine, endCol = p.collectStokenWithPos(endLine, endCol)

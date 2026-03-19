@@ -97,3 +97,10 @@ func isPipeOrAmpVal(v string) bool {
 	return false
 }
 
+// updatePos returns updated endLine and endCol if the token extends beyond the current position.
+func (p *Parser) updatePos(endLine, endCol int, t lexer.Item) (int, int) {
+	if t.Line > endLine || (t.Line == endLine && t.Col+len(t.Value) > endCol) {
+		return t.Line, t.Col + len(t.Value)
+	}
+	return endLine, endCol
+}

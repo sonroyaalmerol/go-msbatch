@@ -21,14 +21,14 @@ const (
 	TokenPunctuation
 	TokenKeyword
 	TokenComment
-	TokenNameLabel
-	TokenNameVariable
-	TokenNameDelayedVar // !var! delayed expansion variable
-	TokenNameForVar     // %%i FOR loop variable
+	TokenLabel
+	TokenVariable
+	TokenDelayedExpansion // !var! delayed expansion variable
+	TokenForVar           // %%i FOR loop variable
 	TokenStringDouble
 	TokenStringSingle
-	TokenStringBT
-	TokenStringEscape
+	TokenStringBacktick
+	TokenEscape
 	TokenNumber
 	TokenOperator
 	TokenRedirect
@@ -41,11 +41,11 @@ func (t TokenType) String() string {
 	names := map[TokenType]string{
 		TokenEOF: "EOF", TokenText: "Text",
 		TokenPunctuation: "Punctuation", TokenKeyword: "Keyword",
-		TokenComment: "Comment", TokenNameLabel: "Name.Label",
-		TokenNameVariable: "Name.Variable", TokenNameDelayedVar: "Name.DelayedVar",
-		TokenNameForVar: "Name.ForVar", TokenStringDouble: "String.Double",
-		TokenStringSingle: "String.Single", TokenStringBT: "String.Backtick",
-		TokenStringEscape: "String.Escape", TokenNumber: "Number",
+		TokenComment: "Comment", TokenLabel: "Label",
+		TokenVariable: "Variable", TokenDelayedExpansion: "DelayedExpansion",
+		TokenForVar: "ForVar", TokenStringDouble: "String.Double",
+		TokenStringSingle: "String.Single", TokenStringBacktick: "String.Backtick",
+		TokenEscape: "Escape", TokenNumber: "Number",
 		TokenOperator: "Operator",
 		TokenRedirect: "Redirect", TokenWhitespace: "Whitespace",
 		TokenNewline: "Newline", TokenWord: "Word",

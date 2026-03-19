@@ -41,29 +41,29 @@ func (bl *BatchLexer) lexPercent() {
 			bl.acceptRun(func(r rune) bool {
 				return r != 0 && !isNL(r) && !IsWS(r) && !isPunct(r) && r != '"' && r != '\'' && r != '`'
 			})
-			bl.emit(TokenNameForVar)
+			bl.emit(TokenForVar)
 		} else if (r2 >= 'a' && r2 <= 'z') || (r2 >= 'A' && r2 <= 'Z') {
 			// %%X — FOR variable
-			bl.emit(TokenNameForVar)
+			bl.emit(TokenForVar)
 		} else {
 			// %% alone or followed by non-letter — literal %
 			if r2 != 0 {
 				bl.prev()
 			}
-			bl.emit(TokenStringEscape)
+			bl.emit(TokenEscape)
 		}
 	case r >= '0' && r <= '9' || r == '*':
-		bl.emit(TokenNameVariable)
+		bl.emit(TokenVariable)
 	case r == '~':
 		bl.acceptRun(func(r rune) bool {
 			return r != 0 && !isNL(r) && !IsWS(r) && !isPunct(r) && r != '"' && r != '\'' && r != '`'
 		})
-		bl.emit(TokenNameVariable)
+		bl.emit(TokenVariable)
 	case r == 0 || isNL(r):
 		if r != 0 {
 			bl.prev()
 		}
-		bl.emit(TokenNameVariable)
+		bl.emit(TokenVariable)
 	default:
 		for {
 			r2 := bl.next()
@@ -74,7 +74,7 @@ func (bl *BatchLexer) lexPercent() {
 				break
 			}
 		}
-		bl.emit(TokenNameVariable)
+		bl.emit(TokenVariable)
 	}
 }
 
@@ -91,7 +91,7 @@ func (bl *BatchLexer) lexDelayedVar() {
 			break
 		}
 	}
-	bl.emit(TokenNameDelayedVar)
+	bl.emit(TokenDelayedExpansion)
 }
 
 // lexStringDoubleBody returns a stateFn that scans the body of a "…" string,
@@ -133,24 +133,6 @@ func (bl *BatchLexer) lexStringDoubleBody(next stateFn) stateFn {
 				}
 				// r2 is already consumed into the token buffer; whether it was '"'
 				// or something else, just continue scanning.
-			}
-		}
-	}
-}
-
-// lexStringBTBody returns a stateFn that scans the body of a `…` string,
-// then transitions to next. The opening ` has already been consumed.
-func (bl *BatchLexer) lexStringBTBody(next stateFn) stateFn {
-	return func() stateFn {
-		for {
-			r := bl.next()
-			switch r {
-			case 0:
-				bl.emit(TokenStringBT)
-				return nil
-			case '`':
-				bl.emit(TokenStringBT)
-				return next
 			}
 		}
 	}

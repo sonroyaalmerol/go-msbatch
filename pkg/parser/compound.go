@@ -156,7 +156,7 @@ func (p *Parser) parseFor(_ bool) *ForNode {
 			p.consume()
 			p.skipWS()
 			t2 := p.peek()
-			if t2.Type == lexer.TokenStringDouble || t2.Type == lexer.TokenStringSingle || t2.Type == lexer.TokenStringBT {
+			if t2.Type == lexer.TokenStringDouble || t2.Type == lexer.TokenStringSingle || t2.Type == lexer.TokenStringBacktick {
 				n.Options = p.collectQuotedString()
 				p.skipWS()
 			}
@@ -180,7 +180,7 @@ func (p *Parser) parseFor(_ bool) *ForNode {
 		}
 	}
 
-	if p.peek().Type == lexer.TokenNameForVar || p.peek().Type == lexer.TokenNameVariable || p.peek().Type == lexer.TokenWord || p.peek().Type == lexer.TokenText {
+	if p.peek().Type == lexer.TokenForVar || p.peek().Type == lexer.TokenVariable || p.peek().Type == lexer.TokenWord || p.peek().Type == lexer.TokenText {
 		varTok := p.peek()
 		raw := val(p.consume())
 		n.Variable = stripForVarPercents(raw)
@@ -189,11 +189,11 @@ func (p *Parser) parseFor(_ bool) *ForNode {
 		n.VarLine = varTok.Line
 		n.VarCol = varTok.Col + leadingPercents
 		p.skipWS()
-	} else if p.peek().Type == lexer.TokenStringEscape {
-		// Fallback: %%X emitted as TokenStringEscape("%%") + TokenWord("X")
+	} else if p.peek().Type == lexer.TokenEscape {
+		// Fallback: %%X emitted as TokenEscape("%%") + TokenWord("X")
 		escTok := p.peek()
 		esc := val(p.consume())
-		if p.peek().Type == lexer.TokenWord || p.peek().Type == lexer.TokenText || p.peek().Type == lexer.TokenNameVariable {
+		if p.peek().Type == lexer.TokenWord || p.peek().Type == lexer.TokenText || p.peek().Type == lexer.TokenVariable {
 			letterTok := p.peek()
 			n.Variable = stripForVarPercents(esc + val(p.consume()))
 			n.VarLine = letterTok.Line
@@ -240,7 +240,7 @@ func (p *Parser) collectForSet() []string {
 		}
 
 		var stoken string
-		if t.Type == lexer.TokenStringDouble || t.Type == lexer.TokenStringSingle || t.Type == lexer.TokenStringBT {
+		if t.Type == lexer.TokenStringDouble || t.Type == lexer.TokenStringSingle || t.Type == lexer.TokenStringBacktick {
 			stoken = p.collectQuotedString()
 		} else if t.Type == lexer.TokenText || t.Type == lexer.TokenWord {
 			word := val(t)
@@ -307,7 +307,7 @@ func (p *Parser) collectQuotedCommandString(quoteChar byte) string {
 			return sb.String()
 		case lexer.TokenWhitespace:
 			sb.WriteString(val(p.consume()))
-		case lexer.TokenText, lexer.TokenWord, lexer.TokenNameVariable, lexer.TokenNameForVar, lexer.TokenNameDelayedVar, lexer.TokenStringEscape, lexer.TokenNumber:
+		case lexer.TokenText, lexer.TokenWord, lexer.TokenVariable, lexer.TokenForVar, lexer.TokenDelayedExpansion, lexer.TokenEscape, lexer.TokenNumber:
 			word := val(t)
 			sb.WriteString(val(p.consume()))
 			if strings.HasSuffix(word, quoteRune) && len(word) > 1 {
@@ -327,26 +327,8 @@ func (p *Parser) collectQuotedCommandString(quoteChar byte) string {
 }
 
 func (p *Parser) collectQuotedString() string {
-	var sb strings.Builder
-	t := p.consume()
-	sb.WriteString(val(t))
-	if len(val(t)) == 0 {
-		return sb.String()
-	}
-	quoteChar := val(t)[0]
-
-	if len(val(t)) > 1 && strings.HasSuffix(val(t), string(quoteChar)) {
-		return sb.String()
-	}
-
-	for p.pos < len(p.tokens) {
-		t2 := p.consume()
-		sb.WriteString(val(t2))
-		if strings.HasSuffix(val(t2), string(quoteChar)) {
-			break
-		}
-	}
-	return sb.String()
+	s, _ := p.collectQuotedStringWithToken()
+	return s
 }
 
 func stripForVarPercents(s string) string {
@@ -391,33 +373,24 @@ func (p *Parser) collectStokenWithPos(endLine, endCol int) (string, int, int) {
 		case lexer.TokenEOF, lexer.TokenNewline, lexer.TokenWhitespace:
 			return sb.String(), endLine, endCol
 
-		case lexer.TokenStringDouble, lexer.TokenStringSingle, lexer.TokenStringBT:
+		case lexer.TokenStringDouble, lexer.TokenStringSingle, lexer.TokenStringBacktick:
 			if sb.Len() > 0 {
 				return sb.String(), endLine, endCol
 			}
 			quoted, lastTok := p.collectQuotedStringWithToken()
 			sb.WriteString(quoted)
-			if lastTok.Line > endLine || (lastTok.Line == endLine && lastTok.Col+len(lastTok.Value) > endCol) {
-				endLine = lastTok.Line
-				endCol = lastTok.Col + len(lastTok.Value)
-			}
+			endLine, endCol = p.updatePos(endLine, endCol, lastTok)
 			return sb.String(), endLine, endCol
 
 		case lexer.TokenKeyword:
 			consumed := p.consume()
 			sb.WriteString(val(consumed))
-			if consumed.Line > endLine || (consumed.Line == endLine && consumed.Col+len(consumed.Value) > endCol) {
-				endLine = consumed.Line
-				endCol = consumed.Col + len(consumed.Value)
-			}
+			endLine, endCol = p.updatePos(endLine, endCol, consumed)
 
-		case lexer.TokenText, lexer.TokenWord, lexer.TokenNameVariable, lexer.TokenNameForVar, lexer.TokenNameDelayedVar, lexer.TokenStringEscape, lexer.TokenNumber:
+		case lexer.TokenText, lexer.TokenWord, lexer.TokenVariable, lexer.TokenForVar, lexer.TokenDelayedExpansion, lexer.TokenEscape, lexer.TokenNumber:
 			consumed := p.consume()
 			sb.WriteString(val(consumed))
-			if consumed.Line > endLine || (consumed.Line == endLine && consumed.Col+len(consumed.Value) > endCol) {
-				endLine = consumed.Line
-				endCol = consumed.Col + len(consumed.Value)
-			}
+			endLine, endCol = p.updatePos(endLine, endCol, consumed)
 
 		case lexer.TokenPunctuation:
 			v := val(t)
@@ -426,10 +399,7 @@ func (p *Parser) collectStokenWithPos(endLine, endCol int) (string, int, int) {
 			}
 			consumed := p.consume()
 			sb.WriteString(val(consumed))
-			if consumed.Line > endLine || (consumed.Line == endLine && consumed.Col+len(consumed.Value) > endCol) {
-				endLine = consumed.Line
-				endCol = consumed.Col + len(consumed.Value)
-			}
+			endLine, endCol = p.updatePos(endLine, endCol, consumed)
 
 		case lexer.TokenOperator:
 			v := val(t)
@@ -438,18 +408,12 @@ func (p *Parser) collectStokenWithPos(endLine, endCol int) (string, int, int) {
 			}
 			consumed := p.consume()
 			sb.WriteString(val(consumed))
-			if consumed.Line > endLine || (consumed.Line == endLine && consumed.Col+len(consumed.Value) > endCol) {
-				endLine = consumed.Line
-				endCol = consumed.Col + len(consumed.Value)
-			}
+			endLine, endCol = p.updatePos(endLine, endCol, consumed)
 
 		default:
 			consumed := p.consume()
 			sb.WriteString(val(consumed))
-			if consumed.Line > endLine || (consumed.Line == endLine && consumed.Col+len(consumed.Value) > endCol) {
-				endLine = consumed.Line
-				endCol = consumed.Col + len(consumed.Value)
-			}
+			endLine, endCol = p.updatePos(endLine, endCol, consumed)
 		}
 	}
 	return sb.String(), endLine, endCol

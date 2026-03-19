@@ -82,7 +82,7 @@ func TestSingleTokens(t *testing.T) {
 		{"keyword_if", "if", []tok{{TokenKeyword, "if"}}},
 		{"keyword_for", "for", []tok{{TokenKeyword, "for"}}},
 		// "goto" always emits a NameLabel after the keyword (possibly empty).
-		{"keyword_goto", "goto", []tok{{TokenKeyword, "goto"}, {TokenNameLabel, ""}}},
+		{"keyword_goto", "goto", []tok{{TokenKeyword, "goto"}, {TokenLabel, ""}}},
 		// "call" without a ':' returns immediately to stateFollow → nothing extra.
 		{"keyword_call", "call", []tok{{TokenKeyword, "call"}}},
 		// structural keywords that return to stateRoot with no follow state.
@@ -94,7 +94,7 @@ func TestSingleTokens(t *testing.T) {
 		{"word_in", "in", []tok{{TokenWord, "in"}}},
 		// keywords are matched case-insensitively; the original text is preserved.
 		{"keyword_case_insensitive", "IF", []tok{{TokenKeyword, "IF"}}},
-		{"keyword_mixed_case", "GoTo", []tok{{TokenKeyword, "GoTo"}, {TokenNameLabel, ""}}},
+		{"keyword_mixed_case", "GoTo", []tok{{TokenKeyword, "GoTo"}, {TokenLabel, ""}}},
 
 		// ── TokenComment ─────────────────────────────────────────────────
 		{"comment_rem_text", "rem hello", []tok{{TokenKeyword, "rem"}, {TokenComment, " hello"}}},
@@ -102,22 +102,22 @@ func TestSingleTokens(t *testing.T) {
 		{"comment_double_colon", ":: a comment", []tok{{TokenComment, ":: a comment"}}},
 		{"comment_double_colon_empty", "::", []tok{{TokenComment, "::"}}},
 
-		// ── TokenNameLabel ────────────────────────────────────────────────
-		{"label_simple", ":myLabel", []tok{{TokenPunctuation, ":"}, {TokenNameLabel, "myLabel"}}},
-		{"label_with_hyphen", ":my-label", []tok{{TokenPunctuation, ":"}, {TokenNameLabel, "my-label"}}},
+		// ── TokenLabel ────────────────────────────────────────────────
+		{"label_simple", ":myLabel", []tok{{TokenPunctuation, ":"}, {TokenLabel, "myLabel"}}},
+		{"label_with_hyphen", ":my-label", []tok{{TokenPunctuation, ":"}, {TokenLabel, "my-label"}}},
 		// lone ':' produces an empty label.
-		{"label_empty", ":", []tok{{TokenPunctuation, ":"}, {TokenNameLabel, ""}}},
+		{"label_empty", ":", []tok{{TokenPunctuation, ":"}, {TokenLabel, ""}}},
 
-		// ── TokenNameVariable ─────────────────────────────────────────────
-		{"var_percent_named", "%FOO%", []tok{{TokenNameVariable, "%FOO%"}}},
-		{"var_arg_zero", "%0", []tok{{TokenNameVariable, "%0"}}},
-		{"var_arg_nine", "%9", []tok{{TokenNameVariable, "%9"}}},
-		{"var_arg_star", "%*", []tok{{TokenNameVariable, "%*"}}},
-		{"var_modifier_dp0", "%~dp0", []tok{{TokenNameVariable, "%~dp0"}}},
-		{"var_delayed", "!FOO!", []tok{{TokenNameDelayedVar, "!FOO!"}}},
-		{"var_delayed_unclosed", "!FOO", []tok{{TokenNameDelayedVar, "!FOO"}}},
+		// ── TokenVariable ─────────────────────────────────────────────
+		{"var_percent_named", "%FOO%", []tok{{TokenVariable, "%FOO%"}}},
+		{"var_arg_zero", "%0", []tok{{TokenVariable, "%0"}}},
+		{"var_arg_nine", "%9", []tok{{TokenVariable, "%9"}}},
+		{"var_arg_star", "%*", []tok{{TokenVariable, "%*"}}},
+		{"var_modifier_dp0", "%~dp0", []tok{{TokenVariable, "%~dp0"}}},
+		{"var_delayed", "!FOO!", []tok{{TokenDelayedExpansion, "!FOO!"}}},
+		{"var_delayed_unclosed", "!FOO", []tok{{TokenDelayedExpansion, "!FOO"}}},
 		// lone % at EOF → bare variable token
-		{"var_lone_percent_eof", "%", []tok{{TokenNameVariable, "%"}}},
+		{"var_lone_percent_eof", "%", []tok{{TokenVariable, "%"}}},
 
 		// ── TokenStringDouble ─────────────────────────────────────────────
 		{"string_double", `"hello"`, []tok{{TokenStringDouble, `"hello"`}}},
@@ -130,14 +130,14 @@ func TestSingleTokens(t *testing.T) {
 		{"backtick_empty", "``", []tok{{TokenWord, "``"}}},
 		{"backtick_unclosed", "`hello", []tok{{TokenWord, "`hello"}}},
 
-		// ── TokenStringEscape ─────────────────────────────────────────────
-		{"escape_caret_char", "^a", []tok{{TokenStringEscape, "a"}}},
-		{"escape_caret_ampersand", "^&", []tok{{TokenStringEscape, "&"}}},
-		{"escape_caret_gt", "^>", []tok{{TokenStringEscape, ">"}}},
+		// ── TokenEscape ─────────────────────────────────────────────
+		{"escape_caret_char", "^a", []tok{{TokenEscape, "a"}}},
+		{"escape_caret_ampersand", "^&", []tok{{TokenEscape, "&"}}},
+		{"escape_caret_gt", "^>", []tok{{TokenEscape, ">"}}},
 		// %% is the batch escape for a literal percent sign
-		{"escape_double_percent", "%%", []tok{{TokenStringEscape, "%%"}}},
+		{"escape_double_percent", "%%", []tok{{TokenEscape, "%%"}}},
 		// ^ at EOF emits an escape with just the caret
-		{"escape_caret_eof", "^", []tok{{TokenStringEscape, "^"}}},
+		{"escape_caret_eof", "^", []tok{{TokenEscape, "^"}}},
 
 		// ── TokenRedirect ─────────────────────────────────────────────────
 		{"redirect_out", ">", []tok{{TokenRedirect, ">"}}},
@@ -215,7 +215,7 @@ func TestTokenCombinations(t *testing.T) {
 			":done\n",
 			[]tok{
 				{TokenPunctuation, ":"},
-				{TokenNameLabel, "done"},
+				{TokenLabel, "done"},
 				{TokenNewline, "\n"},
 			},
 		},
@@ -226,7 +226,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenKeyword, "goto"},
 				{TokenWhitespace, " "},
 				{TokenPunctuation, ":"},
-				{TokenNameLabel, "done"},
+				{TokenLabel, "done"},
 				{TokenNewline, "\n"},
 			},
 		},
@@ -236,7 +236,7 @@ func TestTokenCombinations(t *testing.T) {
 			[]tok{
 				{TokenKeyword, "goto"},
 				{TokenWhitespace, " "},
-				{TokenNameLabel, "done"},
+				{TokenLabel, "done"},
 				{TokenNewline, "\n"},
 			},
 		},
@@ -247,7 +247,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenKeyword, "call"},
 				{TokenWhitespace, " "},
 				{TokenPunctuation, ":"},
-				{TokenNameLabel, "func"},
+				{TokenLabel, "func"},
 				{TokenWhitespace, " "},
 				{TokenWord, "arg"},
 				{TokenNewline, "\n"},
@@ -261,7 +261,7 @@ func TestTokenCombinations(t *testing.T) {
 			[]tok{
 				{TokenKeyword, "set"},
 				{TokenWhitespace, " "},
-				{TokenNameVariable, "FOO"},
+				{TokenVariable, "FOO"},
 				{TokenPunctuation, "="},
 				{TokenText, "bar"},
 				{TokenNewline, "\n"},
@@ -275,7 +275,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenWhitespace, " "},
 				{TokenKeyword, "/a"},
 				// stateArithmetic discards whitespace (no WS token)
-				{TokenNameVariable, "x"},
+				{TokenVariable, "x"},
 				{TokenOperator, "="},
 				{TokenNumber, "1"},
 				{TokenOperator, "+"},
@@ -290,7 +290,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenKeyword, "set"},
 				{TokenWhitespace, " "},
 				{TokenKeyword, "/a"},
-				{TokenNameVariable, "x"},
+				{TokenVariable, "x"},
 				{TokenOperator, "="},
 				{TokenNumber, "0xFF"},
 				{TokenNewline, "\n"},
@@ -306,7 +306,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenWhitespace, " "},
 				{TokenKeyword, "/p"},
 				{TokenWhitespace, " "},
-				{TokenNameVariable, "NAME"},
+				{TokenVariable, "NAME"},
 				{TokenPunctuation, "="},
 				{TokenText, "Enter"},
 				{TokenWhitespace, " "},
@@ -326,7 +326,7 @@ func TestTokenCombinations(t *testing.T) {
 			[]tok{
 				{TokenKeyword, "if"},
 				{TokenWhitespace, " "},
-				{TokenNameVariable, "%X%"},
+				{TokenVariable, "%X%"},
 				{TokenOperator, "=="},
 				{TokenWord, "yes"},
 				{TokenWhitespace, " "},
@@ -343,7 +343,7 @@ func TestTokenCombinations(t *testing.T) {
 			[]tok{
 				{TokenKeyword, "if"},
 				{TokenWhitespace, " "},
-				{TokenNameVariable, "%X%"},
+				{TokenVariable, "%X%"},
 				{TokenWhitespace, " "},
 				{TokenOperator, "=="},
 				{TokenWhitespace, " "},
@@ -370,7 +370,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenKeyword, "goto"},
 				{TokenWhitespace, " "},
 				{TokenPunctuation, ":"},
-				{TokenNameLabel, "end"},
+				{TokenLabel, "end"},
 				{TokenNewline, "\n"},
 			},
 		},
@@ -421,7 +421,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenKeyword, "goto"},
 				{TokenWhitespace, " "},
 				{TokenPunctuation, ":"},
-				{TokenNameLabel, "missing"},
+				{TokenLabel, "missing"},
 				{TokenNewline, "\n"},
 			},
 		},
@@ -433,7 +433,7 @@ func TestTokenCombinations(t *testing.T) {
 			[]tok{
 				{TokenKeyword, "for"},
 				{TokenWhitespace, " "},
-				{TokenNameForVar, "%%i"},
+				{TokenForVar, "%%i"},
 				{TokenWhitespace, " "},
 				{TokenKeyword, "in"},
 				{TokenWhitespace, " "},
@@ -445,7 +445,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenWhitespace, " "},
 				{TokenWord, "echo"},
 				{TokenWhitespace, " "},
-				{TokenNameForVar, "%%i"},
+				{TokenForVar, "%%i"},
 				{TokenNewline, "\n"},
 			},
 		},
@@ -459,7 +459,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenWhitespace, " "},
 				{TokenStringDouble, `"tokens=1"`},
 				{TokenWhitespace, " "},
-				{TokenNameForVar, "%%a"},
+				{TokenForVar, "%%a"},
 				{TokenWhitespace, " "},
 				{TokenKeyword, "in"},
 				{TokenWhitespace, " "},
@@ -471,7 +471,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenWhitespace, " "},
 				{TokenWord, "echo"},
 				{TokenWhitespace, " "},
-				{TokenNameForVar, "%%a"},
+				{TokenForVar, "%%a"},
 				{TokenNewline, "\n"},
 			},
 		},
@@ -485,7 +485,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenWhitespace, " "},
 				{TokenStringSingle, "'tokens=1'"},
 				{TokenWhitespace, " "},
-				{TokenNameForVar, "%%a"},
+				{TokenForVar, "%%a"},
 				{TokenWhitespace, " "},
 				{TokenKeyword, "in"},
 				{TokenWhitespace, " "},
@@ -497,7 +497,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenWhitespace, " "},
 				{TokenWord, "echo"},
 				{TokenWhitespace, " "},
-				{TokenNameForVar, "%%a"},
+				{TokenForVar, "%%a"},
 				{TokenNewline, "\n"},
 			},
 		},
@@ -509,7 +509,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenWhitespace, " "},
 				{TokenKeyword, "/l"},
 				{TokenWhitespace, " "},
-				{TokenNameForVar, "%%n"},
+				{TokenForVar, "%%n"},
 				{TokenWhitespace, " "},
 				{TokenKeyword, "in"},
 				{TokenWhitespace, " "},
@@ -521,7 +521,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenWhitespace, " "},
 				{TokenWord, "echo"},
 				{TokenWhitespace, " "},
-				{TokenNameForVar, "%%n"},
+				{TokenForVar, "%%n"},
 				{TokenNewline, "\n"},
 			},
 		},
@@ -533,7 +533,7 @@ func TestTokenCombinations(t *testing.T) {
 			[]tok{
 				{TokenWord, "echo"},
 				{TokenWhitespace, " "},
-				{TokenNameVariable, "%PATH%"},
+				{TokenVariable, "%PATH%"},
 				{TokenNewline, "\n"},
 			},
 		},
@@ -543,7 +543,7 @@ func TestTokenCombinations(t *testing.T) {
 			[]tok{
 				{TokenWord, "echo"},
 				{TokenWhitespace, " "},
-				{TokenNameDelayedVar, "!VAR!"},
+				{TokenDelayedExpansion, "!VAR!"},
 				{TokenNewline, "\n"},
 			},
 		},
@@ -555,7 +555,7 @@ func TestTokenCombinations(t *testing.T) {
 				{TokenWhitespace, " "},
 				// lexStringDoubleBody splits the string at % boundaries
 				{TokenStringDouble, `"`},
-				{TokenNameVariable, "%FOO%"},
+				{TokenVariable, "%FOO%"},
 				{TokenStringDouble, `"`},
 				{TokenNewline, "\n"},
 			},
@@ -566,9 +566,9 @@ func TestTokenCombinations(t *testing.T) {
 			[]tok{
 				{TokenWord, "echo"},
 				{TokenWhitespace, " "},
-				{TokenNameVariable, "%1"},
+				{TokenVariable, "%1"},
 				{TokenWhitespace, " "},
-				{TokenNameVariable, "%2"},
+				{TokenVariable, "%2"},
 				{TokenNewline, "\n"},
 			},
 		},
@@ -680,7 +680,7 @@ func TestTokenCombinations(t *testing.T) {
 			[]tok{
 				{TokenWord, "echo"},
 				{TokenWhitespace, " "},
-				{TokenStringEscape, "&"},
+				{TokenEscape, "&"},
 				{TokenWhitespace, " "},
 				{TokenWord, "literal"},
 				{TokenNewline, "\n"},
@@ -705,7 +705,7 @@ func TestTokenCombinations(t *testing.T) {
 			[]tok{
 				{TokenWord, "echo"},
 				{TokenWhitespace, " "},
-				{TokenStringEscape, "%%"},
+				{TokenEscape, "%%"},
 				{TokenNewline, "\n"},
 			},
 		},
@@ -752,7 +752,7 @@ func TestTokenCombinations(t *testing.T) {
 			`"%~f0"`,
 			[]tok{
 				{TokenStringDouble, `"`},
-				{TokenNameVariable, `%~f0`},
+				{TokenVariable, `%~f0`},
 				{TokenStringDouble, `"`},
 			},
 		},
@@ -762,7 +762,7 @@ func TestTokenCombinations(t *testing.T) {
 			`"%~dp0"`,
 			[]tok{
 				{TokenStringDouble, `"`},
-				{TokenNameVariable, `%~dp0`},
+				{TokenVariable, `%~dp0`},
 				{TokenStringDouble, `"`},
 			},
 		},
@@ -795,27 +795,27 @@ func TestEdgeCases(t *testing.T) {
 		{"unclosed_double_quote", `"hello`, []tok{{TokenStringDouble, `"hello`}}},
 		{"unclosed_backtick", "`hello", []tok{{TokenWord, "`hello"}}},
 		// Unclosed delayed variable — reads to EOF.
-		{"unclosed_delayed_var", "!FOO", []tok{{TokenNameDelayedVar, "!FOO"}}},
+		{"unclosed_delayed_var", "!FOO", []tok{{TokenDelayedExpansion, "!FOO"}}},
 
 		// ── lone / bare delimiters ─────────────────────────────────────────
 		// Lone % at EOF.
-		{"lone_percent_eof", "%", []tok{{TokenNameVariable, "%"}}},
+		{"lone_percent_eof", "%", []tok{{TokenVariable, "%"}}},
 		// Lone % before a newline — newline is emitted separately.
 		{"lone_percent_before_newline", "%\n", []tok{
-			{TokenNameVariable, "%"},
+			{TokenVariable, "%"},
 			{TokenNewline, "\n"},
 		}},
 		// ^ at EOF — emits a StringEscape with just the caret.
-		{"caret_eof", "^", []tok{{TokenStringEscape, "^"}}},
+		{"caret_eof", "^", []tok{{TokenEscape, "^"}}},
 		// ^<newline> is a line-continuation — both characters are consumed and
 		// discarded (no token produced).
 		{"caret_newline_continuation", "^\n", nil},
 
 		// ── variable forms ─────────────────────────────────────────────────
 		// %% is the escape for a literal percent sign.
-		{"double_percent_escape_only", "%%", []tok{{TokenStringEscape, "%%"}}},
+		{"double_percent_escape_only", "%%", []tok{{TokenEscape, "%%"}}},
 		// %~… expanded-argument modifier.
-		{"var_modifier_expanded_arg", "%~f1", []tok{{TokenNameVariable, "%~f1"}}},
+		{"var_modifier_expanded_arg", "%~f1", []tok{{TokenVariable, "%~f1"}}},
 
 		// ── numbers reach stateWord, not stateArithmetic ───────────────────
 		// A bare integer at statement position is a TokenWord, not a TokenNumber.
@@ -867,12 +867,12 @@ func TestEdgeCases(t *testing.T) {
 		// ":021 TIDAL" defines label "021"; "TIDAL" must not produce tokens.
 		{"label_with_trailing_text", ":021 TIDAL\n", []tok{
 			{TokenPunctuation, ":"},
-			{TokenNameLabel, "021"},
+			{TokenLabel, "021"},
 			{TokenNewline, "\n"},
 		}},
 		{"label_with_trailing_text_no_newline", ":050 GRAVSTATIC", []tok{
 			{TokenPunctuation, ":"},
-			{TokenNameLabel, "050"},
+			{TokenLabel, "050"},
 		}},
 
 		// ── multi-line with CRLF ───────────────────────────────────────────

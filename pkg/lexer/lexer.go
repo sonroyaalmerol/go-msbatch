@@ -5,16 +5,12 @@ package lexer
 
 // BatchLexer tokenises a Windows batch script.
 type BatchLexer struct {
-	// engine state
 	input      []rune
 	start      int
 	pos        int
 	state      stateFn
 	items      chan Item
 	lineOffset int // 0-based line number offset (for embedding in larger documents)
-	// position tracking for LSP
-	currentLine int // current 0-based line number
-	currentCol  int // current 0-based column number
 	// batch-specific state
 	compoundDepth  int
 	atCommandStart bool // true when : would start a label (no content on line yet)

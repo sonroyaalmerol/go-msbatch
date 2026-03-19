@@ -35,7 +35,7 @@ func (bl *BatchLexer) stateSetVar() stateFn {
 		return r != 0 && !isNL(r) && !IsWS(r) && !isPunct(r) && r != '=' && r != '"'
 	})
 	if bl.width() > 0 {
-		bl.emit(TokenNameVariable)
+		bl.emit(TokenVariable)
 	}
 	bl.skipWS()
 	if bl.check(func(r rune) bool { return r == '=' }) {
@@ -108,7 +108,7 @@ func (bl *BatchLexer) stateArithmetic() stateFn {
 				!strings.ContainsRune("=+-*/!~^(),", r) && r != '%' && r != '!'
 		})
 		if bl.width() > 0 {
-			bl.emit(TokenNameVariable)
+			bl.emit(TokenVariable)
 		}
 	}
 	return bl.stateArithmetic
@@ -158,14 +158,14 @@ func (bl *BatchLexer) stateFor() stateFn {
 		case '\'':
 			bl.emit(TokenStringSingle)
 		case '`':
-			bl.emit(TokenStringBT)
+			bl.emit(TokenStringBacktick)
 		default:
 			bl.emit(TokenStringDouble)
 		}
 		bl.skipWS()
 	}
 
-	// Consume loop variable: %%X or %X → emit as TokenNameForVar.
+	// Consume loop variable: %%X or %X → emit as TokenForVar.
 	if bl.check(func(r rune) bool { return r == '%' }) {
 		bl.next() // first %
 		if bl.check(func(r rune) bool { return r == '%' }) {
@@ -174,7 +174,7 @@ func (bl *BatchLexer) stateFor() stateFn {
 		bl.acceptRun(func(r rune) bool {
 			return r != 0 && !isNL(r) && !IsWS(r) && !isPunct(r) && r != '(' && r != ')'
 		})
-		bl.emit(TokenNameForVar)
+		bl.emit(TokenForVar)
 		bl.skipWS()
 	}
 
@@ -238,7 +238,7 @@ func (bl *BatchLexer) stateGoto() stateFn {
 		bl.emit(TokenPunctuation)
 	}
 	bl.acceptRun(func(r rune) bool { return !IsWS(r) && !isNL(r) && !isPunct(r) && r != 0 })
-	bl.emit(TokenNameLabel)
+	bl.emit(TokenLabel)
 	return bl.stateRoot
 }
 
@@ -248,7 +248,7 @@ func (bl *BatchLexer) stateCall() stateFn {
 		bl.next()
 		bl.emit(TokenPunctuation)
 		bl.acceptRun(func(r rune) bool { return !IsWS(r) && !isNL(r) && !isPunct(r) && r != 0 })
-		bl.emit(TokenNameLabel)
+		bl.emit(TokenLabel)
 		return bl.stateFollow
 	}
 	return bl.stateFollow

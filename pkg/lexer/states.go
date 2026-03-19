@@ -66,7 +66,7 @@ func (bl *BatchLexer) stateRoot() stateFn {
 		bl.atCommandStart = false
 		r2 := bl.next()
 		if r2 == 0 {
-			bl.emit(TokenStringEscape)
+			bl.emit(TokenEscape)
 			return nil
 		}
 		if isNL(r2) {
@@ -74,7 +74,7 @@ func (bl *BatchLexer) stateRoot() stateFn {
 			bl.ignore()
 		} else {
 			bl.start++
-			bl.emit(TokenStringEscape)
+			bl.emit(TokenEscape)
 		}
 		return bl.stateRoot
 	case r == '%':
@@ -162,17 +162,11 @@ func (bl *BatchLexer) stateFollow() stateFn {
 		bl.emit(TokenText)
 	}
 	r := bl.next()
-	switch {
-	case r == 0:
-		return bl.stateRoot
-	case isNL(r), IsWS(r), r == '|', r == '&', r == ')', r == '(',
-		r == '>', r == '<', r == '"', r == '%', r == '!', r == '^':
-		bl.prev()
-		return bl.stateRoot
-	default:
-		bl.prev()
+	if r == 0 {
 		return bl.stateRoot
 	}
+	bl.prev()
+	return bl.stateRoot
 }
 
 func (bl *BatchLexer) stateRem() stateFn {
@@ -183,7 +177,7 @@ func (bl *BatchLexer) stateRem() stateFn {
 
 func (bl *BatchLexer) stateLabelName() stateFn {
 	bl.acceptRun(func(r rune) bool { return !IsWS(r) && !isNL(r) && r != 0 })
-	bl.emit(TokenNameLabel)
+	bl.emit(TokenLabel)
 	// In CMD, everything after the label name on a label line is a comment.
 	// Discard it so ":021 TIDAL" defines label "021" with "TIDAL" ignored.
 	bl.acceptRun(func(r rune) bool { return !isNL(r) && r != 0 })
