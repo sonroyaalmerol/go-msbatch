@@ -218,6 +218,7 @@ func (p *Parser) parseSimpleCommand(suppressed bool) *SimpleCommand {
 // Returns the end line and column after processing.
 func (p *Parser) collectArgs(cmd *SimpleCommand, endLine, endCol int) (int, int) {
 	var cur strings.Builder
+	parenDepth := 0
 
 	flushArg := func() {
 		if cur.Len() > 0 {
@@ -272,7 +273,17 @@ func (p *Parser) collectArgs(cmd *SimpleCommand, endLine, endCol int) (int, int)
 				cmd.RawArgs = append(cmd.RawArgs, val(consumed))
 				continue
 			}
-			if isPipeOrAmpVal(v) || (v == ")" && p.compoundDepth > 0) {
+			if v == "(" {
+				parenDepth++
+			}
+			if v == ")" {
+				if parenDepth > 0 {
+					parenDepth--
+				} else if isPipeOrAmpVal(v) || p.compoundDepth > 0 {
+					flushArg()
+					return endLine, endCol
+				}
+			} else if isPipeOrAmpVal(v) {
 				flushArg()
 				return endLine, endCol
 			}

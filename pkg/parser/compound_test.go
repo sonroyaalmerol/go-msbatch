@@ -3,6 +3,7 @@ package parser_test
 import (
 	"testing"
 
+	"github.com/sonroyaalmerol/go-msbatch/pkg/lexer"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
 )
 
@@ -281,5 +282,43 @@ func TestParseCommaSkipped(t *testing.T) {
 	}
 	if cmd.Name != "echo" {
 		t.Errorf("expected command name 'echo', got %q", cmd.Name)
+	}
+}
+
+func TestParseIfElseMultilineBlock(t *testing.T) {
+	src := `if "%VAL%"=="1" (
+    echo IF branch works
+) else (
+    echo ELSE branch works
+)
+`
+	l := lexer.New(src)
+	var tokens []lexer.Item
+	for {
+		tok := l.NextItem()
+		if tok.Type == lexer.TokenEOF || (tok.Type == 0 && len(tok.Value) == 0) {
+			break
+		}
+		tokens = append(tokens, tok)
+	}
+	p := parser.NewFromTokens(tokens)
+	nodes := p.Parse()
+
+	for _, d := range p.Diagnostics {
+		t.Errorf("unexpected parser diagnostic: line %d, col %d: %s", d.Line+1, d.Col+1, d.Message)
+	}
+
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+	ifn, ok := nodes[0].(*parser.IfNode)
+	if !ok {
+		t.Fatalf("expected *IfNode, got %T", nodes[0])
+	}
+	if ifn.Then == nil {
+		t.Error("expected Then body to be set")
+	}
+	if ifn.Else == nil {
+		t.Error("expected Else body to be set")
 	}
 }

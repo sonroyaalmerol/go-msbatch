@@ -115,14 +115,20 @@ func (r *Result) analyzeNode(node parser.Node, scopeDepth int) {
 	switch n := node.(type) {
 	case *parser.LabelNode:
 		name := strings.ToUpper(n.Name)
-		label := &Label{
-			Name: name,
-			Definition: Range{
+		if existing, ok := r.Labels[name]; ok {
+			existing.Definition = Range{
 				Start: Position{Line: n.Line, Col: n.Col},
 				End:   Position{Line: n.EndLine, Col: n.EndCol},
-			},
+			}
+		} else {
+			r.Labels[name] = &Label{
+				Name: name,
+				Definition: Range{
+					Start: Position{Line: n.Line, Col: n.Col},
+					End:   Position{Line: n.EndLine, Col: n.EndCol},
+				},
+			}
 		}
-		r.Labels[name] = label
 
 	case *parser.SimpleCommand:
 		r.analyzeCommand(n, scopeDepth)
@@ -198,6 +204,9 @@ func (r *Result) analyzeCommand(cmd *parser.SimpleCommand, scopeDepth int) {
 			return
 		}
 		labelName = strings.TrimPrefix(labelName, ":")
+		if strings.Contains(labelName, "%") {
+			return
+		}
 		if label, ok := r.Labels[labelName]; ok {
 			label.References = append(label.References, Range{
 				Start: Position{Line: cmd.Line, Col: cmd.Col},
@@ -223,6 +232,12 @@ func (r *Result) analyzeCommand(cmd *parser.SimpleCommand, scopeDepth int) {
 		arg0 := strings.TrimSpace(args[0])
 		if after, ok := strings.CutPrefix(arg0, ":"); ok {
 			labelName := strings.ToUpper(after)
+			if labelName == "EOF" {
+				return
+			}
+			if strings.Contains(labelName, "%") {
+				return
+			}
 			if label, ok := r.Labels[labelName]; ok {
 				label.References = append(label.References, Range{
 					Start: Position{Line: cmd.Line, Col: cmd.Col},
@@ -246,7 +261,7 @@ func (r *Result) analyzeCommand(cmd *parser.SimpleCommand, scopeDepth int) {
 }
 
 func (r *Result) analyzeSet(cmd *parser.SimpleCommand, args []string, scopeDepth int) {
-	fullArg := strings.Join(args, "")
+	fullArg := strings.Join(cmd.RawArgs, "")
 	if strings.HasPrefix(strings.ToUpper(fullArg), "/A ") {
 		fullArg = fullArg[3:]
 	}
@@ -304,7 +319,11 @@ func (r *Result) collectVarRefsFromTokens(tokens []lexer.Item) {
 				v.References = append(v.References, ref)
 			} else {
 				v = &Variable{
-					Name:       varName,
+					Name: varName,
+					Definition: Range{
+						Start: Position{Line: -1, Col: -1},
+						End:   Position{Line: -1, Col: -1},
+					},
 					ScopeDepth: 0,
 					References: []VariableReference{ref},
 				}
