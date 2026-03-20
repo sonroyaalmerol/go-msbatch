@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -377,6 +378,25 @@ type redirectManager struct {
 	openedFiles []*os.File
 }
 
+type debugWriter struct {
+	underlying io.Writer
+	logger     *slog.Logger
+	fd         int
+	target     string
+}
+
+func (dw *debugWriter) Write(p []byte) (n int, err error) {
+	n, err = dw.underlying.Write(p)
+	if n > 0 {
+		content := string(p[:n])
+		if len(content) > 200 {
+			content = content[:200] + "... (truncated)"
+		}
+		dw.logger.Debug("redirect write", "fd", dw.fd, "target", dw.target, "content", content)
+	}
+	return n, err
+}
+
 func (p *Processor) newRedirectManager() *redirectManager {
 	return &redirectManager{
 		origStdout: p.Stdout,
@@ -399,9 +419,23 @@ func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) {
 	for _, r := range redirects {
 		targetPath := pathutil.MapPath(r.Target)
 		isNul := strings.EqualFold(r.Target, "nul")
+		kindStr := ">"
+		switch r.Kind {
+		case parser.RedirectAppend:
+			kindStr = ">>"
+		case parser.RedirectIn:
+			kindStr = "<"
+		case parser.RedirectOutFD:
+			kindStr = ">&"
+		case parser.RedirectInFD:
+			kindStr = "<&"
+		}
+		p.Logger.Debug("applying redirect", "kind", kindStr, "fd", r.FD, "target", r.Target, "path", targetPath)
+
 		switch r.Kind {
 		case parser.RedirectOut:
 			if isNul {
+				p.Logger.Debug("redirect to nul", "fd", r.FD)
 				switch r.FD {
 				case 0, 1:
 					p.Stdout = io.Discard
@@ -414,14 +448,17 @@ func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) {
 					rm.openedFiles = append(rm.openedFiles, f)
 					switch r.FD {
 					case 0, 1:
-						p.Stdout = f
+						p.Stdout = &debugWriter{underlying: f, logger: p.Logger, fd: r.FD, target: targetPath}
 					case 2:
-						p.Stderr = f
+						p.Stderr = &debugWriter{underlying: f, logger: p.Logger, fd: r.FD, target: targetPath}
 					}
+				} else {
+					p.Logger.Debug("redirect open failed", "path", targetPath, "error", err)
 				}
 			}
 		case parser.RedirectAppend:
 			if isNul {
+				p.Logger.Debug("redirect to nul (append)", "fd", r.FD)
 				switch r.FD {
 				case 0, 1:
 					p.Stdout = io.Discard
@@ -434,23 +471,29 @@ func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) {
 					rm.openedFiles = append(rm.openedFiles, f)
 					switch r.FD {
 					case 0, 1:
-						p.Stdout = f
+						p.Stdout = &debugWriter{underlying: f, logger: p.Logger, fd: r.FD, target: targetPath}
 					case 2:
-						p.Stderr = f
+						p.Stderr = &debugWriter{underlying: f, logger: p.Logger, fd: r.FD, target: targetPath}
 					}
+				} else {
+					p.Logger.Debug("redirect open failed", "path", targetPath, "error", err)
 				}
 			}
 		case parser.RedirectIn:
 			if isNul {
+				p.Logger.Debug("redirect stdin from nul")
 				p.Stdin = bytes.NewReader(nil)
 			} else {
 				f, err := os.Open(targetPath)
 				if err == nil {
 					rm.openedFiles = append(rm.openedFiles, f)
 					p.Stdin = f
+				} else {
+					p.Logger.Debug("redirect open failed", "path", targetPath, "error", err)
 				}
 			}
 		case parser.RedirectOutFD, parser.RedirectInFD:
+			p.Logger.Debug("redirect fd to fd", "from", r.FD, "to", r.Target)
 			switch r.Target {
 			case "0":
 				p.applyFD(r.FD, p.Stdin)
