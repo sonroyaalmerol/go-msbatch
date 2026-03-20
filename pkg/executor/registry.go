@@ -199,4 +199,6 @@ func registerBuiltins(r *Registry) {
 	r.HandleFunc("pkzip", tools.Pkzip)
 	r.HandleFunc("pkunzip", tools.Pkunzip)
 	r.HandleFunc("pkzipc", tools.Pkzipc)
+	r.HandleFunc("gawk", tools.Gawk)
+	r.HandleFunc("awk", tools.Gawk)
 }
