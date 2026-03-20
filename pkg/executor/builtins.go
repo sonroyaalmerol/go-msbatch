@@ -440,6 +440,10 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		return nil
 	}
 
+	dstIsDirIntent := strings.HasSuffix(dstPattern, `\`) || strings.HasSuffix(dstPattern, `/`)
+	dstInfo, dstErr := os.Stat(dst)
+	dstIsDir := dstErr == nil && dstInfo.IsDir()
+
 	confirmOverwrite := func(target string) bool {
 		if suppressPrompt {
 			return true
@@ -471,56 +475,90 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		return dst
 	}
 
-	dstTarget := resolveDst(srcs[0].path, srcs[0].pattern)
-	if info, err := os.Stat(dst); err == nil && info.IsDir() {
-		dstTarget = filepath.Join(dst, filepath.Base(srcs[0].path))
+	buildTarget := func(srcPath, srcPattern string, multipleSources bool) string {
+		if tools.HasWildcards(dstPattern) {
+			return tools.ResolveWildcardDst(srcPath, srcPattern, dstPattern, dst)
+		}
+		if dstIsDirIntent || dstIsDir {
+			return filepath.Join(dst, filepath.Base(srcPath))
+		}
+		if multipleSources && dstErr != nil && !hasPlus {
+			return filepath.Join(dst, filepath.Base(srcPath))
+		}
+		return resolveDst(srcPath, srcPattern)
+	}
+
+	dstTarget := buildTarget(srcs[0].path, srcs[0].pattern, len(srcs) > 1)
+	if hasPlus {
+		if dstIsDirIntent || dstIsDir {
+			dstTarget = filepath.Join(dst, filepath.Base(srcs[0].path))
+		} else {
+			dstTarget = dst
+		}
 	}
 
 	switch {
 	case !hasPlus && len(srcs) > 1:
+		if dstIsDirIntent && dstErr != nil {
+			fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
+			fmt.Fprintf(p.Stdout, "        0 file(s) copied.\n")
+			p.Failure()
+			return nil
+		}
 		count := 0
+		hasFailure := false
 		for _, src := range srcs {
 			if src.notFound {
-				fmt.Fprintf(p.Stdout, "File not found - %s\n", src.path)
+				fmt.Fprintf(p.Stdout, "File not found - %s\n", filepath.Base(src.path))
 				continue
 			}
-			target := resolveDst(src.path, src.pattern)
-			if info, err := os.Stat(dst); err == nil && info.IsDir() {
-				target = filepath.Join(dst, filepath.Base(src.path))
-			}
+			target := buildTarget(src.path, src.pattern, true)
 			if !confirmOverwrite(target) {
 				continue
 			}
-			fmt.Fprintf(p.Stdout, "%s\n", src.path)
 			if err := tools.CopyFile(src.path, target); err != nil {
-				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
-				p.Failure()
-				return nil
+				if os.IsNotExist(err) {
+					fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
+				} else {
+					fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
+				}
+				hasFailure = true
+				continue
 			}
+			fmt.Fprintf(p.Stdout, "%s\n", filepath.Base(src.path))
 			count++
 		}
 		fmt.Fprintf(p.Stdout, "        %d file(s) copied.\n", count)
+		if hasFailure {
+			p.Failure()
+		}
 	case !hasPlus:
 		if srcs[0].notFound {
-			fmt.Fprintf(p.Stdout, "File not found - %s\n", srcs[0].path)
+			fmt.Fprintf(p.Stdout, "File not found - %s\n", filepath.Base(srcs[0].path))
 			fmt.Fprintf(p.Stdout, "        0 file(s) copied.\n")
 			return p.Success()
+		}
+		if dstIsDirIntent && dstErr != nil {
+			fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
+			fmt.Fprintf(p.Stdout, "        0 file(s) copied.\n")
+			p.Failure()
+			return nil
 		}
 		if !confirmOverwrite(dstTarget) {
 			return p.Success()
 		}
-		fmt.Fprintf(p.Stdout, "%s\n", srcs[0].path)
 		if err := tools.CopyFile(srcs[0].path, dstTarget); err != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
 			p.Failure()
 			return nil
 		}
+		fmt.Fprintf(p.Stdout, "%s\n", filepath.Base(srcs[0].path))
 		fmt.Fprintf(p.Stdout, "        1 file(s) copied.\n")
 	default:
 		var validSrcs []srcEntry
 		for _, src := range srcs {
 			if src.notFound {
-				fmt.Fprintf(p.Stdout, "File not found - %s\n", src.path)
+				fmt.Fprintf(p.Stdout, "File not found - %s\n", filepath.Base(src.path))
 				continue
 			}
 			validSrcs = append(validSrcs, src)
