@@ -139,8 +139,10 @@ func cmdCls(p *processor.Processor, _ *parser.SimpleCommand) error {
 }
 
 func cmdTitle(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	arg := processor.ExtractRawArgString(cmd.RawArgs)
-	fmt.Fprintf(p.Stdout, "\033]0;%s\a", arg)
+	if f, ok := p.Stdout.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		arg := processor.ExtractRawArgString(cmd.RawArgs)
+		fmt.Fprintf(p.Stdout, "\033]0;%s\a", arg)
+	}
 	return p.Success()
 }
 
@@ -329,7 +331,7 @@ func cmdDel(p *processor.Processor, cmd *parser.SimpleCommand) error {
 					os.Remove(m)
 				}
 			} else if os.Remove(mapped) != nil {
-				fmt.Fprintf(p.Stderr, "Could Not Find %s\n", pat)
+				fmt.Fprintf(p.Stderr, "Could Not Find %s\n", mapped)
 				p.Failure()
 				return nil
 			}
@@ -370,8 +372,10 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 
 	type srcEntry struct {
-		path    string
-		pattern string
+		path     string
+		pattern  string
+		notFound bool
+		fromGlob bool
 	}
 	var srcs []srcEntry
 	var dst string
@@ -385,10 +389,10 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 				mapped := pathutil.MapPath(s)
 				if matches, err := pathutil.GlobCaseInsensitive(mapped); err == nil && len(matches) > 0 {
 					for _, m := range matches {
-						srcs = append(srcs, srcEntry{path: m, pattern: s})
+						srcs = append(srcs, srcEntry{path: m, pattern: s, fromGlob: true})
 					}
 				} else {
-					srcs = append(srcs, srcEntry{path: mapped, pattern: s})
+					srcs = append(srcs, srcEntry{path: mapped, pattern: s, notFound: true})
 				}
 			}
 		} else {
@@ -418,10 +422,10 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 				mapped := pathutil.MapPath(part)
 				if matches, err := pathutil.GlobCaseInsensitive(mapped); err == nil && len(matches) > 0 {
 					for _, m := range matches {
-						srcs = append(srcs, srcEntry{path: m, pattern: part})
+						srcs = append(srcs, srcEntry{path: m, pattern: part, fromGlob: true})
 					}
 				} else {
-					srcs = append(srcs, srcEntry{path: mapped, pattern: part})
+					srcs = append(srcs, srcEntry{path: mapped, pattern: part, notFound: true})
 				}
 			}
 		}
@@ -476,6 +480,10 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	case !hasPlus && len(srcs) > 1:
 		count := 0
 		for _, src := range srcs {
+			if src.notFound {
+				fmt.Fprintf(p.Stdout, "File not found - %s\n", src.path)
+				continue
+			}
 			target := resolveDst(src.path, src.pattern)
 			if info, err := os.Stat(dst); err == nil && info.IsDir() {
 				target = filepath.Join(dst, filepath.Base(src.path))
@@ -483,6 +491,7 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			if !confirmOverwrite(target) {
 				continue
 			}
+			fmt.Fprintf(p.Stdout, "%s\n", src.path)
 			if err := tools.CopyFile(src.path, target); err != nil {
 				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
 				p.Failure()
@@ -492,9 +501,15 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 		fmt.Fprintf(p.Stdout, "        %d file(s) copied.\n", count)
 	case !hasPlus:
+		if srcs[0].notFound {
+			fmt.Fprintf(p.Stdout, "File not found - %s\n", srcs[0].path)
+			fmt.Fprintf(p.Stdout, "        0 file(s) copied.\n")
+			return p.Success()
+		}
 		if !confirmOverwrite(dstTarget) {
 			return p.Success()
 		}
+		fmt.Fprintf(p.Stdout, "%s\n", srcs[0].path)
 		if err := tools.CopyFile(srcs[0].path, dstTarget); err != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
 			p.Failure()
@@ -502,11 +517,23 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 		fmt.Fprintf(p.Stdout, "        1 file(s) copied.\n")
 	default:
+		var validSrcs []srcEntry
+		for _, src := range srcs {
+			if src.notFound {
+				fmt.Fprintf(p.Stdout, "File not found - %s\n", src.path)
+				continue
+			}
+			validSrcs = append(validSrcs, src)
+		}
+		if len(validSrcs) == 0 {
+			fmt.Fprintf(p.Stdout, "        0 file(s) copied.\n")
+			return p.Success()
+		}
 		if !confirmOverwrite(dstTarget) {
 			return p.Success()
 		}
 		var buf bytes.Buffer
-		for _, src := range srcs {
+		for _, src := range validSrcs {
 			data, err := os.ReadFile(src.path)
 			if err != nil {
 				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
