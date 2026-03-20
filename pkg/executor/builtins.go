@@ -498,12 +498,55 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 
 	switch {
-	case !hasPlus && len(srcs) > 1:
-		if dstIsDirIntent && dstErr != nil {
-			fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
+	case !hasPlus && len(srcs) > 1 && dstErr != nil && !dstIsDirIntent && !tools.HasWildcards(dstPattern):
+		var validSrcs []srcEntry
+		for _, src := range srcs {
+			if src.notFound {
+				fmt.Fprintf(p.Stdout, "File not found - %s\n", filepath.Base(src.path))
+				continue
+			}
+			validSrcs = append(validSrcs, src)
+		}
+		if len(validSrcs) == 0 {
 			fmt.Fprintf(p.Stdout, "        0 file(s) copied.\n")
+			return p.Success()
+		}
+		if !confirmOverwrite(dst) {
+			return p.Success()
+		}
+		var buf bytes.Buffer
+		for _, src := range validSrcs {
+			data, err := os.ReadFile(src.path)
+			if err != nil {
+				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
+				p.Failure()
+				return nil
+			}
+			buf.Write(data)
+		}
+		if err := os.WriteFile(dst, buf.Bytes(), 0666); err != nil {
+			fmt.Fprintf(p.Stderr, "Access is denied.\n")
 			p.Failure()
 			return nil
+		}
+		fmt.Fprintf(p.Stdout, "        1 file(s) copied.\n")
+	case !hasPlus && len(srcs) > 1:
+		if dstErr != nil && !tools.HasWildcards(dstPattern) {
+			if dstIsDirIntent {
+				fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
+				fmt.Fprintf(p.Stdout, "        0 file(s) copied.\n")
+				p.Failure()
+				return nil
+			}
+		}
+		if tools.HasWildcards(dstPattern) {
+			parentDir := filepath.Dir(dst)
+			if _, err := os.Stat(parentDir); err != nil {
+				fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
+				fmt.Fprintf(p.Stdout, "        0 file(s) copied.\n")
+				p.Failure()
+				return nil
+			}
 		}
 		count := 0
 		hasFailure := false
