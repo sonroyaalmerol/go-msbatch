@@ -72,14 +72,14 @@ func TestDriveMount(t *testing.T) {
 			expected: "",
 		},
 		{
-			name:     "C drive maps to /mnt/c",
+			name:     "C drive maps to drive_c (Wine-style)",
 			letter:   'C',
-			expected: "/mnt/c",
+			expected: "drive_c",
 		},
 		{
-			name:     "D drive maps to /mnt/d",
+			name:     "D drive maps to drive_d (Wine-style)",
 			letter:   'D',
-			expected: "/mnt/d",
+			expected: "drive_d",
 		},
 	}
 
@@ -115,14 +115,14 @@ func TestMapPath(t *testing.T) {
 			expected: "/home/user/file.txt",
 		},
 		{
-			name:     "C drive path",
+			name:     "C drive path (Wine-style)",
 			input:    `C:\Users\test\file.txt`,
-			expected: "/mnt/c/Users/test/file.txt",
+			expected: "drive_c/Users/test/file.txt",
 		},
 		{
-			name:     "D drive path",
+			name:     "D drive path (Wine-style)",
 			input:    `D:\data\file.txt`,
-			expected: "/mnt/d/data/file.txt",
+			expected: "drive_d/data/file.txt",
 		},
 		{
 			name:     "UNC path",
@@ -364,14 +364,14 @@ func TestMapArg(t *testing.T) {
 		expected string
 	}{
 		{
-			name:     "windows path with backslash",
+			name:     "windows path with backslash (Wine-style)",
 			input:    `C:\Users\test`,
-			expected: `/mnt/c/Users/test`,
+			expected: `drive_c/Users/test`,
 		},
 		{
-			name:     "windows path with drive letter",
+			name:     "windows path with drive letter (Wine-style)",
 			input:    `D:\data`,
-			expected: `/mnt/d/data`,
+			expected: `drive_d/data`,
 		},
 		{
 			name:     "simple filename unchanged",
@@ -466,13 +466,13 @@ func TestUnixToWinePath(t *testing.T) {
 			expected: "Z:\\data\\Data\\Flight\\file.txt",
 		},
 		{
-			name:     "path under mnt c",
-			input:    "/mnt/c/Users/test",
+			name:     "path under drive_c (Wine-style)",
+			input:    "drive_c/Users/test",
 			expected: "C:\\Users\\test",
 		},
 		{
-			name:     "path under mnt d",
-			input:    "/mnt/d/data/file.txt",
+			name:     "path under drive_d (Wine-style)",
+			input:    "drive_d/data/file.txt",
 			expected: "D:\\data\\file.txt",
 		},
 		{
@@ -486,8 +486,8 @@ func TestUnixToWinePath(t *testing.T) {
 			expected: "Z:\\",
 		},
 		{
-			name:     "mnt c root",
-			input:    "/mnt/c",
+			name:     "drive_c root",
+			input:    "drive_c",
 			expected: "C:",
 		},
 	}
@@ -709,4 +709,53 @@ func TestGlobCaseInsensitive(t *testing.T) {
 			t.Errorf("Expected 1 match, got %d: %v", len(matches), matches)
 		}
 	})
+}
+
+func TestDriveMountWithEnvOverride(t *testing.T) {
+	os.Setenv("MSBATCH_DRIVE_C", "/custom/c")
+	defer os.Unsetenv("MSBATCH_DRIVE_C")
+
+	got := DriveMount('C')
+	if got != "/custom/c" {
+		t.Errorf("DriveMount('C') with env override = %q, want %q", got, "/custom/c")
+	}
+}
+
+func TestDriveMountWithPrefix(t *testing.T) {
+	os.Setenv("MSBATCH_PREFIX", "/wine/prefix")
+	defer os.Unsetenv("MSBATCH_PREFIX")
+
+	got := DriveMount('C')
+	if got != "/wine/prefix/drive_c" {
+		t.Errorf("DriveMount('C') with prefix = %q, want %q", got, "/wine/prefix/drive_c")
+	}
+}
+
+func TestDriveMountEnvOverrideTakesPrecedence(t *testing.T) {
+	os.Setenv("MSBATCH_PREFIX", "/wine/prefix")
+	os.Setenv("MSBATCH_DRIVE_D", "/custom/d")
+	defer func() {
+		os.Unsetenv("MSBATCH_PREFIX")
+		os.Unsetenv("MSBATCH_DRIVE_D")
+	}()
+
+	gotD := DriveMount('D')
+	if gotD != "/custom/d" {
+		t.Errorf("DriveMount('D') with env override = %q, want %q", gotD, "/custom/d")
+	}
+
+	gotC := DriveMount('C')
+	if gotC != "/wine/prefix/drive_c" {
+		t.Errorf("DriveMount('C') with prefix = %q, want %q", gotC, "/wine/prefix/drive_c")
+	}
+}
+
+func TestMapPathWithEnvOverride(t *testing.T) {
+	os.Setenv("MSBATCH_DRIVE_Z", "/data")
+	defer os.Unsetenv("MSBATCH_DRIVE_Z")
+
+	got := MapPath(`Z:\Data\Flight`)
+	if got != "/data/Data/Flight" {
+		t.Errorf("MapPath with Z override = %q, want %q", got, "/data/Data/Flight")
+	}
 }

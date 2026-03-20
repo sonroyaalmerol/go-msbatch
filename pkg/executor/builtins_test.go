@@ -441,3 +441,41 @@ func TestCmdDirBareRecursive(t *testing.T) {
 		t.Error("/B should not show header")
 	}
 }
+
+func TestCmdCopySingleFileToNonexistentPath(t *testing.T) {
+	srcDir := t.TempDir()
+
+	writeTestFile(t, srcDir, "file.txt", "content")
+
+	p, _, errOut := newTestProc(nil)
+	// Copy to a path where parent directory doesn't exist
+	cmdCopy(p, testCmd("copy", filepath.Join(srcDir, "file.txt"), "/nonexistent/path/file.txt"))
+
+	if testErrorLevel(p) == "0" {
+		t.Error("expected non-zero ERRORLEVEL for non-existent path")
+	}
+
+	stderr := errOut.String()
+	if !strings.Contains(stderr, "The system cannot find the path specified.") {
+		t.Errorf("expected 'path specified' error, got: %s", stderr)
+	}
+}
+
+func TestCmdCopySingleFileToNonexistentPathWithSlash(t *testing.T) {
+	srcDir := t.TempDir()
+
+	writeTestFile(t, srcDir, "file.txt", "content")
+
+	p, _, errOut := newTestProc(nil)
+	// Copy to a directory path (with trailing slash) that doesn't exist
+	cmdCopy(p, testCmd("copy", filepath.Join(srcDir, "file.txt"), "/nonexistent/dir/"))
+
+	if testErrorLevel(p) == "0" {
+		t.Error("expected non-zero ERRORLEVEL for non-existent directory")
+	}
+
+	stderr := errOut.String()
+	if !strings.Contains(stderr, "The system cannot find the path specified.") {
+		t.Errorf("expected 'path specified' error, got: %s", stderr)
+	}
+}

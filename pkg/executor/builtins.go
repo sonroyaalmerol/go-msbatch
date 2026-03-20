@@ -591,7 +591,11 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			return p.Success()
 		}
 		if err := tools.CopyFile(srcs[0].path, dstTarget); err != nil {
-			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
+			if os.IsNotExist(err) {
+				fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
+			} else {
+				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
+			}
 			p.Failure()
 			return nil
 		}

@@ -59,7 +59,12 @@ export MSBATCH_EXE_PREFIX=wine
 msbatch myscript.bat
 ```
 
-Z: drive paths work natively (`Z:\home\user\file` → `/home/user/file`), enabling full Wine compatibility.
+**Drive mappings** follow Wine conventions by default:
+- `Z:\` maps to `/` (Linux root) — access the entire Unix filesystem
+- `C:\` maps to `drive_c` — relative path for Wine's Windows directory
+- Other drives map to `drive_d`, `drive_e`, etc.
+
+Override with `MSBATCH_DRIVE_X` or `MSBATCH_PREFIX` environment variables.
 
 ## Library usage
 

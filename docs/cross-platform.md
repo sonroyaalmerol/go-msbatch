@@ -4,40 +4,52 @@ go-msbatch runs on Linux, macOS, and Windows. This page documents where behaviou
 
 ## Path Mapping
 
-Windows drive letters are transparently remapped to Unix mount points. Backslashes are converted to forward slashes and `filepath.Clean` is applied afterwards.
+Windows drive letters are transparently remapped to Unix paths. Backslashes are converted to forward slashes and `filepath.Clean` is applied afterwards.
 
-### Lookup order (first non-empty value wins)
+### Default Drive Mappings (Wine-style)
 
-For each drive letter the interpreter consults three sources in order:
+By default, go-msbatch uses Wine-style drive mappings:
+
+| Drive | Default Mapping | Description |
+|-------|-----------------|-------------|
+| **Z:** | `/` | Linux root — provides access to entire Unix filesystem |
+| **C:** | `drive_c` | Relative path (typical Wine convention) |
+| **D:-Y:** | `drive_d`-`drive_y` | Relative paths |
+
+This matches how Wine maps drives by default, making it easy to use scripts that access the Unix filesystem via `Z:\`.
+
+### Lookup Order (first match wins)
+
+For each drive letter, the interpreter consults these sources in order:
 
 1. **`MSBATCH_DRIVE_<LETTER>`** — per-drive override (letter must be uppercase in the var name).
-2. **`MSBATCH_DRIVE_ROOT`** — common prefix applied to all unmapped drives.
-3. Built-in defaults:
-   - **`Z:`** maps to `/` (Wine convention — Z: is the Unix root)
-   - **All other drives** map to `/mnt/<letter>` (WSL2 convention)
+2. **`MSBATCH_PREFIX`** — common prefix for all drives except Z.
+3. Built-in defaults (see table above).
 
 ### Examples
 
 ```sh
-# All defaults (WSL2-style + Wine Z:)
-# C:\foo\bar  →  /mnt/c/foo/bar
-# D:\data     →  /mnt/d/data
-# Z:\home\user → /home/user
+# Default Wine-style mappings
+# Z:\home\user\file.txt  →  /home/user/file.txt
+# Z:\data\results        →  /data/results
+# C:\Windows\System32    →  drive_c/Windows/System32
+# D:\programs            →  drive_d/programs
 
-# Shift all drives under /drives/
-export MSBATCH_DRIVE_ROOT=/drives/
-# C:\foo\bar  →  /drives/c/foo/bar
-# D:\data     →  /drives/d/data
-# Z:\home\user → /home/user  (Z: always maps to /)
+# Set a Wine prefix for all drives (except Z:)
+export MSBATCH_PREFIX=/home/user/.wine
+# C:\Windows\System32  →  /home/user/.wine/drive_c/Windows/System32
+# D:\programs          →  /home/user/.wine/drive_d/programs
+# Z:\home\user         →  /home/user  (Z: always maps to /)
 
-# Pin individual drives, let others fall through to MSBATCH_DRIVE_ROOT
-export MSBATCH_DRIVE_C=/windows
-export MSBATCH_DRIVE_D=/media/data
-export MSBATCH_DRIVE_ROOT=/mnt/
-# C:\foo\bar  →  /windows/foo/bar
-# D:\data     →  /media/data/data
-# E:\tmp      →  /mnt/e/tmp   (fallback to MSBATCH_DRIVE_ROOT)
-# Z:\home     →  /home       (Z: always maps to /)
+# Override specific drives
+export MSBATCH_DRIVE_Z=/data/speedtestfdb
+export MSBATCH_DRIVE_C=/mnt/windows
+# Z:\Data\Flight\1026   →  /data/speedtestfdb/Data/Flight/1026
+# C:\Users\test         →  /mnt/windows/Users/test
+
+# Common pattern: map Z: to your data directory
+export MSBATCH_DRIVE_Z=/data
+# Z:\Data\Flight\1026\GRV1\TA\ProcFiles  →  /data/Data/Flight/1026/GRV1/TA/ProcFiles
 ```
 
 All variables are read from the **host** environment (not from inside the batch script).

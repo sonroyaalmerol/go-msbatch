@@ -25,18 +25,19 @@ func DriveMount(letter byte) string {
 		return strings.TrimRight(v, "/")
 	}
 
-	if root := os.Getenv("MSBATCH_DRIVE_ROOT"); root != "" {
-		if !strings.HasSuffix(root, "/") {
-			root += "/"
+	if prefix := os.Getenv("MSBATCH_PREFIX"); prefix != "" {
+		prefix = strings.TrimRight(prefix, "/")
+		if lower == "z" {
+			return ""
 		}
-		return strings.TrimRight(root+lower, "/")
+		return prefix + "/drive_" + lower
 	}
 
 	if lower == "z" {
 		return ""
 	}
 
-	return "/mnt/" + lower
+	return "drive_" + lower
 }
 
 func uncEnvKey(s string) string {
@@ -211,6 +212,16 @@ func UnixToWinePath(unixPath string) string {
 	}
 
 	if !strings.HasPrefix(unixPath, "/") {
+		for drive := 'C'; drive <= 'Z'; drive++ {
+			mount := DriveMount(byte(drive))
+			if mount == "" {
+				continue
+			}
+			if strings.HasPrefix(unixPath, mount+"/") || unixPath == mount {
+				rel := strings.TrimPrefix(unixPath, mount)
+				return string(drive) + ":" + strings.ReplaceAll(rel, "/", "\\")
+			}
+		}
 		return unixPath
 	}
 
