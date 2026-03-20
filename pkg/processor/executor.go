@@ -45,15 +45,7 @@ func (p *Processor) ExecuteNode(n parser.Node) error {
 	case *parser.SimpleCommand:
 		return p.executeSimpleCommand(node)
 	case *parser.Block:
-		for _, bn := range node.Body {
-			if err := p.ExecuteNode(bn); err != nil {
-				return err
-			}
-			if p.Exited {
-				break
-			}
-		}
-		return nil
+		return p.executeBlock(node)
 	case *parser.IfNode:
 		return p.executeIf(node)
 	case *parser.ForNode:
@@ -67,6 +59,33 @@ func (p *Processor) ExecuteNode(n parser.Node) error {
 	default:
 		return fmt.Errorf("unknown node type: %T", n)
 	}
+}
+
+func (p *Processor) executeBlock(node *parser.Block) error {
+	rm := p.newRedirectManager()
+
+	if len(node.Redirects) > 0 {
+		var expandedRedirects []parser.Redirect
+		for _, r := range node.Redirects {
+			expandedRedirects = append(expandedRedirects, parser.Redirect{
+				Kind:   r.Kind,
+				Target: p.ExpandPhase4(p.ExpandPhase1(r.Target)),
+				FD:     r.FD,
+			})
+		}
+		rm.apply(p, expandedRedirects)
+		defer rm.close(p)
+	}
+
+	for _, bn := range node.Body {
+		if err := p.ExecuteNode(bn); err != nil {
+			return err
+		}
+		if p.Exited {
+			break
+		}
+	}
+	return nil
 }
 
 func (p *Processor) jumpToLabel(labelName string) error {
@@ -192,108 +211,11 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		}
 	}
 
-	origStdout := p.Stdout
-	origStdin := p.Stdin
-	origStderr := p.Stderr
-
-	var openedFiles []*os.File
-	closeRedirects := func() {
-		for _, f := range openedFiles {
-			f.Sync()
-			f.Close()
-		}
-		p.Stdout = origStdout
-		p.Stdin = origStdin
-		p.Stderr = origStderr
-	}
-
-	defer closeRedirects()
+	rm := p.newRedirectManager()
+	defer rm.close(p)
 
 	if !expanded.RedirectsApplied {
-		for _, r := range expanded.Redirects {
-			targetPath := pathutil.MapPath(r.Target)
-			isNul := strings.EqualFold(r.Target, "nul")
-			switch r.Kind {
-			case parser.RedirectOut:
-				if isNul {
-					switch r.FD {
-					case 0:
-						fallthrough
-					case 1:
-						p.Stdout = io.Discard
-					case 2:
-						p.Stderr = io.Discard
-					}
-				} else {
-					f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
-					if err == nil {
-						openedFiles = append(openedFiles, f)
-						switch r.FD {
-						case 0:
-							fallthrough
-						case 1:
-							p.Stdout = f
-						case 2:
-							p.Stderr = f
-						}
-					}
-				}
-			case parser.RedirectAppend:
-				if isNul {
-					switch r.FD {
-					case 0:
-						fallthrough
-					case 1:
-						p.Stdout = io.Discard
-					case 2:
-						p.Stderr = io.Discard
-					}
-				} else {
-					f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
-					if err == nil {
-						openedFiles = append(openedFiles, f)
-						switch r.FD {
-						case 0:
-							fallthrough
-						case 1:
-							p.Stdout = f
-						case 2:
-							p.Stderr = f
-						}
-					}
-				}
-			case parser.RedirectIn:
-				if isNul {
-					p.Stdin = bytes.NewReader(nil)
-				} else {
-					f, err := os.Open(targetPath)
-					if err == nil {
-						openedFiles = append(openedFiles, f)
-						p.Stdin = f
-					}
-				}
-			case parser.RedirectOutFD:
-				// Redirect FD to another FD, e.g. 2>&1
-				switch r.Target {
-				case "0":
-					p.applyFD(r.FD, p.Stdin)
-				case "1":
-					p.applyFD(r.FD, p.Stdout)
-				case "2":
-					p.applyFD(r.FD, p.Stderr)
-				}
-			case parser.RedirectInFD:
-				// Similar to OutFD but for input redirection e.g. <&0
-				switch r.Target {
-				case "0":
-					p.applyFD(r.FD, p.Stdin)
-				case "1":
-					p.applyFD(r.FD, p.Stdout)
-				case "2":
-					p.applyFD(r.FD, p.Stderr)
-				}
-			}
-		}
+		rm.apply(p, expanded.Redirects)
 		expanded.RedirectsApplied = true
 	}
 
@@ -444,6 +366,99 @@ func (p *Processor) applyFD(fd int, stream any) {
 	case 2:
 		if s, ok := stream.(io.Writer); ok {
 			p.Stderr = s
+		}
+	}
+}
+
+type redirectManager struct {
+	origStdout  io.Writer
+	origStdin   io.Reader
+	origStderr  io.Writer
+	openedFiles []*os.File
+}
+
+func (p *Processor) newRedirectManager() *redirectManager {
+	return &redirectManager{
+		origStdout: p.Stdout,
+		origStdin:  p.Stdin,
+		origStderr: p.Stderr,
+	}
+}
+
+func (rm *redirectManager) close(p *Processor) {
+	for _, f := range rm.openedFiles {
+		f.Sync()
+		f.Close()
+	}
+	p.Stdout = rm.origStdout
+	p.Stdin = rm.origStdin
+	p.Stderr = rm.origStderr
+}
+
+func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) {
+	for _, r := range redirects {
+		targetPath := pathutil.MapPath(r.Target)
+		isNul := strings.EqualFold(r.Target, "nul")
+		switch r.Kind {
+		case parser.RedirectOut:
+			if isNul {
+				switch r.FD {
+				case 0, 1:
+					p.Stdout = io.Discard
+				case 2:
+					p.Stderr = io.Discard
+				}
+			} else {
+				f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+				if err == nil {
+					rm.openedFiles = append(rm.openedFiles, f)
+					switch r.FD {
+					case 0, 1:
+						p.Stdout = f
+					case 2:
+						p.Stderr = f
+					}
+				}
+			}
+		case parser.RedirectAppend:
+			if isNul {
+				switch r.FD {
+				case 0, 1:
+					p.Stdout = io.Discard
+				case 2:
+					p.Stderr = io.Discard
+				}
+			} else {
+				f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
+				if err == nil {
+					rm.openedFiles = append(rm.openedFiles, f)
+					switch r.FD {
+					case 0, 1:
+						p.Stdout = f
+					case 2:
+						p.Stderr = f
+					}
+				}
+			}
+		case parser.RedirectIn:
+			if isNul {
+				p.Stdin = bytes.NewReader(nil)
+			} else {
+				f, err := os.Open(targetPath)
+				if err == nil {
+					rm.openedFiles = append(rm.openedFiles, f)
+					p.Stdin = f
+				}
+			}
+		case parser.RedirectOutFD, parser.RedirectInFD:
+			switch r.Target {
+			case "0":
+				p.applyFD(r.FD, p.Stdin)
+			case "1":
+				p.applyFD(r.FD, p.Stdout)
+			case "2":
+				p.applyFD(r.FD, p.Stderr)
+			}
 		}
 	}
 }
@@ -747,20 +762,22 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 			isString := false
 			rawItem := item
 
-			if strings.HasPrefix(item, "\"") && strings.HasSuffix(item, "\"") {
-				isString = true
-				rawItem = item[1 : len(item)-1]
-			} else if strings.HasPrefix(item, "'") && strings.HasSuffix(item, "'") {
-				if opts.usebackq {
+			if opts.usebackq {
+				if strings.HasPrefix(item, "`") && strings.HasSuffix(item, "`") {
+					isCommand = true
+					rawItem = item[1 : len(item)-1]
+				} else if strings.HasPrefix(item, "'") && strings.HasSuffix(item, "'") {
 					isString = true
 					rawItem = item[1 : len(item)-1]
-				} else {
-					isCommand = true
+				} else if strings.HasPrefix(item, "\"") && strings.HasSuffix(item, "\"") {
 					rawItem = item[1 : len(item)-1]
 				}
-			} else if strings.HasPrefix(item, "`") && strings.HasSuffix(item, "`") {
-				if opts.usebackq {
+			} else {
+				if strings.HasPrefix(item, "'") && strings.HasSuffix(item, "'") {
 					isCommand = true
+					rawItem = item[1 : len(item)-1]
+				} else if strings.HasPrefix(item, "\"") && strings.HasSuffix(item, "\"") {
+					isString = true
 					rawItem = item[1 : len(item)-1]
 				}
 			}

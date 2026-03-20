@@ -131,6 +131,17 @@ func cmdCd(p *processor.Processor, cmd *parser.SimpleCommand) error {
 
 func cmdType(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	failed := false
+	if len(cmd.Args) == 0 {
+		content, err := io.ReadAll(p.Stdin)
+		if err != nil {
+			fmt.Fprintf(p.Stderr, "Error reading stdin.\n")
+			p.Failure()
+			return nil
+		}
+		fmt.Fprint(p.Stdout, string(content))
+		p.Success()
+		return nil
+	}
 	for _, arg := range cmd.Args {
 		if strings.EqualFold(arg, "nul") {
 			continue

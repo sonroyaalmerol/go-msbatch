@@ -128,7 +128,20 @@ func (bl *BatchLexer) stateFor() stateFn {
 			isForF = (flagLower == 'f')
 			// For /R: optionally scan a root path before the loop variable.
 			if flagLower == 'r' && !bl.check(func(r rune) bool { return r == '%' }) {
-				bl.acceptRun(func(r rune) bool { return r != 0 && !isNL(r) && r != '%' })
+				if bl.check(func(r rune) bool { return r == '"' || r == '\'' || r == '`' }) {
+					quoteChar := bl.next()
+					for {
+						r2 := bl.next()
+						if r2 == quoteChar || r2 == 0 || isNL(r2) {
+							if r2 != quoteChar && r2 != 0 {
+								bl.prev()
+							}
+							break
+						}
+					}
+				} else {
+					bl.acceptRun(func(r rune) bool { return r != 0 && !isNL(r) && r != '%' })
+				}
 				if bl.width() > 0 {
 					bl.emit(TokenText)
 				}

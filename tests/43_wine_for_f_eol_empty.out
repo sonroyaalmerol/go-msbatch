@@ -1,0 +1,4 @@
+Case 2: FOR /F with EOL option and empty lines
+"Line1"
+"Line2"
+"Line3"

@@ -438,3 +438,104 @@ func TestEchoPreservesSpacing(t *testing.T) {
 		t.Errorf("expected 'a  b' (preserving spacing), got %q", output)
 	}
 }
+
+func TestEchoSemicolonWithOn(t *testing.T) {
+	p, out, _ := newEchoTestProc(nil)
+	p.Echo = false
+
+	cmdEcho(p, testEchoCmd("echo;", []string{"ON"}, []string{"ON"}))
+
+	if p.Echo {
+		t.Error("echo;ON should NOT change Echo state to true")
+	}
+	output := strings.TrimSpace(out.String())
+	if output != "ON" {
+		t.Errorf("expected 'ON' to be displayed, got %q", output)
+	}
+}
+
+func TestEchoEqualsWithOff(t *testing.T) {
+	p, out, _ := newEchoTestProc(nil)
+	p.Echo = true
+
+	cmdEcho(p, testEchoCmd("echo=", []string{"OFF"}, []string{"OFF"}))
+
+	if !p.Echo {
+		t.Error("echo=OFF should NOT change Echo state to false")
+	}
+	output := strings.TrimSpace(out.String())
+	if output != "OFF" {
+		t.Errorf("expected 'OFF' to be displayed, got %q", output)
+	}
+}
+
+func TestEchoSlashWithOn(t *testing.T) {
+	p, out, _ := newEchoTestProc(nil)
+	p.Echo = false
+
+	cmdEcho(p, testEchoCmd("echo/", []string{"ON"}, []string{"ON"}))
+
+	if p.Echo {
+		t.Error("echo/ON should NOT change Echo state to true")
+	}
+	output := strings.TrimSpace(out.String())
+	if output != "ON" {
+		t.Errorf("expected 'ON' to be displayed, got %q", output)
+	}
+}
+
+func TestEchoPlusWithOff(t *testing.T) {
+	p, out, _ := newEchoTestProc(nil)
+	p.Echo = true
+
+	cmdEcho(p, testEchoCmd("echo+", []string{"OFF"}, []string{"OFF"}))
+
+	if !p.Echo {
+		t.Error("echo+OFF should NOT change Echo state to false")
+	}
+	output := strings.TrimSpace(out.String())
+	if output != "OFF" {
+		t.Errorf("expected 'OFF' to be displayed, got %q", output)
+	}
+}
+
+func TestEchoDotWithOn(t *testing.T) {
+	p, out, _ := newEchoTestProc(nil)
+	p.Echo = false
+
+	cmdEcho(p, testEchoCmd("echo.", []string{"ON"}, []string{"ON"}))
+
+	if p.Echo {
+		t.Error("echo.ON should NOT change Echo state to true")
+	}
+	output := strings.TrimSpace(out.String())
+	if output != "ON" {
+		t.Errorf("expected 'ON' to be displayed, got %q", output)
+	}
+}
+
+func TestEchoDotWithOff(t *testing.T) {
+	p, out, _ := newEchoTestProc(nil)
+	p.Echo = true
+
+	cmdEcho(p, testEchoCmd("echo.", []string{"OFF"}, []string{"OFF"}))
+
+	if !p.Echo {
+		t.Error("echo.OFF should NOT change Echo state to false")
+	}
+	output := strings.TrimSpace(out.String())
+	if output != "OFF" {
+		t.Errorf("expected 'OFF' to be displayed, got %q", output)
+	}
+}
+
+func TestEchoOpenBracketBlankLine(t *testing.T) {
+	p, out, _ := newEchoTestProc(nil)
+
+	cmdEcho(p, testEchoCmd("echo[", nil, nil))
+
+	output := out.String()
+	if output != "\n" {
+		t.Errorf("expected single newline, got %q", output)
+	}
+}

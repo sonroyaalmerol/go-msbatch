@@ -1,0 +1,11 @@
+Case 8a: FOR with unquoted wildcard
+"test1.txt"
+"test2.txt"
+
+Case 8b: FOR with quoted wildcard
+"test1.txt"
+"test2.txt"
+
+Case 8c: FOR with quoted path wildcard
+"Dir/test1.txt"
+"Dir/test2.txt"

@@ -45,8 +45,10 @@ rm test`file.txt
 echo.
 echo === FOR /F with usebackq ===
 
-:: Double quotes = literal string (same as without usebackq)
-for /F "usebackq" %%i in ("test string 2") do echo usebackq double: %%i
+:: Double quotes = filename (CHANGED with usebackq!)
+echo file data > tempfile_usebackq.txt
+for /F "usebackq" %%i in ("tempfile_usebackq.txt") do echo usebackq double: %%i
+rm tempfile_usebackq.txt
 
 :: Single quotes = literal string (CHANGED with usebackq!)
 for /F "usebackq" %%i in ('literal string') do echo usebackq single: %%i

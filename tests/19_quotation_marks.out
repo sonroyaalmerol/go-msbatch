@@ -17,7 +17,7 @@ Backtick filename: file
 
 === FOR /F with usebackq ===
 
-usebackq double: test
+usebackq double: file
 usebackq single: literal
 usebackq backtick: backtick
 

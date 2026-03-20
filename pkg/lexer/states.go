@@ -109,7 +109,6 @@ func (bl *BatchLexer) stateRoot() stateFn {
 		nextRune := bl.next()
 		if nextRune == '>' || nextRune == '<' {
 			bl.prev()
-			bl.ignore()
 			return bl.stateRedirect()
 		}
 		for i := 0; i < bl.width(); i++ {

@@ -1,0 +1,7 @@
+Case 7a: IF/ELSE with FOR inside
+IF condition.
+FOR cycle: "file1.txt"
+FOR cycle: "file2.txt"
+
+Case 7b: Simple IF/ELSE without FOR
+Simple IF.

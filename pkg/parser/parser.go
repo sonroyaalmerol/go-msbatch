@@ -93,6 +93,18 @@ func (p *Parser) skipWS() {
 	}
 }
 
+// skipWSOnly advances past whitespace tokens only (not newlines).
+func (p *Parser) skipWSOnly() {
+	for p.pos < len(p.tokens) {
+		t := p.tokens[p.pos]
+		if t.Type == lexer.TokenWhitespace {
+			p.pos++
+			continue
+		}
+		break
+	}
+}
+
 // isPipeOrAmpVal reports whether a TokenPunctuation value is a command separator.
 func isPipeOrAmpVal(v string) bool {
 	switch v {

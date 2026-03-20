@@ -145,10 +145,9 @@ func TestSingleTokens(t *testing.T) {
 		{"redirect_in", "<", []tok{{TokenRedirect, "<"}}},
 		{"redirect_merge_stderr", ">&", []tok{{TokenRedirect, ">&"}}},
 		{"redirect_append_merge", ">>&", []tok{{TokenRedirect, ">>&"}}},
-		// a numeric file-descriptor prefix (e.g. "2>") is silently consumed;
-		// only the operator itself is emitted.
-		{"redirect_fd_out", "2>", []tok{{TokenRedirect, ">"}}},
-		{"redirect_fd_merge", "2>&", []tok{{TokenRedirect, ">&"}}},
+		// a numeric file-descriptor prefix (e.g. "2>") is included in the token.
+		{"redirect_fd_out", "2>", []tok{{TokenRedirect, "2>"}}},
+		{"redirect_fd_merge", "2>&", []tok{{TokenRedirect, "2>&"}}},
 
 		// ── TokenPunctuation ─────────────────────────────────────────────
 		{"punct_lparen", "(", []tok{{TokenPunctuation, "("}}},
@@ -616,12 +615,12 @@ func TestTokenCombinations(t *testing.T) {
 		},
 		{
 			"redirect_stderr_to_stdout",
-			// The file-descriptor number is consumed and dropped; only >& is emitted.
+			// The file-descriptor number is included in the redirect token.
 			"cmd 2>&1\n",
 			[]tok{
 				{TokenWord, "cmd"},
 				{TokenWhitespace, " "},
-				{TokenRedirect, ">&"},
+				{TokenRedirect, "2>&"},
 				{TokenText, "1"},
 				{TokenNewline, "\n"},
 			},
@@ -920,11 +919,11 @@ func TestEdgeCases(t *testing.T) {
 		})
 	}
 
-	// Standalone: "2>&1" — numeric fd is dropped, only the operator is emitted.
-	t.Run("redirect_fd_number_dropped", func(t *testing.T) {
+	// Standalone: "2>&1" — numeric fd is included in the operator token.
+	t.Run("redirect_fd_number_included", func(t *testing.T) {
 		got := lex("2>&1")
-		if len(got) == 0 || got[0] != (tok{TokenRedirect, ">&"}) {
-			t.Errorf("expected first token Redirect(\">&\"), got %v", got)
+		if len(got) == 0 || got[0] != (tok{TokenRedirect, "2>&"}) {
+			t.Errorf("expected first token Redirect(\"2>&\"), got %v", got)
 		}
 	})
 

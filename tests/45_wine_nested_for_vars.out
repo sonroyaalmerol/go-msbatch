@@ -1,0 +1,8 @@
+Case 4a: Nested FOR with parent variable expansion
+In parent cycle: "file1.txt"
+In child cycle: "file1.txt"
+In parent cycle: "file2.txt"
+In child cycle: "file2.txt"
+
+Case 4b: FOR /R with variable path
+"Folder1/inner.txt"

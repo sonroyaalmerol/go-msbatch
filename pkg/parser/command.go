@@ -63,6 +63,76 @@ func (p *Parser) parseBinary() Node {
 	return left
 }
 
+// collectLeadingRedirects collects any redirects that appear at the start of a line.
+// In Windows CMD, redirects can appear anywhere on the line.
+func (p *Parser) collectLeadingRedirects() []Redirect {
+	var redirects []Redirect
+	for {
+		p.skipWS()
+		t := p.peek()
+		if t.Type != lexer.TokenRedirect {
+			break
+		}
+		r, _, _ := p.parseSingleRedirect()
+		redirects = append(redirects, r)
+	}
+	return redirects
+}
+
+// parseSingleRedirect parses a single redirect and returns it with updated positions.
+func (p *Parser) parseSingleRedirect() (Redirect, int, int) {
+	rt := p.consume()
+	endLine, endCol := rt.Line, rt.Col+len(rt.Value)
+	v := val(rt)
+	r := Redirect{}
+
+	switch {
+	case strings.Contains(v, ">>"):
+		r.Kind = RedirectAppend
+		r.FD = extractFD(v, ">>", 1)
+	case strings.Contains(v, ">&"):
+		r.Kind = RedirectOutFD
+		r.FD = extractFD(v, ">&", 1)
+		p.skipWSOnly()
+		if p.pos < len(p.tokens) {
+			tok := p.tokens[p.pos]
+			if tok.Type == lexer.TokenNumber || tok.Type == lexer.TokenText || tok.Type == lexer.TokenWord {
+				numTok := p.consume()
+				r.Target = val(numTok)
+				endLine, endCol = p.updatePos(endLine, endCol, numTok)
+			}
+		}
+		return r, endLine, endCol
+	case strings.Contains(v, "<&"):
+		r.Kind = RedirectInFD
+		r.FD = extractFD(v, "<&", 0)
+		p.skipWSOnly()
+		if p.pos < len(p.tokens) {
+			tok := p.tokens[p.pos]
+			if tok.Type == lexer.TokenNumber || tok.Type == lexer.TokenText || tok.Type == lexer.TokenWord {
+				numTok := p.consume()
+				r.Target = val(numTok)
+				endLine, endCol = p.updatePos(endLine, endCol, numTok)
+			}
+		}
+		return r, endLine, endCol
+	case strings.Contains(v, ">"):
+		r.Kind = RedirectOut
+		r.FD = extractFD(v, ">", 1)
+	case strings.Contains(v, "<"):
+		r.Kind = RedirectIn
+		r.FD = extractFD(v, "<", 0)
+	}
+
+	p.skipWSOnly()
+	t := p.peek()
+	if t.Type != lexer.TokenEOF && t.Type != lexer.TokenNewline && t.Type != lexer.TokenPunctuation {
+		r.Target, endLine, endCol = p.collectStokenWithPos(endLine, endCol)
+	}
+
+	return r, endLine, endCol
+}
+
 // parsePrimary parses a single command: block, label, comment, or simple command.
 func (p *Parser) parsePrimary() Node {
 	p.skipWS()
@@ -70,6 +140,8 @@ func (p *Parser) parsePrimary() Node {
 	if t.Type == lexer.TokenEOF {
 		return nil
 	}
+
+	leadingRedirects := p.collectLeadingRedirects()
 
 	// @ suppression prefix
 	suppressed := false
@@ -82,7 +154,11 @@ func (p *Parser) parsePrimary() Node {
 
 	// Compound block
 	if t.Type == lexer.TokenPunctuation && val(t) == "(" {
-		return p.parseBlock()
+		block := p.parseBlock()
+		if block != nil && len(leadingRedirects) > 0 {
+			block.Redirects = append(leadingRedirects, block.Redirects...)
+		}
+		return block
 	}
 
 	// :: comment
@@ -161,6 +237,9 @@ func (p *Parser) parsePrimary() Node {
 	if cmd == nil {
 		return nil
 	}
+	if len(leadingRedirects) > 0 {
+		cmd.Redirects = append(leadingRedirects, cmd.Redirects...)
+	}
 	return cmd
 }
 
@@ -238,6 +317,23 @@ func (p *Parser) collectArgs(cmd *SimpleCommand, endLine, endCol int) (int, int)
 
 		case lexer.TokenWhitespace:
 			flushArg()
+			nextPos := p.pos + 1
+			skipThisWS := false
+			for nextPos < len(p.tokens) {
+				nextTok := p.tokens[nextPos]
+				if nextTok.Type == lexer.TokenWhitespace {
+					nextPos++
+					continue
+				}
+				if nextTok.Type == lexer.TokenRedirect {
+					p.consume()
+					skipThisWS = true
+				}
+				break
+			}
+			if skipThisWS {
+				continue
+			}
 			consumed := p.consume()
 			endLine, endCol = p.updatePos(endLine, endCol, consumed)
 			cmd.RawArgs = append(cmd.RawArgs, val(consumed))
@@ -314,50 +410,9 @@ func (p *Parser) collectArgs(cmd *SimpleCommand, endLine, endCol int) (int, int)
 // collectRedirect reads a TokenRedirect and its target from the stream.
 // Returns the end line and column after processing.
 func (p *Parser) collectRedirect(cmd *SimpleCommand, endLine, endCol int) (int, int) {
-	rt := p.consume()
-	endLine, endCol = p.updatePos(endLine, endCol, rt)
-	v := val(rt)
-	r := Redirect{}
-
-	switch {
-	case strings.Contains(v, ">>"):
-		r.Kind = RedirectAppend
-		r.FD = extractFD(v, ">>", 1)
-	case strings.Contains(v, ">&"):
-		r.Kind = RedirectOutFD
-		r.FD = extractFD(v, ">&", 1)
-		if p.pos < len(p.tokens) && p.tokens[p.pos].Type == lexer.TokenNumber {
-			numTok := p.consume()
-			r.Target = val(numTok)
-			endLine, endCol = p.updatePos(endLine, endCol, numTok)
-		}
-		cmd.Redirects = append(cmd.Redirects, r)
-		return endLine, endCol
-	case strings.Contains(v, "<&"):
-		r.Kind = RedirectInFD
-		r.FD = extractFD(v, "<&", 0)
-		if p.pos < len(p.tokens) && p.tokens[p.pos].Type == lexer.TokenNumber {
-			numTok := p.consume()
-			r.Target = val(numTok)
-			endLine, endCol = p.updatePos(endLine, endCol, numTok)
-		}
-		cmd.Redirects = append(cmd.Redirects, r)
-		return endLine, endCol
-	case strings.Contains(v, ">"):
-		r.Kind = RedirectOut
-		r.FD = extractFD(v, ">", 1)
-	case strings.Contains(v, "<"):
-		r.Kind = RedirectIn
-		r.FD = extractFD(v, "<", 0)
-	}
-
-	p.skipWS()
-	t := p.peek()
-	if t.Type != lexer.TokenEOF && t.Type != lexer.TokenNewline && t.Type != lexer.TokenPunctuation {
-		r.Target, endLine, endCol = p.collectStokenWithPos(endLine, endCol)
-	}
+	r, el, ec := p.parseSingleRedirect()
 	cmd.Redirects = append(cmd.Redirects, r)
-	return endLine, endCol
+	return el, ec
 }
 
 // extractFD parses an optional leading digit from a redirect token like "2>".

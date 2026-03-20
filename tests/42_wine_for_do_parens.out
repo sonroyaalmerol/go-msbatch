@@ -1,0 +1,11 @@
+Case 1: FOR with IF block after DO (no parens)
+File: "test1.txt"
+File: "test2.txt"
+
+Case 1b: FOR with parenthesized IF after DO
+File: "test1.txt"
+File: "test2.txt"
+
+Case 1c: FOR with simple command after DO
+Simple: "test1.txt"
+Simple: "test2.txt"

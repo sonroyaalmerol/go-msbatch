@@ -44,6 +44,20 @@ func (p *Parser) parseBlock() *Block {
 		}
 	}
 	p.compoundDepth--
+
+	// Collect any redirects after the closing ')'
+	for {
+		p.skipWS()
+		t := p.peek()
+		if t.Type != lexer.TokenRedirect {
+			break
+		}
+		r, el, ec := p.parseSingleRedirect()
+		block.Redirects = append(block.Redirects, r)
+		block.EndLine = el
+		block.EndCol = ec
+	}
+
 	return block
 }
 

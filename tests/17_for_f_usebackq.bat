@@ -12,11 +12,13 @@ for /F "usebackq tokens=1,2 delims=," %%i in ('part1,part2') do (
     echo SingleQuote: %%i %%j
 )
 
-:: Test 3: usebackq with double quotes - literal string
-echo Test 3: usebackq with double quote string
-for /F "usebackq tokens=1,2 delims=," %%i in ("partA,partB") do (
-    echo DoubleQuote: %%i %%j
+:: Test 3: usebackq with double quotes - reads FILE
+echo Test 3: usebackq with double quote file
+echo partA,partB > tempfile.txt
+for /F "usebackq tokens=1,2 delims=," %%i in ("tempfile.txt") do (
+    echo DoubleQuoteFile: %%i %%j
 )
+rm tempfile.txt
 
 :: Test 4: WITHOUT usebackq - single quotes execute command
 echo Test 4: without usebackq, single quote executes command

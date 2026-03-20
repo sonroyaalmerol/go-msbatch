@@ -118,11 +118,12 @@ func (c *SimpleCommand) Words() []string {
 
 // Block is a parenthesised sequence of commands: ( cmd1 \n cmd2 ).
 type Block struct {
-	Line    int // 0-based source line of the opening '('
-	Col     int // 0-based source column of the opening '('
-	EndLine int // 0-based source line of the closing ')'; same as Line if unclosed
-	EndCol  int // 0-based source column after the closing ')'
-	Body    []Node
+	Line      int // 0-based source line of the opening '('
+	Col       int // 0-based source column of the opening '('
+	EndLine   int // 0-based source line of the closing ')'; same as Line if unclosed
+	EndCol    int // 0-based source column after the closing ')'
+	Body      []Node
+	Redirects []Redirect // redirections after the closing ')'
 }
 
 func (b *Block) Kind() NodeKind   { return NodeBlock }

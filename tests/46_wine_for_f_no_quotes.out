@@ -1,0 +1,7 @@
+Case 5a: FOR /F without quotes on existing file
+"Line1"
+"Line2"
+
+Case 5b: FOR /F with usebackq and quotes
+"Line1"
+"Line2"
