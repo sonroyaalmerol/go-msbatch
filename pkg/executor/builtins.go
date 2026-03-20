@@ -117,6 +117,9 @@ func cmdCd(p *processor.Processor, cmd *parser.SimpleCommand) error {
 func cmdType(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	failed := false
 	for _, arg := range cmd.Args {
+		if strings.EqualFold(arg, "nul") {
+			continue
+		}
 		content, err := os.ReadFile(pathutil.MapPath(arg))
 		if err != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")

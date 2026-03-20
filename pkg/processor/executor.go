@@ -212,38 +212,65 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 	if !expanded.RedirectsApplied {
 		for _, r := range expanded.Redirects {
 			targetPath := pathutil.MapPath(r.Target)
+			isNul := strings.EqualFold(r.Target, "nul")
 			switch r.Kind {
 			case parser.RedirectOut:
-				f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
-				if err == nil {
-					openedFiles = append(openedFiles, f)
+				if isNul {
 					switch r.FD {
 					case 0:
 						fallthrough
 					case 1:
-						p.Stdout = f
+						p.Stdout = io.Discard
 					case 2:
-						p.Stderr = f
+						p.Stderr = io.Discard
+					}
+				} else {
+					f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+					if err == nil {
+						openedFiles = append(openedFiles, f)
+						switch r.FD {
+						case 0:
+							fallthrough
+						case 1:
+							p.Stdout = f
+						case 2:
+							p.Stderr = f
+						}
 					}
 				}
 			case parser.RedirectAppend:
-				f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
-				if err == nil {
-					openedFiles = append(openedFiles, f)
+				if isNul {
 					switch r.FD {
 					case 0:
 						fallthrough
 					case 1:
-						p.Stdout = f
+						p.Stdout = io.Discard
 					case 2:
-						p.Stderr = f
+						p.Stderr = io.Discard
+					}
+				} else {
+					f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
+					if err == nil {
+						openedFiles = append(openedFiles, f)
+						switch r.FD {
+						case 0:
+							fallthrough
+						case 1:
+							p.Stdout = f
+						case 2:
+							p.Stderr = f
+						}
 					}
 				}
 			case parser.RedirectIn:
-				f, err := os.Open(targetPath)
-				if err == nil {
-					openedFiles = append(openedFiles, f)
-					p.Stdin = f
+				if isNul {
+					p.Stdin = bytes.NewReader(nil)
+				} else {
+					f, err := os.Open(targetPath)
+					if err == nil {
+						openedFiles = append(openedFiles, f)
+						p.Stdin = f
+					}
 				}
 			case parser.RedirectOutFD:
 				// Redirect FD to another FD, e.g. 2>&1

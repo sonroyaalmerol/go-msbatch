@@ -288,3 +288,24 @@ func GlobCaseInsensitive(pattern string) ([]string, error) {
 
 	return result, nil
 }
+
+func IsWindowsDevice(name string) bool {
+	base := filepath.Base(name)
+	if i := strings.Index(base, "."); i >= 0 {
+		base = base[:i]
+	}
+	base = strings.ToUpper(base)
+	switch base {
+	case "NUL", "CON", "PRN", "AUX":
+		return true
+	}
+	if len(base) == 4 && strings.HasPrefix(base, "COM") {
+		c := base[3]
+		return c >= '1' && c <= '9'
+	}
+	if len(base) == 4 && strings.HasPrefix(base, "LPT") {
+		c := base[3]
+		return c >= '1' && c <= '9'
+	}
+	return false
+}
