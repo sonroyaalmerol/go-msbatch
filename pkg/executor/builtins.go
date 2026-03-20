@@ -16,20 +16,35 @@ import (
 	"golang.org/x/term"
 )
 
+var echoDelimiterChars = ".,;=/+([:"
+
 func cmdEcho(p *processor.Processor, cmd *parser.SimpleCommand) error {
+	cmdNameLower := strings.ToLower(cmd.Name)
+	isEchoVariant := strings.HasPrefix(cmdNameLower, "echo") && len(cmdNameLower) > 4 &&
+		strings.ContainsRune(echoDelimiterChars, rune(cmdNameLower[4]))
+
+	if isEchoVariant {
+		if len(cmd.RawArgs) == 0 {
+			fmt.Fprintln(p.Stdout)
+			return nil
+		}
+		output := processor.ExtractRawArgString(cmd.RawArgs)
+		fmt.Fprintln(p.Stdout, output)
+		return nil
+	}
+
+	if p.ShowHelp(cmd, CommandHelp("echo")) {
+		return nil
+	}
+
 	output, stateChanged := p.HandleEchoBuiltin(cmd.RawArgs)
 	if !stateChanged {
 		p.Logger.Debug("echo command execution", "output", output)
 	}
-	if strings.ToLower(cmd.Name) == "echo." && len(cmd.RawArgs) == 0 {
-		fmt.Fprintln(p.Stdout)
-		p.Success()
-		return nil
-	}
 	if !stateChanged {
 		fmt.Fprintln(p.Stdout, output)
 	}
-	return p.Success()
+	return nil
 }
 
 func cmdSet(p *processor.Processor, cmd *parser.SimpleCommand) error {

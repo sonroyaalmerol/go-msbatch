@@ -140,8 +140,15 @@ func (r *Registry) ExecCommand(p *processor.Processor, cmd *parser.SimpleCommand
 
 func registerBuiltins(r *Registry) {
 	// ---- internal commands (native implementations) ----
+	// ECHO and its variants for blank lines (echo., echo:, echo;, echo=, echo(, echo/, echo+)
 	r.HandleFunc("echo", cmdEcho)
 	r.HandleFunc("echo.", cmdEcho)
+	r.HandleFunc("echo:", cmdEcho)
+	r.HandleFunc("echo;", cmdEcho)
+	r.HandleFunc("echo=", cmdEcho)
+	r.HandleFunc("echo(", cmdEcho)
+	r.HandleFunc("echo/", cmdEcho)
+	r.HandleFunc("echo+", cmdEcho)
 	r.HandleFunc("set", cmdSet)
 	r.HandleFunc("cd", cmdCd)
 	r.HandleFunc("chdir", cmdCd)
