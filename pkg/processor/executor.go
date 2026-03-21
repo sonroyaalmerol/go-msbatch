@@ -16,7 +16,6 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 )
 
-// Execute runs the AST nodes.
 func (p *Processor) Execute(nodes []parser.Node) error {
 	p.Logger.Debug("executing nodes", "count", len(nodes), "env", p.Env.Snapshot(), "cwd", func() string { cwd, _ := os.Getwd(); return cwd }())
 	p.Nodes = nodes
@@ -24,12 +23,9 @@ func (p *Processor) Execute(nodes []parser.Node) error {
 	p.Exited = false
 	for p.PC < len(p.Nodes) && !p.Exited {
 		n := p.Nodes[p.PC]
-		// In CMD, PC is effectively advanced after the command starts.
 		if err := p.ExecuteNode(n); err != nil {
 			return err
 		}
-		// Only advance if the command didn't perform a jump (which we
-		// detect by checking if p.PC still points to the same node).
 		if !p.Exited && p.PC < len(p.Nodes) && p.Nodes[p.PC] == n {
 			p.PC++
 		}
@@ -37,10 +33,12 @@ func (p *Processor) Execute(nodes []parser.Node) error {
 	return nil
 }
 
-// ExecuteNode runs a single AST node.
 func (p *Processor) ExecuteNode(n parser.Node) error {
 	if p.Exited {
 		return nil
+	}
+	if p.Trace.Enabled() {
+		p.traceNode(n)
 	}
 	switch node := n.(type) {
 	case *parser.SimpleCommand:
@@ -59,6 +57,24 @@ func (p *Processor) ExecuteNode(n parser.Node) error {
 		return nil
 	default:
 		return fmt.Errorf("unknown node type: %T", n)
+	}
+}
+
+func (p *Processor) traceNode(n parser.Node) {
+	if !p.Trace.Enabled() {
+		return
+	}
+	line := n.Pos().Line + 1
+	switch node := n.(type) {
+	case *parser.SimpleCommand:
+		if node.Name != "" {
+			args := node.Words()
+			p.Trace.Line(line, node.Name+" "+strings.Join(args, " "))
+		}
+	case *parser.LabelNode:
+		p.Trace.Line(line, ":"+node.Name)
+	case *parser.CommentNode:
+		p.Trace.Line(line, "REM "+node.Text)
 	}
 }
 
@@ -220,9 +236,6 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		expanded.RedirectsApplied = true
 	}
 
-	// Flow-control commands are handled directly by the Processor because they
-	// manipulate Processor state (PC, Args, Exited) that an external executor
-	// cannot safely touch.
 	name := strings.ToLower(expanded.Name)
 	cmdWords := expanded.Words()
 	switch name {
@@ -233,6 +246,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		label := strings.Join(cmdWords, "")
 		hasColon := strings.HasPrefix(label, ":")
 		label = strings.TrimLeft(label, ":")
+		p.Trace.GotoLabel(label)
 		if hasColon && strings.ToLower(label) == "eof" {
 			p.PC = len(p.Nodes)
 			return nil
@@ -246,8 +260,11 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		restArgs := cmdWords[1:]
 		if strings.HasPrefix(target, ":") {
 			label := strings.TrimLeft(target, ":")
+			p.Trace.CallLabel(label, restArgs)
+			p.Trace.Indent()
 			if strings.ToLower(label) == "eof" {
 				p.PC = len(p.Nodes)
+				p.Trace.Dedent()
 				return nil
 			}
 			p.Logger.Debug("entering subroutine", "label", label, "args", restArgs)
@@ -256,6 +273,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 			p.Args = append([]string{target}, restArgs...)
 			if err := p.jumpToLabel(label); err != nil {
 				p.Args = oldArgs
+				p.Trace.Dedent()
 				return err
 			}
 			p.CallDepth++
@@ -264,7 +282,9 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 				p.PC++
 				if err := p.ExecuteNode(node); err != nil {
 					p.CallDepth--
+					p.Trace.Dedent()
 					if err.Error() == "EXIT_LOCAL" {
+						p.Trace.ReturnFromLabel()
 						p.PC = oldPC
 						p.Args = oldArgs
 						return nil
@@ -273,12 +293,12 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 				}
 			}
 			p.CallDepth--
+			p.Trace.Dedent()
+			p.Trace.ReturnFromLabel()
 			p.PC = oldPC
 			p.Args = oldArgs
 			return nil
 		}
-		// Suppress echo on the inner dispatch: the CALL command line was
-		// already echoed by the outer executeSimpleCommand call.
 		var reconstructedRaw []string
 		for i, arg := range restArgs {
 			if i > 0 {
@@ -291,8 +311,9 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 			Args:             restArgs,
 			RawArgs:          reconstructedRaw,
 			Suppressed:       true,
-			RedirectsApplied: true, // propagate flag to avoid re-applying same redirects
+			RedirectsApplied: true,
 		})
+		p.Trace.Dedent()
 		return err
 	case "exit":
 		code := 0
@@ -308,6 +329,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 			}
 		}
 		p.FailureWithCode(code)
+		p.Trace.Exit(code, isLocal)
 		if isLocal {
 			if p.CallDepth > 0 {
 				return fmt.Errorf("EXIT_LOCAL")
@@ -443,6 +465,7 @@ func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) {
 					p.Stderr = io.Discard
 				}
 			} else {
+				p.Trace.RedirectWrite(r.Target)
 				f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
 				if err == nil {
 					rm.openedFiles = append(rm.openedFiles, f)
@@ -466,6 +489,7 @@ func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) {
 					p.Stderr = io.Discard
 				}
 			} else {
+				p.Trace.RedirectAppend(r.Target)
 				f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
 				if err == nil {
 					rm.openedFiles = append(rm.openedFiles, f)
@@ -484,6 +508,7 @@ func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) {
 				p.Logger.Debug("redirect stdin from nul")
 				p.Stdin = bytes.NewReader(nil)
 			} else {
+				p.Trace.RedirectRead(r.Target)
 				f, err := os.Open(targetPath)
 				if err == nil {
 					rm.openedFiles = append(rm.openedFiles, f)

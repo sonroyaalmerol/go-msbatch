@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/executor/tools"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/logging"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
@@ -331,15 +332,14 @@ func cmdDel(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		lower := strings.ToLower(arg)
 		switch {
 		case lower == "/q" || lower == "/f":
-			// ignore
 		case lower == "/s":
 			recursive = true
 		case strings.HasPrefix(lower, "/a"):
-			// attribute filter — not implemented
 		default:
 			patterns = append(patterns, arg)
 		}
 	}
+	trace := logging.GetTrace()
 	for _, pat := range patterns {
 		mapped := pathutil.MapPath(pat)
 		if recursive {
@@ -349,6 +349,7 @@ func cmdDel(p *processor.Processor, cmd *parser.SimpleCommand) error {
 					return nil
 				}
 				if matched := pathutil.MatchCaseInsensitive(base, filepath.Base(path)); matched {
+					trace.DeleteFile(path)
 					os.Remove(path)
 				}
 				return nil
@@ -357,12 +358,15 @@ func cmdDel(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			matches, err := pathutil.GlobCaseInsensitive(mapped)
 			if err == nil && len(matches) > 0 {
 				for _, m := range matches {
+					trace.DeleteFile(m)
 					os.Remove(m)
 				}
 			} else if os.Remove(mapped) != nil {
 				fmt.Fprintf(p.Stderr, "Could Not Find %s\n", mapped)
 				p.Failure()
 				return nil
+			} else {
+				trace.DeleteFile(mapped)
 			}
 		}
 	}

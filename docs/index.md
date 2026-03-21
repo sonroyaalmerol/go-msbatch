@@ -6,6 +6,7 @@ A cross-platform Windows CMD/Batch interpreter written in Go.
 
 - [Architecture & Processing Phases](architecture.md)
 - [Cross-Platform Behaviour](cross-platform.md)
+- [Trace Debugging](trace-debugging.md)
 
 ## Language Features
 

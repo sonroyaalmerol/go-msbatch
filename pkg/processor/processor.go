@@ -9,35 +9,32 @@ import (
 	"time"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/lexer"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/logging"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
 )
 
-// Processor applies the CMD.EXE parsing phases to a line of batch source and
-// returns the expanded result ready for execution.
 type Processor struct {
 	Env          *Environment
-	Args         []string // %0..%N positional arguments (batch mode)
-	OriginalArgs []string // %1..%N stable arguments for %*
-	Echo         bool     // ECHO state (phase 3)
+	Args         []string
+	OriginalArgs []string
+	Echo         bool
 	ForVars      map[string]string
 	Stdout       io.Writer
 	Stdin        io.Reader
 	Stderr       io.Writer
 	Console      io.Writer
 	Logger       *slog.Logger
+	Trace        *logging.TraceLogger
+	CurrentFile  string
 	Nodes        []parser.Node
 	PC           int
 	Exited       bool
-	CallDepth    int             // incremented inside CALL :label frames
-	DirStack     []string        // directory stack for PUSHD/POPD
-	Executor     CommandExecutor // handles non-flow-control command dispatch
+	CallDepth    int
+	DirStack     []string
+	Executor     CommandExecutor
 }
 
-// New creates a Processor. exec handles command dispatch; pass nil when only
-// the parsing and expansion phases are needed (e.g. in tests).
 func New(env *Environment, args []string, exec CommandExecutor) *Processor {
-	// Make an independent copy so SHIFT's in-place append on p.Args never
-	// corrupts OriginalArgs (they would otherwise share a backing array).
 	var originalArgs []string
 	if len(args) > 1 {
 		originalArgs = append([]string(nil), args[1:]...)
@@ -53,8 +50,14 @@ func New(env *Environment, args []string, exec CommandExecutor) *Processor {
 		Stderr:       os.Stderr,
 		Console:      os.Stdout,
 		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Trace:        logging.GetTrace(),
 		Executor:     exec,
 	}
+}
+
+func (p *Processor) SetCurrentFile(filename string) {
+	p.CurrentFile = filename
+	p.Trace.File(filename)
 }
 
 // ProcessLine applies all expansion phases (0, 1, 4, 5) to a single source line
@@ -136,9 +139,9 @@ func (p *Processor) HandleEchoBuiltin(args []string) (output string, stateChange
 	return full, false
 }
 
-// SetErrorLevel updates the ERRORLEVEL variable in the environment.
 func (p *Processor) SetErrorLevel(code int) {
 	p.Env.SetErrorLevel(code)
+	p.Trace.ErrorLevel(code)
 }
 
 // Success is shorthand for SetErrorLevel(0).
@@ -172,14 +175,13 @@ func (p *Processor) ShowHelp(cmd *parser.SimpleCommand, helpText string) bool {
 	return false
 }
 
-// HandleSetBuiltin parses and applies a SET command.
-// src is the raw text after "set " (i.e. "NAME=value" or "/a expr").
 func (p *Processor) HandleSetBuiltin(name, value string) {
 	if name != "" {
 		if value == "" {
 			p.Env.Delete(name)
 		} else {
 			p.Env.Set(name, value)
+			p.Trace.SetVar(name, value)
 		}
 	}
 }

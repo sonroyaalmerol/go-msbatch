@@ -66,6 +66,35 @@ msbatch myscript.bat
 
 Override with `MSBATCH_DRIVE_X` or `MSBATCH_PREFIX` environment variables.
 
+### Trace Debugging
+
+Debug complex batch projects with execution tracing:
+
+```bash
+msbatch --trace script.bat           # Basic trace (commands, calls, file I/O)
+msbatch --trace-verbose script.bat   # Verbose (also shows SET, ERRORLEVEL)
+```
+
+Example output for a multi-file project:
+
+```
+[main.bat]
+   2: call writer.bat
+CALL writer.bat
+  [writer.bat]
+     2: echo data > shared.txt
+  > shared.txt
+   3: call reader.bat
+CALL reader.bat
+  [reader.bat]
+     2: set /p val=<shared.txt
+  < shared.txt
+     4: del shared.txt
+  DEL shared.txt
+```
+
+See [Trace Debugging](docs/trace-debugging.md) for full details.
+
 ## Library usage
 
 ```go
@@ -104,6 +133,7 @@ Full documentation lives in [`docs/`](docs/index.md).
 
 - [Architecture & Processing Phases](docs/architecture.md)
 - [Cross-Platform Behaviour](docs/cross-platform.md)
+- [Trace Debugging](docs/trace-debugging.md)
 - [Variables & Expansion](docs/language/variables.md)
 - [Arithmetic — SET /A](docs/language/arithmetic.md)
 - [Control Flow — IF, GOTO, CALL, EXIT, SHIFT](docs/language/control-flow.md)

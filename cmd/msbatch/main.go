@@ -23,8 +23,6 @@ func newProcessor(env *processor.Environment, args []string, exec processor.Comm
 }
 
 func main() {
-	// If the executable name matches a registered tool (e.g. via symlink),
-	// run that tool directly with the provided arguments.
 	exeName := strings.ToLower(filepath.Base(os.Args[0]))
 	exeName = strings.TrimSuffix(exeName, ".exe")
 	if exeName != "msbatch" {
@@ -36,18 +34,65 @@ func main() {
 	}
 
 	args := os.Args[1:]
+	traceMode := logging.TraceOff
+	traceOutput := io.Writer(nil)
+
+	var filteredArgs []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--trace" || arg == "-trace" {
+			traceMode = logging.TraceOn
+		} else if arg == "--trace-verbose" || arg == "-trace-verbose" {
+			traceMode = logging.TraceVerbose
+		} else if strings.HasPrefix(arg, "--trace=") {
+			switch strings.ToLower(arg[8:]) {
+			case "1", "on", "true":
+				traceMode = logging.TraceOn
+			case "2", "verbose":
+				traceMode = logging.TraceVerbose
+			}
+		} else if strings.HasPrefix(arg, "--trace-file=") {
+			f, err := os.Create(arg[13:])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating trace file: %v\n", err)
+				os.Exit(1)
+			}
+			traceOutput = f
+		} else if arg == "--trace-file" && i+1 < len(args) {
+			i++
+			f, err := os.Create(args[i])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating trace file: %v\n", err)
+				os.Exit(1)
+			}
+			traceOutput = f
+		} else if strings.HasPrefix(arg, "/") && len(arg) > 1 && arg[1] != '?' {
+			switch strings.ToUpper(arg) {
+			case "/TRACE":
+				traceMode = logging.TraceOn
+			case "/TRACE:V", "/TRACE:VERBOSE":
+				traceMode = logging.TraceVerbose
+			default:
+				filteredArgs = append(filteredArgs, arg)
+			}
+		} else {
+			filteredArgs = append(filteredArgs, arg)
+		}
+	}
+	args = filteredArgs
+
+	logging.InitTrace(traceMode, traceOutput)
+
 	if len(args) == 0 {
 		runInteractive()
 		return
 	}
 	switch strings.ToUpper(args[0]) {
 	case "/C":
-		// Run command string then exit.
 		if len(args) > 1 {
 			runCommand(strings.Join(args[1:], " "))
 		}
 	case "/K":
-		// Run command string then drop into interactive mode.
 		if len(args) > 1 {
 			runCommand(strings.Join(args[1:], " "))
 		}
@@ -83,7 +128,6 @@ func runAsTool(name string, args []string) {
 	os.Exit(0)
 }
 
-// runFile executes a batch script file.
 func runFile(filename string) {
 	content, err := os.ReadFile(filename)
 	if err != nil {
@@ -93,8 +137,8 @@ func runFile(filename string) {
 
 	env := processor.NewEnvironment(true)
 	proc := newProcessor(env, os.Args[1:], executor.New())
+	proc.SetCurrentFile(filename)
 
-	// Strip Unix shebang so scripts can start with #!/usr/bin/env msbatch
 	raw := string(content)
 	if strings.HasPrefix(raw, "#!") {
 		if nl := strings.IndexByte(raw, '\n'); nl >= 0 {
