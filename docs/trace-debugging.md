@@ -4,12 +4,34 @@ When debugging complex batch projects with multiple files, subroutine calls, and
 
 ## Usage
 
+### Command-Line Flags
+
 ```bash
 msbatch --trace script.bat           # Basic trace
 msbatch --trace-verbose script.bat   # Verbose (includes SET, ERRORLEVEL)
 msbatch /TRACE script.bat            # CMD-style flag
 msbatch /TRACE:V script.bat          # CMD-style verbose
 ```
+
+### Environment Variables
+
+You can also enable tracing via environment variables:
+
+```bash
+export MSBATCH_TRACE=on              # or: 1, true
+export MSBATCH_TRACE=verbose         # or: 2
+export MSBATCH_TRACE_FILE=trace.log  # redirect trace to file
+msbatch script.bat
+```
+
+| Variable | Values | Description |
+|----------|--------|-------------|
+| `MSBATCH_TRACE` | `0`, `off`, `false` | Disable tracing |
+| `MSBATCH_TRACE` | `1`, `on`, `true` | Basic trace mode |
+| `MSBATCH_TRACE` | `2`, `verbose` | Verbose trace mode |
+| `MSBATCH_TRACE_FILE` | `<path>` | Write trace output to file |
+
+**Note:** Command-line flags take precedence over environment variables.
 
 ### Trace Output File
 
@@ -144,3 +166,99 @@ The indentation makes it easy to see:
 - When subroutines and external batch files are entered/exited
 - What files are being written, read, or deleted
 - The flow of execution through the entire project
+
+## Interactive Debugger
+
+For hands-on debugging, msbatch provides an interactive debugger that lets you set breakpoints, step through code, and inspect variables.
+
+### Starting the Debugger
+
+```bash
+# Break at REM BREAK / :: BREAK comments
+msbatch --debug script.bat
+
+# Single-step through every statement
+msbatch --step script.bat
+
+# CMD-style flags also work
+msbatch /DEBUG script.bat
+msbatch /STEP script.bat
+```
+
+### Environment Variables
+
+```bash
+export MSBATCH_DEBUG=on        # or: 1, true, breakpoints
+export MSBATCH_STEP=on         # or: 1, true
+msbatch script.bat
+```
+
+| Variable | Values | Description |
+|----------|--------|-------------|
+| `MSBATCH_DEBUG` | `0`, `off`, `false` | Disable debugger |
+| `MSBATCH_DEBUG` | `1`, `on`, `true`, `breakpoints` | Break at breakpoints |
+| `MSBATCH_STEP` | `0`, `off`, `false` | Disable step mode |
+| `MSBATCH_STEP` | `1`, `on`, `true` | Single-step mode |
+
+**Note:** Command-line flags take precedence over environment variables.
+
+### Setting Breakpoints
+
+Add `REM BREAK` or `:: BREAK` comments in your batch file:
+
+```batch
+@echo off
+set VAR1=Hello
+REM BREAK          <- execution pauses here
+set VAR2=World
+:: BREAK           <- this also works
+echo %VAR1% %VAR2%
+```
+
+### Debugger Commands
+
+When execution pauses, you can use these commands:
+
+| Command | Description |
+|---------|-------------|
+| `c`, `continue` | Continue execution until next breakpoint |
+| `s`, `step` | Execute one line and stay in step mode |
+| `n`, `next` | Execute one line, then continue |
+| `q`, `quit` | Exit the script immediately |
+| `v`, `vars` | Show all environment variables |
+| `p <var>` | Print value of a specific variable |
+| `b <line>` | Add breakpoint at line number |
+| `d <line>` | Delete breakpoint at line number |
+| `l`, `list` | List all breakpoints |
+| `h`, `help` | Show help |
+
+### Example Session
+
+```batch
+# script.bat
+@echo off
+set COUNT=0
+REM BREAK
+set /a COUNT+=1
+echo Count is %COUNT%
+```
+
+```bash
+$ msbatch --debug script.bat
+
+[DEBUG] Breakpoint at script.bat:4
+  4: REM BREAK
+
+(debug) v
+Environment variables:
+  COUNT=0
+
+(debug) c
+  5: set /a COUNT+=1
+
+(debug) p COUNT
+  COUNT=1
+
+(debug) c
+Count is 1
+```

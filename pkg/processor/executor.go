@@ -37,6 +37,12 @@ func (p *Processor) ExecuteNode(n parser.Node) error {
 	if p.Exited {
 		return nil
 	}
+	if p.Debugger.Enabled {
+		if action := p.checkDebugBreakpoint(n); action == ActionQuit {
+			p.Exited = true
+			return nil
+		}
+	}
 	if p.Trace.Enabled() {
 		p.traceNode(n)
 	}
@@ -58,6 +64,38 @@ func (p *Processor) ExecuteNode(n parser.Node) error {
 	default:
 		return fmt.Errorf("unknown node type: %T", n)
 	}
+}
+
+func (p *Processor) checkDebugBreakpoint(n parser.Node) DebugAction {
+	pos := n.Pos()
+	line := pos.Line + 1
+
+	shouldBreak := false
+
+	if p.Debugger.StepMode {
+		switch n.(type) {
+		case *parser.LabelNode, *parser.CommentNode:
+		default:
+			shouldBreak = true
+		}
+	}
+
+	if IsBreakpointComment(n) {
+		shouldBreak = true
+	}
+
+	if p.Debugger.IsBreakpoint(line) {
+		shouldBreak = true
+	}
+
+	if shouldBreak {
+		action := p.Debugger.Prompt(p, n)
+		if action == ActionQuit {
+			return ActionQuit
+		}
+	}
+
+	return ActionContinue
 }
 
 func (p *Processor) traceNode(n parser.Node) {

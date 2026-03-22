@@ -16,9 +16,12 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
 
-func newProcessor(env *processor.Environment, args []string, exec processor.CommandExecutor) *processor.Processor {
+func newProcessor(env *processor.Environment, args []string, exec processor.CommandExecutor, debugMode processor.DebugMode) *processor.Processor {
 	proc := processor.New(env, args, exec)
 	proc.Logger = logging.NewLoggerFromEnv()
+	if debugMode != processor.DebugOff {
+		proc.Debugger.SetMode(debugMode)
+	}
 	return proc
 }
 
@@ -36,6 +39,44 @@ func main() {
 	args := os.Args[1:]
 	traceMode := logging.TraceOff
 	traceOutput := io.Writer(nil)
+	debugMode := processor.DebugOff
+
+	if envTrace := os.Getenv("MSBATCH_TRACE"); envTrace != "" {
+		switch strings.ToLower(envTrace) {
+		case "1", "on", "true":
+			traceMode = logging.TraceOn
+		case "2", "verbose":
+			traceMode = logging.TraceVerbose
+		case "0", "off", "false":
+			traceMode = logging.TraceOff
+		}
+	}
+
+	if envTraceFile := os.Getenv("MSBATCH_TRACE_FILE"); envTraceFile != "" {
+		f, err := os.Create(envTraceFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating trace file: %v\n", err)
+			os.Exit(1)
+		}
+		traceOutput = f
+	}
+
+	if envDebug := os.Getenv("MSBATCH_DEBUG"); envDebug != "" {
+		switch strings.ToLower(envDebug) {
+		case "1", "on", "true", "breakpoints":
+			debugMode = processor.DebugBreakpoints
+		case "0", "off", "false":
+			debugMode = processor.DebugOff
+		}
+	}
+
+	if envStep := os.Getenv("MSBATCH_STEP"); envStep != "" {
+		switch strings.ToLower(envStep) {
+		case "1", "on", "true":
+			debugMode = processor.DebugStepMode
+		case "0", "off", "false":
+		}
+	}
 
 	var filteredArgs []string
 	for i := 0; i < len(args); i++ {
@@ -66,12 +107,20 @@ func main() {
 				os.Exit(1)
 			}
 			traceOutput = f
+		} else if arg == "--debug" || arg == "-debug" {
+			debugMode = processor.DebugBreakpoints
+		} else if arg == "--step" || arg == "-step" {
+			debugMode = processor.DebugStepMode
 		} else if strings.HasPrefix(arg, "/") && len(arg) > 1 && arg[1] != '?' {
 			switch strings.ToUpper(arg) {
 			case "/TRACE":
 				traceMode = logging.TraceOn
 			case "/TRACE:V", "/TRACE:VERBOSE":
 				traceMode = logging.TraceVerbose
+			case "/DEBUG":
+				debugMode = processor.DebugBreakpoints
+			case "/STEP":
+				debugMode = processor.DebugStepMode
 			default:
 				filteredArgs = append(filteredArgs, arg)
 			}
@@ -84,21 +133,21 @@ func main() {
 	logging.InitTrace(traceMode, traceOutput)
 
 	if len(args) == 0 {
-		runInteractive()
+		runInteractive(debugMode)
 		return
 	}
 	switch strings.ToUpper(args[0]) {
 	case "/C":
 		if len(args) > 1 {
-			runCommand(strings.Join(args[1:], " "))
+			runCommand(strings.Join(args[1:], " "), debugMode)
 		}
 	case "/K":
 		if len(args) > 1 {
-			runCommand(strings.Join(args[1:], " "))
+			runCommand(strings.Join(args[1:], " "), debugMode)
 		}
-		runInteractive()
+		runInteractive(debugMode)
 	default:
-		runFile(args[0])
+		runFile(args[0], args, debugMode)
 	}
 }
 
@@ -106,7 +155,7 @@ func main() {
 func runAsTool(name string, args []string) {
 	env := processor.NewEnvironment(false)
 	reg := executor.New()
-	proc := newProcessor(env, nil, reg)
+	proc := newProcessor(env, nil, reg, processor.DebugOff)
 
 	cmd := &parser.SimpleCommand{
 		Name:    name,
@@ -128,7 +177,7 @@ func runAsTool(name string, args []string) {
 	os.Exit(0)
 }
 
-func runFile(filename string) {
+func runFile(filename string, args []string, debugMode processor.DebugMode) {
 	content, err := os.ReadFile(filename)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
@@ -136,7 +185,7 @@ func runFile(filename string) {
 	}
 
 	env := processor.NewEnvironment(true)
-	proc := newProcessor(env, os.Args[1:], executor.New())
+	proc := newProcessor(env, args, executor.New(), debugMode)
 	proc.SetCurrentFile(filename)
 
 	raw := string(content)
@@ -157,9 +206,9 @@ func runFile(filename string) {
 }
 
 // runCommand executes a single command string and exits.
-func runCommand(cmdStr string) {
+func runCommand(cmdStr string, debugMode processor.DebugMode) {
 	env := processor.NewEnvironment(false)
-	proc := newProcessor(env, nil, executor.New())
+	proc := newProcessor(env, nil, executor.New(), debugMode)
 	nodes := processor.ParseExpanded(cmdStr)
 	if err := proc.Execute(nodes); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -235,10 +284,10 @@ func pathComplete(prefix string) ([][]rune, int) {
 	return matches, len([]rune(base))
 }
 
-func runInteractive() {
+func runInteractive(debugMode processor.DebugMode) {
 	env := processor.NewEnvironment(false)
 	reg := executor.New()
-	proc := newProcessor(env, nil, reg)
+	proc := newProcessor(env, nil, reg, debugMode)
 	proc.Echo = false // readline already shows typed input; suppress batch-style echo
 
 	// Default CMD-style prompt: "path> "

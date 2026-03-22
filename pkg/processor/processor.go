@@ -32,6 +32,7 @@ type Processor struct {
 	CallDepth    int
 	DirStack     []string
 	Executor     CommandExecutor
+	Debugger     *Debugger
 }
 
 func New(env *Environment, args []string, exec CommandExecutor) *Processor {
@@ -52,6 +53,7 @@ func New(env *Environment, args []string, exec CommandExecutor) *Processor {
 		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Trace:        logging.GetTrace(),
 		Executor:     exec,
+		Debugger:     NewDebugger(),
 	}
 }
 
