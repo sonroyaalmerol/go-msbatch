@@ -256,6 +256,8 @@ Real cmd.exe raises a divide-by-zero error. go-msbatch silently returns `0` for 
 
 `go-msbatch` includes a built-in debug logging system powered by Go's `log/slog` library. It provides deep visibility into the interpreter's internal operations, including command execution, variable expansion, and control flow transitions.
 
+> **Note:** This is for internal interpreter debugging. For interactive batch script debugging with breakpoints, see [Trace Debugging & Interactive Debugger](trace-debugging.md).
+
 ### Enabling Logs
 
 Set the `MSBATCH_DEBUG` environment variable to `true`, `1`, `on`, or any non-empty value (except `0` or `false`) to enable debug output.

@@ -61,9 +61,9 @@ func main() {
 		traceOutput = f
 	}
 
-	if envDebug := os.Getenv("MSBATCH_DEBUG"); envDebug != "" {
+	if envDebug := os.Getenv("MSBATCH_BREAKPOINTS"); envDebug != "" {
 		switch strings.ToLower(envDebug) {
-		case "1", "on", "true", "breakpoints":
+		case "1", "on", "true":
 			debugMode = processor.DebugBreakpoints
 		case "0", "off", "false":
 			debugMode = processor.DebugOff

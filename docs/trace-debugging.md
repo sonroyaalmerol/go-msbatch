@@ -188,15 +188,15 @@ msbatch /STEP script.bat
 ### Environment Variables
 
 ```bash
-export MSBATCH_DEBUG=on        # or: 1, true, breakpoints
-export MSBATCH_STEP=on         # or: 1, true
+export MSBATCH_BREAKPOINTS=on    # or: 1, true
+export MSBATCH_STEP=on           # or: 1, true
 msbatch script.bat
 ```
 
 | Variable | Values | Description |
 |----------|--------|-------------|
-| `MSBATCH_DEBUG` | `0`, `off`, `false` | Disable debugger |
-| `MSBATCH_DEBUG` | `1`, `on`, `true`, `breakpoints` | Break at breakpoints |
+| `MSBATCH_BREAKPOINTS` | `0`, `off`, `false` | Disable breakpoint debugger |
+| `MSBATCH_BREAKPOINTS` | `1`, `on`, `true` | Break at breakpoints |
 | `MSBATCH_STEP` | `0`, `off`, `false` | Disable step mode |
 | `MSBATCH_STEP` | `1`, `on`, `true` | Single-step mode |
 
