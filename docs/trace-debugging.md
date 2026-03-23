@@ -29,7 +29,7 @@ msbatch script.bat
 | `MSBATCH_TRACE` | `0`, `off`, `false` | Disable tracing |
 | `MSBATCH_TRACE` | `1`, `on`, `true` | Basic trace mode |
 | `MSBATCH_TRACE` | `2`, `verbose` | Verbose trace mode |
-| `MSBATCH_TRACE_FILE` | `<path>` | Write trace output to file |
+| `MSBATCH_TRACE_FILE` | `<path>` | Write trace output to file (auto-enables trace) |
 
 **Note:** Command-line flags take precedence over environment variables.
 

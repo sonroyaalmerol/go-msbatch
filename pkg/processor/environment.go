@@ -127,6 +127,7 @@ func (e *Environment) StackDepth() int {
 type envFrame struct {
 	vars             map[string]string
 	delayedExpansion bool
+	cwd              string
 }
 
 // Push saves the current environment state onto a stack.
@@ -135,7 +136,8 @@ func (e *Environment) Push() {
 	defer e.mu.Unlock()
 	snapshot := make(map[string]string, len(e.vars))
 	maps.Copy(snapshot, e.vars)
-	e.stack = append(e.stack, envFrame{vars: snapshot, delayedExpansion: e.delayedExpansion})
+	cwd, _ := os.Getwd()
+	e.stack = append(e.stack, envFrame{vars: snapshot, delayedExpansion: e.delayedExpansion, cwd: cwd})
 }
 
 // Pop restores the environment state from the stack.
@@ -149,4 +151,7 @@ func (e *Environment) Pop() {
 	e.stack = e.stack[:len(e.stack)-1]
 	e.vars = frame.vars
 	e.delayedExpansion = frame.delayedExpansion
+	if frame.cwd != "" {
+		os.Chdir(frame.cwd) //nolint:errcheck
+	}
 }

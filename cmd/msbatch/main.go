@@ -59,6 +59,9 @@ func main() {
 			os.Exit(1)
 		}
 		traceOutput = f
+		if traceMode == logging.TraceOff {
+			traceMode = logging.TraceOn
+		}
 	}
 
 	if envDebug := os.Getenv("MSBATCH_BREAKPOINTS"); envDebug != "" {
