@@ -2,7 +2,7 @@ inner: inside
 inner-gone
 outer: before
 cwd-changed
-cwd-restored
+cwd-not-restored
 file-in-subdir
 nested-inner: inner
 nested-middle: middle
