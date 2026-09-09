@@ -27,97 +27,109 @@ func testEchoCmd(name string, rawArgs []string, args []string) *parser.SimpleCom
 }
 
 func TestEchoNoArgs(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-	p.Echo = true
-
-	cmdEcho(p, testEchoCmd("echo", nil, nil))
-
-	output := strings.TrimSpace(out.String())
-	if output != "ECHO is on" {
-		t.Errorf("expected 'ECHO is on', got %q", output)
+	tests := []struct {
+		echoOn bool
+		want   string
+	}{
+		{true, "ECHO is on"},
+		{false, "ECHO is off"},
 	}
-}
-
-func TestEchoNoArgsWhenOff(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-	p.Echo = false
-
-	cmdEcho(p, testEchoCmd("echo", nil, nil))
-
-	output := strings.TrimSpace(out.String())
-	if output != "ECHO is off" {
-		t.Errorf("expected 'ECHO is off', got %q", output)
-	}
-}
-
-func TestEchoOn(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-	p.Echo = false
-
-	cmdEcho(p, testEchoCmd("echo", []string{" ", "ON"}, []string{"ON"}))
-
-	if !p.Echo {
-		t.Error("expected Echo to be true after 'echo on'")
-	}
-	if out.String() != "" {
-		t.Errorf("expected no output for 'echo on', got %q", out.String())
-	}
-}
-
-func TestEchoOff(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-	p.Echo = true
-
-	cmdEcho(p, testEchoCmd("echo", []string{" ", "OFF"}, []string{"OFF"}))
-
-	if p.Echo {
-		t.Error("expected Echo to be false after 'echo off'")
-	}
-	if out.String() != "" {
-		t.Errorf("expected no output for 'echo off', got %q", out.String())
-	}
-}
-
-func TestEchoOnCaseInsensitive(t *testing.T) {
-	tests := []string{"on", "ON", "On", "oN"}
 	for _, tc := range tests {
-		t.Run(tc, func(t *testing.T) {
-			p, _, _ := newEchoTestProc(nil)
-			p.Echo = false
+		t.Run(tc.want, func(t *testing.T) {
+			p, out, _ := newEchoTestProc(nil)
+			p.Echo = tc.echoOn
 
-			cmdEcho(p, testEchoCmd("echo", []string{" ", tc}, []string{tc}))
+			cmdEcho(p, testEchoCmd("echo", nil, nil))
 
-			if !p.Echo {
-				t.Errorf("expected Echo=true for 'echo %s'", tc)
+			if got := strings.TrimSpace(out.String()); got != tc.want {
+				t.Errorf("expected %q, got %q", tc.want, got)
 			}
 		})
 	}
 }
 
-func TestEchoOffCaseInsensitive(t *testing.T) {
-	tests := []string{"off", "OFF", "Off", "oFf"}
+// cmd only treats bare on/off as state changes; every casing toggles.
+func TestEchoOnOffToggles(t *testing.T) {
+	tests := []struct {
+		arg      string
+		start    bool
+		wantEcho bool
+	}{
+		{"on", false, true},
+		{"ON", false, true},
+		{"On", false, true},
+		{"oN", false, true},
+		{"off", true, false},
+		{"OFF", true, false},
+		{"Off", true, false},
+		{"oFf", true, false},
+	}
 	for _, tc := range tests {
-		t.Run(tc, func(t *testing.T) {
-			p, _, _ := newEchoTestProc(nil)
-			p.Echo = true
+		t.Run(tc.arg, func(t *testing.T) {
+			p, out, _ := newEchoTestProc(nil)
+			p.Echo = tc.start
 
-			cmdEcho(p, testEchoCmd("echo", []string{" ", tc}, []string{tc}))
+			cmdEcho(p, testEchoCmd("echo", []string{" ", tc.arg}, []string{tc.arg}))
 
-			if p.Echo {
-				t.Errorf("expected Echo=false for 'echo %s'", tc)
+			if p.Echo != tc.wantEcho {
+				t.Errorf("after 'echo %s': Echo = %v, want %v", tc.arg, p.Echo, tc.wantEcho)
+			}
+			if out.String() != "" {
+				t.Errorf("expected no output for 'echo %s', got %q", tc.arg, out.String())
 			}
 		})
 	}
 }
 
-func TestEchoMessage(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
+// echo<delim> prints an empty line for every cmd delimiter.
+func TestEchoDelimiterBlankLine(t *testing.T) {
+	for _, delim := range []string{".", ":", ";", "=", "(", "/", "+", "["} {
+		t.Run("echo"+delim, func(t *testing.T) {
+			p, out, _ := newEchoTestProc(nil)
 
-	cmdEcho(p, testEchoCmd("echo", []string{" ", "Hello", " ", "World"}, []string{"Hello", "World"}))
+			cmdEcho(p, testEchoCmd("echo"+delim, nil, nil))
 
-	output := strings.TrimSpace(out.String())
-	if output != "Hello World" {
-		t.Errorf("expected 'Hello World', got %q", output)
+			if got := out.String(); got != "\n" {
+				t.Errorf("expected single newline, got %q", got)
+			}
+		})
+	}
+}
+
+// echo<delim>ARG prints ARG literally and never changes the echo state:
+// only the space-separated bare on/off form is a state change.
+func TestEchoDelimiterArgPrintedLiterally(t *testing.T) {
+	tests := []struct {
+		delim  string
+		arg    string
+		start  bool
+		wantOn bool
+	}{
+		{".", "ON", false, false},
+		{".", "OFF", true, true},
+		{":", "ON", false, false},
+		{":", "OFF", true, true},
+		{"(", "ON", false, false},
+		{"(", "OFF", true, true},
+		{";", "ON", false, false},
+		{"=", "OFF", true, true},
+		{"/", "ON", false, false},
+		{"+", "OFF", true, true},
+	}
+	for _, tc := range tests {
+		t.Run("echo"+tc.delim+tc.arg, func(t *testing.T) {
+			p, out, _ := newEchoTestProc(nil)
+			p.Echo = tc.start
+
+			cmdEcho(p, testEchoCmd("echo"+tc.delim, []string{tc.arg}, []string{tc.arg}))
+
+			if p.Echo != tc.wantOn {
+				t.Errorf("Echo = %v, want unchanged %v", p.Echo, tc.wantOn)
+			}
+			if got := strings.TrimSpace(out.String()); got != tc.arg {
+				t.Errorf("expected %q to be displayed, got %q", tc.arg, got)
+			}
+		})
 	}
 }
 
@@ -128,30 +140,10 @@ func TestEchoMessageWithSpecialChars(t *testing.T) {
 		args     []string
 		expected string
 	}{
-		{
-			name:     "with equals",
-			rawArgs:  []string{" ", "a=b"},
-			args:     []string{"a=b"},
-			expected: "a=b",
-		},
-		{
-			name:     "with semicolon",
-			rawArgs:  []string{" ", "a;b"},
-			args:     []string{"a;b"},
-			expected: "a;b",
-		},
-		{
-			name:     "with comma",
-			rawArgs:  []string{" ", "a,b"},
-			args:     []string{"a,b"},
-			expected: "a,b",
-		},
-		{
-			name:     "with tab",
-			rawArgs:  []string{"\t", "tabbed"},
-			args:     []string{"tabbed"},
-			expected: "tabbed",
-		},
+		{name: "with equals", rawArgs: []string{" ", "a=b"}, args: []string{"a=b"}, expected: "a=b"},
+		{name: "with semicolon", rawArgs: []string{" ", "a;b"}, args: []string{"a;b"}, expected: "a;b"},
+		{name: "with comma", rawArgs: []string{" ", "a,b"}, args: []string{"a,b"}, expected: "a,b"},
+		{name: "with tab", rawArgs: []string{"\t", "tabbed"}, args: []string{"tabbed"}, expected: "tabbed"},
 	}
 
 	for _, tc := range tests {
@@ -166,140 +158,29 @@ func TestEchoMessageWithSpecialChars(t *testing.T) {
 	}
 }
 
-func TestEchoDotBlankLine(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-
-	cmdEcho(p, testEchoCmd("echo.", nil, nil))
-
-	output := out.String()
-	if output != "\n" {
-		t.Errorf("expected single newline, got %q", output)
+func TestEchoLeadingDelimiterStripped(t *testing.T) {
+	tests := []struct {
+		name     string
+		rawArgs  []string
+		args     []string
+		expected string
+	}{
+		{name: "leading space", rawArgs: []string{" ", "test"}, args: []string{"test"}, expected: "test"},
+		{name: "leading tab", rawArgs: []string{"\t", "test"}, args: []string{"test"}, expected: "test"},
+		{name: "leading comma", rawArgs: []string{",", "test"}, args: []string{"test"}, expected: "test"},
+		{name: "leading semicolon", rawArgs: []string{";", "test"}, args: []string{"test"}, expected: "test"},
+		{name: "leading equals", rawArgs: []string{"=", "test"}, args: []string{"test"}, expected: "test"},
 	}
-}
 
-func TestEchoColonBlankLine(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-
-	cmdEcho(p, testEchoCmd("echo:", nil, nil))
-
-	output := out.String()
-	if output != "\n" {
-		t.Errorf("expected single newline, got %q", output)
-	}
-}
-
-func TestEchoSemicolonBlankLine(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-
-	cmdEcho(p, testEchoCmd("echo;", nil, nil))
-
-	output := out.String()
-	if output != "\n" {
-		t.Errorf("expected single newline, got %q", output)
-	}
-}
-
-func TestEchoEqualsBlankLine(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-
-	cmdEcho(p, testEchoCmd("echo=", nil, nil))
-
-	output := out.String()
-	if output != "\n" {
-		t.Errorf("expected single newline, got %q", output)
-	}
-}
-
-func TestEchoOpenParenBlankLine(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-
-	cmdEcho(p, testEchoCmd("echo(", nil, nil))
-
-	output := out.String()
-	if output != "\n" {
-		t.Errorf("expected single newline, got %q", output)
-	}
-}
-
-func TestEchoSlashBlankLine(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-
-	cmdEcho(p, testEchoCmd("echo/", nil, nil))
-
-	output := out.String()
-	if output != "\n" {
-		t.Errorf("expected single newline, got %q", output)
-	}
-}
-
-func TestEchoPlusBlankLine(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-
-	cmdEcho(p, testEchoCmd("echo+", nil, nil))
-
-	output := out.String()
-	if output != "\n" {
-		t.Errorf("expected single newline, got %q", output)
-	}
-}
-
-func TestEchoColonWithOn(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-	p.Echo = false
-
-	cmdEcho(p, testEchoCmd("echo:", []string{"ON"}, []string{"ON"}))
-
-	if p.Echo {
-		t.Error("echo:ON should NOT change Echo state to true")
-	}
-	output := strings.TrimSpace(out.String())
-	if output != "ON" {
-		t.Errorf("expected 'ON' to be displayed, got %q", output)
-	}
-}
-
-func TestEchoColonWithOff(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-	p.Echo = true
-
-	cmdEcho(p, testEchoCmd("echo:", []string{"OFF"}, []string{"OFF"}))
-
-	if !p.Echo {
-		t.Error("echo:OFF should NOT change Echo state to false")
-	}
-	output := strings.TrimSpace(out.String())
-	if output != "OFF" {
-		t.Errorf("expected 'OFF' to be displayed, got %q", output)
-	}
-}
-
-func TestEchoOpenParenWithOn(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-	p.Echo = false
-
-	cmdEcho(p, testEchoCmd("echo(", []string{"ON"}, []string{"ON"}))
-
-	if p.Echo {
-		t.Error("echo(ON should NOT change Echo state to true")
-	}
-	output := strings.TrimSpace(out.String())
-	if output != "ON" {
-		t.Errorf("expected 'ON' to be displayed, got %q", output)
-	}
-}
-
-func TestEchoOpenParenWithOff(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-	p.Echo = true
-
-	cmdEcho(p, testEchoCmd("echo(", []string{"OFF"}, []string{"OFF"}))
-
-	if !p.Echo {
-		t.Error("echo(OFF should NOT change Echo state to false")
-	}
-	output := strings.TrimSpace(out.String())
-	if output != "OFF" {
-		t.Errorf("expected 'OFF' to be displayed, got %q", output)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p, out, _ := newEchoTestProc(nil)
+			cmdEcho(p, testEchoCmd("echo", tc.rawArgs, tc.args))
+			output := strings.TrimSpace(out.String())
+			if output != tc.expected {
+				t.Errorf("expected %q, got %q", tc.expected, output)
+			}
+		})
 	}
 }
 
@@ -322,9 +203,8 @@ func TestEchoColonWithHelp(t *testing.T) {
 
 	cmdEcho(p, testEchoCmd("echo:", []string{"/?"}, []string{"/?"}))
 
-	output := strings.TrimSpace(out.String())
-	if output != "/?" {
-		t.Errorf("echo:/? should display '/?' literally, got %q", output)
+	if got := strings.TrimSpace(out.String()); got != "/?" {
+		t.Errorf("echo:/? should display '/?' literally, got %q", got)
 	}
 }
 
@@ -333,60 +213,8 @@ func TestEchoDotWithMessage(t *testing.T) {
 
 	cmdEcho(p, testEchoCmd("echo.", []string{" ", "hello"}, []string{"hello"}))
 
-	output := strings.TrimSpace(out.String())
-	if output != "hello" {
-		t.Errorf("expected 'hello', got %q", output)
-	}
-}
-
-func TestEchoLeadingDelimiterStripped(t *testing.T) {
-	tests := []struct {
-		name     string
-		rawArgs  []string
-		args     []string
-		expected string
-	}{
-		{
-			name:     "leading space",
-			rawArgs:  []string{" ", "test"},
-			args:     []string{"test"},
-			expected: "test",
-		},
-		{
-			name:     "leading tab",
-			rawArgs:  []string{"\t", "test"},
-			args:     []string{"test"},
-			expected: "test",
-		},
-		{
-			name:     "leading comma",
-			rawArgs:  []string{",", "test"},
-			args:     []string{"test"},
-			expected: "test",
-		},
-		{
-			name:     "leading semicolon",
-			rawArgs:  []string{";", "test"},
-			args:     []string{"test"},
-			expected: "test",
-		},
-		{
-			name:     "leading equals",
-			rawArgs:  []string{"=", "test"},
-			args:     []string{"test"},
-			expected: "test",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			p, out, _ := newEchoTestProc(nil)
-			cmdEcho(p, testEchoCmd("echo", tc.rawArgs, tc.args))
-			output := strings.TrimSpace(out.String())
-			if output != tc.expected {
-				t.Errorf("expected %q, got %q", tc.expected, output)
-			}
-		})
+	if got := strings.TrimSpace(out.String()); got != "hello" {
+		t.Errorf("expected 'hello', got %q", got)
 	}
 }
 
@@ -422,9 +250,8 @@ func TestEchoMultipleDelimiters(t *testing.T) {
 
 	cmdEcho(p, testEchoCmd("echo", []string{"  ", "test"}, []string{"test"}))
 
-	output := strings.TrimSpace(out.String())
-	if output != "test" {
-		t.Errorf("expected 'test', got %q", output)
+	if got := strings.TrimSpace(out.String()); got != "test" {
+		t.Errorf("expected 'test', got %q", got)
 	}
 }
 
@@ -433,109 +260,7 @@ func TestEchoPreservesSpacing(t *testing.T) {
 
 	cmdEcho(p, testEchoCmd("echo", []string{" ", "a", "  ", "b"}, []string{"a", "b"}))
 
-	output := strings.TrimSpace(out.String())
-	if output != "a  b" {
-		t.Errorf("expected 'a  b' (preserving spacing), got %q", output)
-	}
-}
-
-func TestEchoSemicolonWithOn(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-	p.Echo = false
-
-	cmdEcho(p, testEchoCmd("echo;", []string{"ON"}, []string{"ON"}))
-
-	if p.Echo {
-		t.Error("echo;ON should NOT change Echo state to true")
-	}
-	output := strings.TrimSpace(out.String())
-	if output != "ON" {
-		t.Errorf("expected 'ON' to be displayed, got %q", output)
-	}
-}
-
-func TestEchoEqualsWithOff(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-	p.Echo = true
-
-	cmdEcho(p, testEchoCmd("echo=", []string{"OFF"}, []string{"OFF"}))
-
-	if !p.Echo {
-		t.Error("echo=OFF should NOT change Echo state to false")
-	}
-	output := strings.TrimSpace(out.String())
-	if output != "OFF" {
-		t.Errorf("expected 'OFF' to be displayed, got %q", output)
-	}
-}
-
-func TestEchoSlashWithOn(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-	p.Echo = false
-
-	cmdEcho(p, testEchoCmd("echo/", []string{"ON"}, []string{"ON"}))
-
-	if p.Echo {
-		t.Error("echo/ON should NOT change Echo state to true")
-	}
-	output := strings.TrimSpace(out.String())
-	if output != "ON" {
-		t.Errorf("expected 'ON' to be displayed, got %q", output)
-	}
-}
-
-func TestEchoPlusWithOff(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-	p.Echo = true
-
-	cmdEcho(p, testEchoCmd("echo+", []string{"OFF"}, []string{"OFF"}))
-
-	if !p.Echo {
-		t.Error("echo+OFF should NOT change Echo state to false")
-	}
-	output := strings.TrimSpace(out.String())
-	if output != "OFF" {
-		t.Errorf("expected 'OFF' to be displayed, got %q", output)
-	}
-}
-
-func TestEchoDotWithOn(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-	p.Echo = false
-
-	cmdEcho(p, testEchoCmd("echo.", []string{"ON"}, []string{"ON"}))
-
-	if p.Echo {
-		t.Error("echo.ON should NOT change Echo state to true")
-	}
-	output := strings.TrimSpace(out.String())
-	if output != "ON" {
-		t.Errorf("expected 'ON' to be displayed, got %q", output)
-	}
-}
-
-func TestEchoDotWithOff(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-	p.Echo = true
-
-	cmdEcho(p, testEchoCmd("echo.", []string{"OFF"}, []string{"OFF"}))
-
-	if !p.Echo {
-		t.Error("echo.OFF should NOT change Echo state to false")
-	}
-	output := strings.TrimSpace(out.String())
-	if output != "OFF" {
-		t.Errorf("expected 'OFF' to be displayed, got %q", output)
-	}
-}
-
-func TestEchoOpenBracketBlankLine(t *testing.T) {
-	p, out, _ := newEchoTestProc(nil)
-
-	cmdEcho(p, testEchoCmd("echo[", nil, nil))
-
-	output := out.String()
-	if output != "\n" {
-		t.Errorf("expected single newline, got %q", output)
+	if got := strings.TrimSpace(out.String()); got != "a  b" {
+		t.Errorf("expected 'a  b' (preserving spacing), got %q", got)
 	}
 }
