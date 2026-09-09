@@ -326,7 +326,8 @@ func (p *Parser) collectArgs(cmd *SimpleCommand, endLine, endCol int) (int, int)
 					continue
 				}
 				if nextTok.Type == lexer.TokenRedirect {
-					p.consume()
+					consumed := p.consume()
+					cmd.RawArgs = append(cmd.RawArgs, val(consumed))
 					skipThisWS = true
 				}
 				break

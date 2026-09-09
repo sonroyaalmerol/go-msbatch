@@ -290,7 +290,7 @@ echo normal output
 	}
 
 	got := strings.TrimRight(stdout.String(), " \t\r\n")
-	want := "error message\nnormal output"
+	want := "error message \nnormal output"
 	if got != want {
 		t.Errorf("Expected %q, got: %q", want, got)
 	}
@@ -909,7 +909,7 @@ echo error2>> err.txt 2>&1
 	}
 
 	got := strings.TrimRight(string(content), " \t\r\n")
-	want := "error1\r\nerror2"
+	want := "error1 \r\nerror2"
 	if got != want {
 		t.Errorf("Expected %q, got: %q", want, got)
 	}
