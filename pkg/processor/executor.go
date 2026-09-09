@@ -162,7 +162,7 @@ func (p *Processor) jumpToLabel(labelName string) error {
 			}
 		}
 	}
-	return fmt.Errorf("the system cannot find the batch label specified - %s", labelName)
+	return fmt.Errorf("%s - %s", "The system cannot find the batch label specified", labelName)
 }
 
 func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
@@ -307,11 +307,6 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 			label := strings.TrimLeft(target, ":")
 			p.Trace.CallLabel(label, restArgs)
 			p.Trace.Indent()
-			if strings.ToLower(label) == "eof" {
-				p.PC = len(p.Nodes)
-				p.Trace.Dedent()
-				return nil
-			}
 			p.Logger.Debug("entering subroutine", "label", label, "args", restArgs)
 			oldPC := p.PC
 			oldArgs := p.Args
@@ -322,7 +317,9 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 				p.Args = oldArgs
 				p.OriginalArgs = oldOriginalArgs
 				p.Trace.Dedent()
-				return err
+				fmt.Fprintln(p.Stderr, err)
+				p.Failure()
+				return nil
 			}
 			p.CallDepth++
 			for p.PC < len(p.Nodes) && !p.Exited {
