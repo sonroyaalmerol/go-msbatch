@@ -181,7 +181,9 @@ func registerBuiltins(r *Registry) {
 	r.HandleFunc("rename", cmdRen)
 	r.HandleFunc("more", cmdMore)
 	r.HandleFunc("start", cmdStart)
-	// "exit" is handled directly by the processor's flow-control layer.
+	for c := byte('a'); c <= 'z'; c++ {
+		r.HandleFunc(string(c)+":", cmdDriveSwitch)
+	}
 
 	// ---- external commands with native cross-platform implementations ----
 	r.HandleFunc("hostname", tools.Hostname)

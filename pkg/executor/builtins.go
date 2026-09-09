@@ -105,10 +105,27 @@ func cmdSet(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	return p.Success()
 }
 
+// namesOtherDrive reports whether target is qualified with a drive letter other than the drive the shell is currently on.
+func namesOtherDrive(target string) bool {
+	if len(target) < 2 || target[1] != ':' {
+		return false
+	}
+	pwd, err := os.Getwd()
+	if err != nil {
+		return false
+	}
+	current := pathutil.ToWindowsPath(pwd)
+	if len(current) < 2 || current[1] != ':' {
+		return false
+	}
+	return !strings.EqualFold(target[:1], current[:1])
+}
+
 func cmdCd(p *processor.Processor, cmd *parser.SimpleCommand) error {
-	// Skip /d flag (change drive — irrelevant on Unix but must not be treated as path).
 	args := cmd.Args
+	switchDrive := false
 	if len(args) > 0 && strings.EqualFold(args[0], "/d") {
+		switchDrive = true
 		args = args[1:]
 	}
 	if len(args) == 0 {
@@ -117,9 +134,30 @@ func cmdCd(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		p.Success()
 		return nil
 	}
-	mappedPath := pathutil.MapPath(args[0])
+
+	target := args[0]
+	mappedPath := pathutil.MapPath(target)
+
+	if !switchDrive && namesOtherDrive(target) {
+		fi, err := os.Stat(mappedPath)
+		if err != nil || !fi.IsDir() {
+			p.Logger.Debug("drive directory change failed", "to", mappedPath)
+			fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
+			p.Failure()
+			return nil
+		}
+		abs, absErr := filepath.Abs(mappedPath)
+		if absErr != nil {
+			abs = mappedPath
+		}
+		pathutil.SetDriveDir(target[0], abs)
+		p.Logger.Debug("recorded drive directory without switching", "drive", target[:2], "dir", abs)
+		p.Success()
+		return nil
+	}
+
 	oldDir, _ := os.Getwd()
-	if err := os.Chdir(mappedPath); err != nil {
+	if err := pathutil.Chdir(mappedPath); err != nil {
 		p.Logger.Debug("directory change failed", "from", oldDir, "to", mappedPath, "error", err.Error())
 		fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
 		p.Failure()
@@ -127,6 +165,20 @@ func cmdCd(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		p.Logger.Debug("directory changed", "from", oldDir, "to", mappedPath)
 		p.Success()
 	}
+	return nil
+}
+
+// cmdDriveSwitch implements the bare "X:" command, which switches to drive X and lands in that drive's remembered current directory.
+func cmdDriveSwitch(p *processor.Processor, cmd *parser.SimpleCommand) error {
+	target := pathutil.MapPath(cmd.Name)
+	if err := pathutil.Chdir(target); err != nil {
+		p.Logger.Debug("drive switch failed", "drive", cmd.Name, "to", target, "error", err.Error())
+		fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
+		p.Failure()
+		return nil
+	}
+	p.Logger.Debug("drive switched", "drive", cmd.Name, "to", target)
+	p.Success()
 	return nil
 }
 
@@ -254,7 +306,7 @@ func cmdPushd(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	if len(cmd.Args) > 0 {
 		mappedPath := pathutil.MapPath(cmd.Args[0])
 		oldDir, _ := os.Getwd()
-		if err := os.Chdir(mappedPath); err != nil {
+		if err := pathutil.Chdir(mappedPath); err != nil {
 			p.Logger.Debug("directory change failed (pushd)", "from", oldDir, "to", mappedPath, "error", err.Error())
 			fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
 			p.DirStack = p.DirStack[:len(p.DirStack)-1]
@@ -271,7 +323,7 @@ func cmdPopd(p *processor.Processor, _ *parser.SimpleCommand) error {
 		dir := p.DirStack[len(p.DirStack)-1]
 		p.DirStack = p.DirStack[:len(p.DirStack)-1]
 		oldDir, _ := os.Getwd()
-		if err := os.Chdir(dir); err != nil {
+		if err := pathutil.Chdir(dir); err != nil {
 			p.Logger.Debug("directory change failed (popd)", "from", oldDir, "to", dir, "error", err.Error())
 			fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
 			p.Failure()

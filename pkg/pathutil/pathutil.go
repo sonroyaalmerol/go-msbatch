@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 func StripQuotes(s string) string {
@@ -163,7 +164,23 @@ func MapPath(path string) string {
 
 	if len(p) >= 2 && p[1] == ':' && ((p[0] >= 'a' && p[0] <= 'z') || (p[0] >= 'A' && p[0] <= 'Z')) {
 		mount := DriveMount(p[0])
-		p = mount + p[2:]
+		rest := p[2:]
+		switch {
+		case rest == "":
+			if cur := DriveDir(p[0]); cur != "" {
+				p = cur
+			} else {
+				p = mount
+			}
+		case rest[0] != '/':
+			base := DriveDir(p[0])
+			if base == "" {
+				base = mount
+			}
+			p = base + "/" + rest
+		default:
+			p = mount + rest
+		}
 	}
 
 	return ResolveCaseInsensitive(filepath.Clean(p))
@@ -253,7 +270,47 @@ func ToWindowsPath(unixPath string) string {
 	return UnixToWinePath(unixPath)
 }
 
-// IsRooted reports whether p is absolute in either Windows or Unix form.
+var (
+	driveDirsMu sync.RWMutex
+	driveDirs   = map[byte]string{}
+)
+
+func upperDrive(letter byte) byte {
+	if letter >= 'a' && letter <= 'z' {
+		return letter - ('a' - 'A')
+	}
+	return letter
+}
+
+// SetDriveDir records dir as the current directory of a drive. cmd.exe keeps one current directory per drive, which is what "X:rel" and a bare "X:" resolve against.
+func SetDriveDir(letter byte, dir string) {
+	driveDirsMu.Lock()
+	driveDirs[upperDrive(letter)] = dir
+	driveDirsMu.Unlock()
+}
+
+// DriveDir returns the recorded current directory of a drive, or "" if the drive has not been visited yet.
+func DriveDir(letter byte) string {
+	driveDirsMu.RLock()
+	defer driveDirsMu.RUnlock()
+	return driveDirs[upperDrive(letter)]
+}
+
+// Chdir changes the process directory and records it against its drive. Every directory change must go through here, otherwise the per-drive state silently drifts from the real cwd.
+func Chdir(dir string) error {
+	if err := os.Chdir(dir); err != nil {
+		return err
+	}
+	abs, err := os.Getwd()
+	if err != nil {
+		abs = dir
+	}
+	if w := ToWindowsPath(abs); len(w) >= 2 && w[1] == ':' {
+		SetDriveDir(w[0], abs)
+	}
+	return nil
+}
+
 func IsRooted(p string) bool {
 	return strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) ||
 		(len(p) >= 2 && p[1] == ':')
