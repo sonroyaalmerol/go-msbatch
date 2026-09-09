@@ -61,7 +61,7 @@ func cmdVerify(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		if state != "ON" {
 			state = "OFF"
 		}
-		fmt.Fprintf(p.Stdout, "VERIFY is %s\n", state)
+		fmt.Fprintf(p.Stdout, "VERIFY is %s.\n", strings.ToLower(state))
 		p.Success()
 		return nil
 	}

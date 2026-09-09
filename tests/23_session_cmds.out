@@ -1,7 +1,7 @@
 break ok
 PATH=C:\TestPath23
-VERIFY is OFF
-VERIFY is ON
+VERIFY is off.
+VERIFY is on.
 .test23=TestFile23
 TestFile23=notepad.exe
 date ok
