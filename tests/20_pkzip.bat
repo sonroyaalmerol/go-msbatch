@@ -9,7 +9,7 @@ if exist test.zip (
 ) else (
     echo PKZIP failed to create archive
 )
-rm testfile.txt
+del /q testfile.txt
 
 :: Test 2: Extract zip file
 echo Test 2: Extract zip file
@@ -20,7 +20,7 @@ if exist testfile.txt (
 ) else (
     echo PKUNZIP failed to extract
 )
-rm testfile.txt test.zip
+del /q testfile.txt test.zip
 
 :: Test 3: Create with recurse flag
 echo Test 3: Create with recurse
@@ -32,13 +32,14 @@ if exist recurse.zip (
 ) else (
     echo PKZIP -r failed
 )
-rm -rf subdir recurse.zip
+rd /s /q subdir
+del /q recurse.zip
 
 :: Test 4: Extract to output directory
 echo Test 4: Extract to output directory
 echo output test > output_test.txt
 pkzip output.zip output_test.txt
-rm output_test.txt
+del /q output_test.txt
 mkdir output_dir
 pkunzip output.zip output_dir\
 if exist output_dir\output_test.txt (
@@ -46,6 +47,7 @@ if exist output_dir\output_test.txt (
 ) else (
     echo PKUNZIP to output_dir failed
 )
-rm -rf output_dir output.zip
+rd /s /q output_dir
+del /q output.zip
 
 echo Done with PKZIP tests

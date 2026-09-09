@@ -8,4 +8,4 @@ echo Line3 >> File.txt
 for /f "usebackq eol=: tokens=1" %%a in ("File.txt") do (
 	echo "%%~a"
 )
-rm File.txt
+del /q File.txt

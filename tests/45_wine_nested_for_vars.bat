@@ -8,7 +8,7 @@ for %%f in (*.txt) do (
 		echo In child cycle: "%%~x"
 	)
 )
-rm *.txt
+del /q *.txt
 echo.
 echo Case 4b: FOR /R with variable path
 mkdir Folder1
@@ -18,4 +18,4 @@ for %%f in ("Folder1") do (
 		echo "%%~x"
 	)
 )
-rm -rf Folder1
+rd /s /q Folder1

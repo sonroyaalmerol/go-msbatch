@@ -18,4 +18,4 @@ for /F "tokens=1,2 delims=:" %%k in (test_config.txt) do (
     echo KEY=%%k
     echo VALUE=%%l
 )
-rm test_config.txt
+del /q test_config.txt

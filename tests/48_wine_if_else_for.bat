@@ -10,7 +10,7 @@ if #==# (
 ) else (
 	echo ELSE condition.
 )
-rm *.txt
+del /q *.txt
 echo.
 echo Case 7b: Simple IF/ELSE without FOR
 if #==# (

@@ -18,7 +18,7 @@ echo partA,partB > tempfile.txt
 for /F "usebackq tokens=1,2 delims=," %%i in ("tempfile.txt") do (
     echo DoubleQuoteFile: %%i %%j
 )
-rm tempfile.txt
+del /q tempfile.txt
 
 :: Test 4: WITHOUT usebackq - single quotes execute command
 echo Test 4: without usebackq, single quote executes command

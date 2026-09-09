@@ -7,4 +7,4 @@ echo Testing FOR file globbing:
 echo foo > file1.test
 echo bar > file2.test
 for %%f in (*.test) do echo Found %%f
-rm *.test
+del /q *.test

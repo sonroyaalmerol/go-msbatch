@@ -6,7 +6,7 @@ if #==# (
 )> "Test.bug"
 echo Contents of Test.bug:
 type Test.bug
-rm Test.bug
+del /q Test.bug
 echo.
 echo Case 6b: Per-command redirection (normal)
 if #==# (
@@ -15,4 +15,4 @@ if #==# (
 )
 echo Contents of Test.bug:
 type Test.bug
-rm Test.bug
+del /q Test.bug

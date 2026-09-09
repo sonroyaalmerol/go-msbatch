@@ -40,7 +40,7 @@ for /F %%i in ('echo cmd result') do echo Single quoted command: %%i
 :: Backticks = regular characters (part of filename)
 echo file content > test`file.txt
 for /F %%i in (test`file.txt) do echo Backtick filename: %%i
-rm test`file.txt
+del /q test`file.txt
 
 echo.
 echo === FOR /F with usebackq ===
@@ -48,7 +48,7 @@ echo === FOR /F with usebackq ===
 :: Double quotes = filename (CHANGED with usebackq!)
 echo file data > tempfile_usebackq.txt
 for /F "usebackq" %%i in ("tempfile_usebackq.txt") do echo usebackq double: %%i
-rm tempfile_usebackq.txt
+del /q tempfile_usebackq.txt
 
 :: Single quotes = literal string (CHANGED with usebackq!)
 for /F "usebackq" %%i in ('literal string') do echo usebackq single: %%i
@@ -62,12 +62,12 @@ echo === Filenames with quotes ===
 :: Single quote in filename - valid on Linux
 echo content > file'with'quotes.txt
 type file'with'quotes.txt
-rm file'with'quotes.txt
+del /q file'with'quotes.txt
 
 :: Backtick in filename - valid on Linux
 echo content > file`with`backtick.txt
 type file`with`backtick.txt
-rm file`with`backtick.txt
+del /q file`with`backtick.txt
 
 echo.
 echo Done with quotation tests
