@@ -2,6 +2,7 @@ package executor
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -65,8 +66,12 @@ func cmdSet(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	if strings.HasPrefix(strings.ToLower(arg), "/a") {
 		_, err := p.EvalArithmetic(arg[2:])
 		if err != nil {
-			fmt.Fprintf(p.Stderr, "Invalid number.\n")
-			p.FailureWithCode(1073741819)
+			if errors.Is(err, processor.ErrDivideByZero) {
+				fmt.Fprintln(p.Stderr, "Divide by zero error.")
+			} else {
+				fmt.Fprintln(p.Stderr, "Invalid number.")
+			}
+			p.FailureWithCode(1073750993)
 		} else {
 			p.Success()
 		}

@@ -1,10 +1,14 @@
 package processor
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"unicode"
 )
+
+// ErrDivideByZero indicates an arithmetic division or modulo by zero.
+var ErrDivideByZero = errors.New("processor: divide by zero")
 
 // EvalArithmetic evaluates a CMD-style arithmetic expression.
 func (p *Processor) EvalArithmetic(expr string) (int, error) {
@@ -129,16 +133,14 @@ func (ap *arithParser) parseAssignment() (int, error) {
 			newVal = curr * val
 		case "/=":
 			if val == 0 {
-				newVal = 0
-			} else {
-				newVal = curr / val
+				return 0, ErrDivideByZero
 			}
+			newVal = curr / val
 		case "%=":
 			if val == 0 {
-				newVal = 0
-			} else {
-				newVal = curr % val
+				return 0, ErrDivideByZero
 			}
+			newVal = curr % val
 		case "&=":
 			newVal = curr & val
 		case "^=":
@@ -335,17 +337,15 @@ func (ap *arithParser) parseMulDiv() (int, error) {
 		case "*":
 			val *= right
 		case "/":
-			if right != 0 {
-				val /= right
-			} else {
-				val = 0
+			if right == 0 {
+				return 0, ErrDivideByZero
 			}
+			val /= right
 		case "%":
-			if right != 0 {
-				val %= right
-			} else {
-				val = 0
+			if right == 0 {
+				return 0, ErrDivideByZero
 			}
+			val %= right
 		}
 	}
 	return val, nil

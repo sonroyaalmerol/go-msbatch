@@ -1,8 +1,8 @@
 @echo off
-rem Division by zero — returns 0 per go-msbatch spec
+rem Division by zero leaves the destination unchanged
 set /a r=10/0
 echo [%r%]
-rem Modulo by zero — returns 0
+rem Modulo by zero also leaves it unchanged
 set /a r=9%%0
 echo [%r%]
 rem Unary minus via subtraction
