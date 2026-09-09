@@ -219,7 +219,7 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 
 	// Command not found and no Wine fallback available
 	if err == ErrCommandNotFound {
-		fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command, operable program or batch file.\n", cmd.Name)
+		fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command,\noperable program or batch file.\n", cmd.Name)
 		p.FailureWithCode(9009)
 		return nil
 	}
@@ -267,7 +267,7 @@ func runExeViaWine(p *processor.Processor, cmd *parser.SimpleCommand, exeName st
 	prefixArgs = append(prefixArgs, exeArgs...)
 	wineErr := runOSCommand(p, prefix[0], prefixArgs, cmd.Name)
 	if wineErr == ErrCommandNotFound {
-		fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command, operable program or batch file.\n", cmd.Name)
+		fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command,\noperable program or batch file.\n", cmd.Name)
 		p.FailureWithCode(9009)
 		return nil
 	}
@@ -525,7 +525,7 @@ func runBatchFile(p *processor.Processor, batPath string, args []string, called 
 
 	content, err := os.ReadFile(batPath)
 	if err != nil {
-		fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command, operable program or batch file.\n", batPath)
+		fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command,\noperable program or batch file.\n", batPath)
 		p.FailureWithCode(9009)
 		return nil
 	}
