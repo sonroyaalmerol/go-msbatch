@@ -71,9 +71,9 @@ func TestEchoRedirectAndCopy(t *testing.T) {
 			wantFilesExist:     []string{"procfiles/test.sum"},
 		},
 		{
-			name:               "endlocal_keeps_working_directory",
+			name:               "endlocal_restores_working_directory",
 			setupDirs:          []string{"subdir", "procfiles"},
-			script:             "@echo off\nsetlocal\ncd subdir\necho line1 >> test.sum\nendlocal\ncopy *.sum ..\\procfiles\\\n",
+			script:             "@echo off\nsetlocal\ncd subdir\necho line1 >> test.sum\nendlocal\ncopy subdir\\*.sum procfiles\\\n",
 			wantStdoutContains: []string{"1 file(s) copied"},
 			wantFilesExist:     []string{"procfiles/test.sum"},
 		},
@@ -85,7 +85,7 @@ func TestEchoRedirectAndCopy(t *testing.T) {
 			wantFilesExist:     []string{"test.sum"},
 		},
 		{
-			name:      "endlocal_restores_vars_not_directory",
+			name:      "endlocal_restores_vars_and_directory",
 			setupDirs: []string{"subdir"},
 			script: "@echo off\n" +
 				"set OUTER_VAR=outer_value\n" +
@@ -97,8 +97,8 @@ func TestEchoRedirectAndCopy(t *testing.T) {
 				"endlocal\n" +
 				"echo After ENDLOCAL: OUTER_VAR=%OUTER_VAR% INNER_VAR=%INNER_VAR% >> result.txt\n",
 			wantFiles: map[string]string{
-				"subdir/test.txt":   "inner_value inner_only \r\n",
-				"subdir/result.txt": "After ENDLOCAL: OUTER_VAR=outer_value INNER_VAR= \r\n",
+				"subdir/test.txt": "inner_value inner_only \r\n",
+				"result.txt":      "After ENDLOCAL: OUTER_VAR=outer_value INNER_VAR= \r\n",
 			},
 		},
 	}

@@ -1,6 +1,7 @@
 package pathutil
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -296,7 +297,19 @@ func DriveDir(letter byte) string {
 	return driveDirs[upperDrive(letter)]
 }
 
-// Chdir changes the process directory and records it against its drive. Every directory change must go through here, otherwise the per-drive state silently drifts from the real cwd.
+func SnapshotDriveDirs() map[byte]string {
+	driveDirsMu.RLock()
+	defer driveDirsMu.RUnlock()
+	return maps.Clone(driveDirs)
+}
+
+func RestoreDriveDirs(dirs map[byte]string) {
+	driveDirsMu.Lock()
+	driveDirs = maps.Clone(dirs)
+	driveDirsMu.Unlock()
+}
+
+// Chdir changes the process directory and records its drive state. pi:keep
 func Chdir(dir string) error {
 	if err := os.Chdir(dir); err != nil {
 		return err

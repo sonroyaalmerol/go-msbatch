@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 )
 
 // Environment stores CMD variables and controls expansion behaviour.
@@ -133,33 +135,40 @@ func (e *Environment) StackDepth() int {
 	return len(e.stack)
 }
 
-// envFrame holds the state saved by SETLOCAL.
-// Note: Windows CMD does NOT restore the working directory on ENDLOCAL,
-// only environment variables and delayed expansion state.
 type envFrame struct {
 	vars             map[string]string
 	delayedExpansion bool
+	cwd              string
+	driveDirs        map[byte]string
 }
 
-// Push saves the current environment state onto a stack.
+// Push saves the environment and drive-local directories for SETLOCAL. pi:keep
 func (e *Environment) Push() {
+	cwd, _ := os.Getwd()
+	frame := envFrame{
+		delayedExpansion: e.DelayedExpansion(),
+		cwd:              cwd,
+		driveDirs:        pathutil.SnapshotDriveDirs(),
+	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	snapshot := make(map[string]string, len(e.vars))
-	maps.Copy(snapshot, e.vars)
-	e.stack = append(e.stack, envFrame{vars: snapshot, delayedExpansion: e.delayedExpansion})
+	frame.vars = maps.Clone(e.vars)
+	e.stack = append(e.stack, frame)
+	e.mu.Unlock()
 }
 
-// Pop restores the environment state from the stack.
-// Note: This does NOT restore the working directory, matching Windows CMD behavior.
+// Pop restores the state saved by SETLOCAL, including the current directory. pi:keep
 func (e *Environment) Pop() {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if len(e.stack) == 0 {
+		e.mu.Unlock()
 		return
 	}
 	frame := e.stack[len(e.stack)-1]
 	e.stack = e.stack[:len(e.stack)-1]
 	e.vars = frame.vars
 	e.delayedExpansion = frame.delayedExpansion
+	e.mu.Unlock()
+
+	pathutil.RestoreDriveDirs(frame.driveDirs)
+	_ = pathutil.Chdir(frame.cwd)
 }
