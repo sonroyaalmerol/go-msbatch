@@ -952,9 +952,11 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 				expanded := p.ProcessLine(rawItem)
 				lines = []string{expanded}
 			} else {
-				path := pathutil.MapPath(p.ProcessLine(rawItem))
-				content, err := os.ReadFile(path)
-				if err == nil {
+				expandedPath := p.ProcessLine(rawItem)
+				content, err := os.ReadFile(pathutil.MapPath(expandedPath))
+				if err != nil {
+					fmt.Fprintf(p.Stderr, "The system cannot find the file %s.\n", expandedPath)
+				} else {
 					lines = strings.Split(string(content), "\n")
 				}
 			}
