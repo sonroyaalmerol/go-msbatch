@@ -308,9 +308,12 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 			p.Logger.Debug("entering subroutine", "label", label, "args", restArgs)
 			oldPC := p.PC
 			oldArgs := p.Args
+			oldOriginalArgs := p.OriginalArgs
 			p.Args = append([]string{target}, restArgs...)
+			p.OriginalArgs = append([]string(nil), restArgs...)
 			if err := p.jumpToLabel(label); err != nil {
 				p.Args = oldArgs
+				p.OriginalArgs = oldOriginalArgs
 				p.Trace.Dedent()
 				return err
 			}
@@ -325,6 +328,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 						p.Trace.ReturnFromLabel()
 						p.PC = oldPC
 						p.Args = oldArgs
+						p.OriginalArgs = oldOriginalArgs
 						return nil
 					}
 					return err
@@ -335,6 +339,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 			p.Trace.ReturnFromLabel()
 			p.PC = oldPC
 			p.Args = oldArgs
+			p.OriginalArgs = oldOriginalArgs
 			return nil
 		}
 		var reconstructedRaw []string
