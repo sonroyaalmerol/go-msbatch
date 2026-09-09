@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -273,6 +274,13 @@ func runExeViaWine(p *processor.Processor, cmd *parser.SimpleCommand, exeName st
 	return wineErr
 }
 
+func rawWriter(raw, fallback io.Writer) io.Writer {
+	if raw != nil {
+		return raw
+	}
+	return fallback
+}
+
 // lookPathCaseInsensitive searches for a command on the PATH case-insensitively.
 func lookPathCaseInsensitive(name string) (string, bool) {
 	lowerName := strings.ToLower(name)
@@ -414,8 +422,10 @@ func runOSCommand(p *processor.Processor, name string, args []string, displayNam
 	cwd, _ := os.Getwd()
 	p.Logger.Debug("running OS command", "name", name, "args", args, "cwd", cwd)
 	c := exec.Command(name, args...)
-	c.Stdout = p.Stdout
-	c.Stderr = p.Stderr
+	// External processes write their own bytes: Wine/Windows binaries already
+	// emit CRLF, so bypass the LF-to-CRLF translation applied to built-in output.
+	c.Stdout = rawWriter(p.RawStdout, p.Stdout)
+	c.Stderr = rawWriter(p.RawStderr, p.Stderr)
 	c.Stdin = p.Stdin
 
 	// Build a deduplicated environment: start with the OS environment as the
@@ -521,6 +531,8 @@ func runBatchFile(p *processor.Processor, batPath string, args []string) error {
 	child.Trace = p.Trace
 	child.Stdout = p.Stdout
 	child.Stderr = p.Stderr
+	child.RawStdout = p.RawStdout
+	child.RawStderr = p.RawStderr
 	child.Stdin = p.Stdin
 	child.Console = p.Stdout
 	child.Echo = p.Echo

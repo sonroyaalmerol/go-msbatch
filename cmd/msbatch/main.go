@@ -22,6 +22,10 @@ func newProcessor(env *processor.Environment, args []string, exec processor.Comm
 	if debugMode != processor.DebugOff {
 		proc.Debugger.SetMode(debugMode)
 	}
+	proc.RawStdout, proc.RawStderr = proc.Stdout, proc.Stderr
+	proc.Stdout = processor.NewCRLFWriter(proc.RawStdout)
+	proc.Stderr = processor.NewCRLFWriter(proc.RawStderr)
+	proc.Console = proc.Stdout
 	return proc
 }
 

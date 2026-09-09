@@ -82,7 +82,7 @@ func Gawk(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		return nil
 	}
 
-	cfg, err := parseGawkArgs(cmd.Args)
+	cfg, err := parseGawkArgs(gawkWords(cmd))
 	if err != nil {
 		fmt.Fprintf(p.Stderr, "gawk: %v\n", err)
 		p.Failure()
@@ -109,7 +109,7 @@ func Gawk(p *processor.Processor, cmd *parser.SimpleCommand) error {
 
 	var src string
 	if cfg.programSrc != "" {
-		src = unescapeQuotes(strings.Trim(cfg.programSrc, "\"'"))
+		src = cfg.programSrc
 	}
 
 	for _, pf := range cfg.programFiles {
@@ -150,6 +150,9 @@ func Gawk(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	if cfg.fieldSep != "" {
 		vars = append(vars, "FS", cfg.fieldSep)
 	}
+	// Windows gawk.exe runs in text mode: CR is stripped from CRLF input before
+	// records are split. goawk has no text mode, so emulate it with a regex RS.
+	vars = append(vars, "RS", `(\r\n|\n)`)
 	for _, va := range cfg.varAssigns {
 		parts := strings.SplitN(va, "=", 2)
 		if len(parts) == 2 {
@@ -228,6 +231,18 @@ func Gawk(p *processor.Processor, cmd *parser.SimpleCommand) error {
 
 	p.SetErrorLevel(exitCode)
 	return nil
+}
+
+func gawkWords(cmd *parser.SimpleCommand) []string {
+	if len(cmd.RawArgs) == 0 {
+		return cmd.Args
+	}
+	words := cmd.Words()
+	args := make([]string, 0, len(words))
+	for _, w := range words {
+		args = append(args, parser.UnquoteArg(w))
+	}
+	return args
 }
 
 func parseGawkArgs(args []string) (*gawkConfig, error) {
@@ -760,10 +775,4 @@ func gawkStrtonum(s string) float64 {
 		return 0
 	}
 	return val
-}
-
-func unescapeQuotes(s string) string {
-	result := strings.ReplaceAll(s, `\"`, `"`)
-	result = strings.ReplaceAll(result, `""`, `"`)
-	return strings.TrimSpace(result)
 }

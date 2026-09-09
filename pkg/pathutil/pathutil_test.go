@@ -488,7 +488,7 @@ func TestUnixToWinePath(t *testing.T) {
 		{
 			name:     "drive_c root",
 			input:    "drive_c",
-			expected: "C:",
+			expected: "C:\\",
 		},
 	}
 

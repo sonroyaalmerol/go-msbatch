@@ -211,6 +211,14 @@ func UnixToWinePath(unixPath string) string {
 		return "Z:\\"
 	}
 
+	toDrive := func(drive byte, mount, p string) string {
+		rel := strings.TrimPrefix(p, mount)
+		if rel == "" {
+			return string(drive) + ":\\"
+		}
+		return string(drive) + ":\\" + strings.TrimPrefix(strings.ReplaceAll(rel, "/", "\\"), "\\")
+	}
+
 	if !strings.HasPrefix(unixPath, "/") {
 		for drive := 'C'; drive <= 'Z'; drive++ {
 			mount := DriveMount(byte(drive))
@@ -218,8 +226,7 @@ func UnixToWinePath(unixPath string) string {
 				continue
 			}
 			if strings.HasPrefix(unixPath, mount+"/") || unixPath == mount {
-				rel := strings.TrimPrefix(unixPath, mount)
-				return string(drive) + ":" + strings.ReplaceAll(rel, "/", "\\")
+				return toDrive(byte(drive), mount, unixPath)
 			}
 		}
 		return unixPath
@@ -231,13 +238,19 @@ func UnixToWinePath(unixPath string) string {
 			continue
 		}
 		if strings.HasPrefix(unixPath, mount+"/") || unixPath == mount {
-			rel := strings.TrimPrefix(unixPath, mount)
-			return string(drive) + ":" + strings.ReplaceAll(rel, "/", "\\")
+			return toDrive(byte(drive), mount, unixPath)
 		}
 	}
 
 	rel := strings.TrimPrefix(unixPath, "/")
 	return "Z:\\" + strings.ReplaceAll(rel, "/", "\\")
+}
+
+func ToWindowsPath(unixPath string) string {
+	if runtime.GOOS == "windows" {
+		return unixPath
+	}
+	return UnixToWinePath(unixPath)
 }
 
 func HasWildcard(pattern string) bool {

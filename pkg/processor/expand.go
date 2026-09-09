@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 )
 
 // Phase0ReadLine applies phase-0 line-reading rules:
@@ -23,15 +25,25 @@ func Phase0ReadLine(src string) string {
 //
 // Supported dynamic variables:
 //
-//	TIME  — current local time as "H:MM:SS.CC" (space-padded hour, no leading
+//	TIME  - current local time as "H:MM:SS.CC" (space-padded hour, no leading
 //	        zero), matching the Windows CMD %TIME% format exactly.
+//	DATE  - current local date as "DDD MM/DD/YYYY" (Windows en-US default).
+//	CD    - current directory as a Windows drive path.
 func dynamicVar(name string) (string, bool) {
 	switch strings.ToUpper(name) {
 	case "TIME":
 		now := time.Now()
 		h, m, s := now.Hour(), now.Minute(), now.Second()
-		cs := now.Nanosecond() / 1e7 // centiseconds (0–99)
+		cs := now.Nanosecond() / 1e7
 		return fmt.Sprintf("%2d:%02d:%02d.%02d", h, m, s, cs), true
+	case "DATE":
+		return time.Now().Format("Mon 01/02/2006"), true
+	case "CD":
+		pwd, err := os.Getwd()
+		if err != nil {
+			return "", false
+		}
+		return pathutil.ToWindowsPath(pwd), true
 	}
 	return "", false
 }

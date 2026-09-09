@@ -113,7 +113,7 @@ func cmdCd(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 	if len(args) == 0 {
 		pwd, _ := os.Getwd()
-		fmt.Fprintln(p.Stdout, pwd)
+		fmt.Fprintln(p.Stdout, pathutil.ToWindowsPath(pwd))
 		p.Success()
 		return nil
 	}
@@ -362,7 +362,11 @@ func cmdDel(p *processor.Processor, cmd *parser.SimpleCommand) error {
 					os.Remove(m)
 				}
 			} else if os.Remove(mapped) != nil {
-				fmt.Fprintf(p.Stderr, "Could Not Find %s\n", mapped)
+				abs, absErr := filepath.Abs(mapped)
+				if absErr != nil {
+					abs = mapped
+				}
+				fmt.Fprintf(p.Stderr, "Could Not Find %s\n", pathutil.ToWindowsPath(abs))
 				p.Failure()
 				return nil
 			} else {
@@ -371,6 +375,18 @@ func cmdDel(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 	}
 	return p.Success()
+}
+
+func reportMissingSrc(p *processor.Processor, src struct {
+	path     string
+	pattern  string
+	notFound bool
+	fromGlob bool
+}) {
+	if tools.HasWildcards(src.pattern) {
+		fmt.Fprintf(p.Stdout, "%s \n", src.pattern)
+	}
+	fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
 }
 
 func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
@@ -535,14 +551,14 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		var validSrcs []srcEntry
 		for _, src := range srcs {
 			if src.notFound {
-				fmt.Fprintf(p.Stdout, "File not found - %s\n", filepath.Base(src.path))
+				reportMissingSrc(p, src)
 				continue
 			}
 			validSrcs = append(validSrcs, src)
 		}
 		if len(validSrcs) == 0 {
 			fmt.Fprintf(p.Stdout, "        0 file(s) copied.\n")
-			return p.Success()
+			return p.Failure()
 		}
 		if !confirmOverwrite(dst) {
 			return p.Success()
@@ -585,7 +601,7 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		hasFailure := false
 		for _, src := range srcs {
 			if src.notFound {
-				fmt.Fprintf(p.Stdout, "File not found - %s\n", filepath.Base(src.path))
+				reportMissingSrc(p, src)
 				continue
 			}
 			target := buildTarget(src.path, src.pattern, true)
@@ -610,9 +626,9 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 	case !hasPlus:
 		if srcs[0].notFound {
-			fmt.Fprintf(p.Stdout, "File not found - %s\n", filepath.Base(srcs[0].path))
+			reportMissingSrc(p, srcs[0])
 			fmt.Fprintf(p.Stdout, "        0 file(s) copied.\n")
-			return p.Success()
+			return p.Failure()
 		}
 		if dstIsDirIntent && dstErr != nil {
 			fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
@@ -632,26 +648,29 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			p.Failure()
 			return nil
 		}
-		fmt.Fprintf(p.Stdout, "%s\n", filepath.Base(srcs[0].path))
+		if tools.HasWildcards(srcs[0].pattern) {
+			fmt.Fprintf(p.Stdout, "%s\n", filepath.Base(srcs[0].path))
+		}
 		fmt.Fprintf(p.Stdout, "        1 file(s) copied.\n")
 	default:
 		var validSrcs []srcEntry
 		for _, src := range srcs {
 			if src.notFound {
-				fmt.Fprintf(p.Stdout, "File not found - %s\n", filepath.Base(src.path))
+				reportMissingSrc(p, src)
 				continue
 			}
 			validSrcs = append(validSrcs, src)
 		}
 		if len(validSrcs) == 0 {
 			fmt.Fprintf(p.Stdout, "        0 file(s) copied.\n")
-			return p.Success()
+			return p.Failure()
 		}
 		if !confirmOverwrite(dstTarget) {
 			return p.Success()
 		}
 		var buf bytes.Buffer
 		for _, src := range validSrcs {
+			fmt.Fprintf(p.Stdout, "%s\n", filepath.Base(src.path))
 			data, err := os.ReadFile(src.path)
 			if err != nil {
 				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")

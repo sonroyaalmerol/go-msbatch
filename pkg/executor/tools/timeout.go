@@ -88,31 +88,31 @@ func Timeout(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		return p.Success()
 	}
 
-	// If we have a terminal fd (either /dev/tty or stdin), enable keypress detection.
-	// This mirrors CMD's behavior of reading from the console (conin$) for keypresses.
-	if fd == -1 || !term.IsTerminal(fd) {
-		fmt.Fprintf(p.Stdout, "Waiting for %d seconds ...\n", seconds)
-		time.Sleep(time.Duration(seconds) * time.Second)
-		return p.Success()
+	fmt.Fprintf(p.Stdout, "Waiting for %d seconds, press a key to continue ...", seconds)
+
+	var keyChan <-chan struct{}
+	if fd != -1 && term.IsTerminal(fd) {
+		ch := make(chan struct{})
+		keyChan = ch
+		go func() {
+			oldState, _ := term.MakeRaw(fd)
+			io.ReadFull(input, make([]byte, 1))
+			if oldState != nil {
+				term.Restore(fd, oldState)
+			}
+			close(ch)
+		}()
 	}
 
-	fmt.Fprintf(p.Stdout, "Waiting for %d seconds, press a key to continue ...\n", seconds)
-
-	keyChan := make(chan struct{})
-	go func() {
-		io.ReadFull(input, make([]byte, 1)) //nolint:errcheck
-		close(keyChan)
-	}()
-
-	oldState, _ := term.MakeRaw(fd)
-	if oldState != nil {
-		defer term.Restore(fd, oldState) //nolint:errcheck
+	for remaining := seconds - 1; remaining >= 0; remaining-- {
+		select {
+		case <-keyChan:
+			fmt.Fprintln(p.Stdout)
+			return p.Success()
+		case <-time.After(time.Second):
+			fmt.Fprintf(p.Stdout, "%d", remaining)
+		}
 	}
-
-	select {
-	case <-keyChan:
-	case <-time.After(time.Duration(seconds) * time.Second):
-	}
-
+	fmt.Fprintln(p.Stdout)
 	return p.Success()
 }

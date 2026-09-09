@@ -11,6 +11,7 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/lexer"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/logging"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 )
 
 type Processor struct {
@@ -22,6 +23,8 @@ type Processor struct {
 	Stdout       io.Writer
 	Stdin        io.Reader
 	Stderr       io.Writer
+	RawStdout    io.Writer
+	RawStderr    io.Writer
 	Console      io.Writer
 	Logger       *slog.Logger
 	Trace        *logging.TraceLogger
@@ -34,6 +37,29 @@ type Processor struct {
 	Executor     CommandExecutor
 	Debugger     *Debugger
 }
+
+// NewCRLF wraps w so bare LF line endings become CRLF, matching CMD console
+// and redirected-text output. Existing CRLF pairs pass through unchanged.
+type NewCRLF struct {
+	w         io.Writer
+	lastWasCR bool
+}
+
+func (c *NewCRLF) Write(b []byte) (int, error) {
+	var out []byte
+	for _, ch := range b {
+		if ch == '\n' && !c.lastWasCR {
+			out = append(out, '\r', '\n')
+		} else {
+			out = append(out, ch)
+		}
+		c.lastWasCR = ch == '\r'
+	}
+	_, err := c.w.Write(out)
+	return len(b), err
+}
+
+func NewCRLFWriter(w io.Writer) *NewCRLF { return &NewCRLF{w: w} }
 
 func New(env *Environment, args []string, exec CommandExecutor) *Processor {
 	var originalArgs []string
@@ -207,10 +233,9 @@ func (p *Processor) ExpandPrompt(prompt string) string {
 	now := time.Now()
 	pwd, _ := os.Getwd()
 
-	// Drive letter: on Windows take from cwd; on Unix always empty.
 	drive := ""
-	if len(pwd) >= 2 && pwd[1] == ':' {
-		drive = string(pwd[0])
+	if winPwd := pathutil.ToWindowsPath(pwd); len(winPwd) >= 2 && winPwd[1] == ':' {
+		drive = winPwd[:1]
 	}
 
 	errorlevel, _ := p.Env.Get("ERRORLEVEL")

@@ -116,6 +116,19 @@ func (c *SimpleCommand) Words() []string {
 	return words
 }
 
+func UnquoteArg(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) && s[i+1] == '"' {
+			b.WriteByte('"')
+			i++
+		} else if s[i] != '"' {
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
+}
+
 // Block is a parenthesised sequence of commands: ( cmd1 \n cmd2 ).
 type Block struct {
 	Line      int // 0-based source line of the opening '('
