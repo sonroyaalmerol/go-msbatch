@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -119,733 +118,160 @@ func normalize(s string) string {
 	return strings.Join(result, "\n")
 }
 
-func TestGawkCaseInsensitivePath(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping gawk test on Windows")
-	}
-
-	if _, err := os.Stat("/usr/bin/gawk"); os.IsNotExist(err) {
-		t.Skip("gawk not available, skipping test")
-	}
-
-	tmpDir := t.TempDir()
-
-	dataDir := filepath.Join(tmpDir, "DataFolder")
-	if err := os.Mkdir(dataDir, 0755); err != nil {
-		t.Fatalf("Failed to create data directory: %v", err)
-	}
-
-	dataFile := filepath.Join(dataDir, "InputFile.txt")
-	content := "line1\nline2\nline3\n"
-	if err := os.WriteFile(dataFile, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to create input file: %v", err)
-	}
-
-	batContent := `@echo off
-gawk "{print}" ` + filepath.Join(tmpDir, "datafolder", "inputfile.txt") + `
-`
-
-	env := processor.NewEnvironment(true)
-	var stdout bytes.Buffer
-	proc := processor.New(env, []string{"test.bat"}, executor.New())
-	proc.Stdout = &stdout
-	proc.Echo = false
-
-	src := processor.Phase0ReadLine(batContent)
-	nodes := processor.ParseExpanded(src)
-
-	err := proc.Execute(nodes)
-	if err != nil {
-		t.Errorf("Execute failed: %v", err)
-	}
-
-	got := stdout.String()
-	want := "line1\nline2\nline3\n"
-
-	if got != want {
-		t.Errorf("Gawk output mismatch\nGOT:\n%s\nWANT:\n%s", got, want)
-	}
+// toolCase covers built-in tool interactions: gawk program quoting and
+// redirects, case-insensitive wildcards for del/copy/if-exist, and argument
+// quoting for external programs. %TESTDIR% in a script is replaced with the
+// case's private directory, reproducing the old absolute-path cases.
+type toolCase struct {
+	name              string
+	needsGawk         bool
+	setupDirs         []string
+	setupFiles        map[string]string
+	script            string
+	wantStdout        string
+	wantFiles         map[string]string
+	wantFilesContains map[string]string
+	wantFileMinLen    map[string]int
+	wantRemaining     []string
 }
 
-func TestGawkCaseInsensitiveRelativePath(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping gawk test on Windows")
-	}
-
-	if _, err := os.Stat("/usr/bin/gawk"); os.IsNotExist(err) {
-		t.Skip("gawk not available, skipping test")
-	}
-
-	tmpDir := t.TempDir()
-	oldDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldDir)
-
-	dataDir := filepath.Join(tmpDir, "MyData")
-	if err := os.Mkdir(dataDir, 0755); err != nil {
-		t.Fatalf("Failed to create data directory: %v", err)
-	}
-
-	dataFile := filepath.Join(dataDir, "Records.txt")
-	content := "apple\nbanana\ncherry\n"
-	if err := os.WriteFile(dataFile, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to create input file: %v", err)
-	}
-
-	batContent := `@echo off
-gawk "{print}" ./mydata/records.txt
-`
-
-	env := processor.NewEnvironment(true)
-	var stdout bytes.Buffer
-	proc := processor.New(env, []string{"test.bat"}, executor.New())
-	proc.Stdout = &stdout
-	proc.Echo = false
-
-	src := processor.Phase0ReadLine(batContent)
-	nodes := processor.ParseExpanded(src)
-
-	err = proc.Execute(nodes)
-	if err != nil {
-		t.Errorf("Execute failed: %v", err)
-	}
-
-	got := stdout.String()
-	want := "apple\nbanana\ncherry\n"
-
-	if got != want {
-		t.Errorf("Gawk output mismatch\nGOT:\n%s\nWANT:\n%s", got, want)
-	}
-}
-
-func TestGawkAfterCdCaseInsensitive(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping gawk test on Windows")
-	}
-
-	if _, err := os.Stat("/usr/bin/gawk"); os.IsNotExist(err) {
-		t.Skip("gawk not available, skipping test")
-	}
-
-	tmpDir := t.TempDir()
-	oldDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldDir)
-
-	outerDir := filepath.Join(tmpDir, "OuterDir")
-	dataDir := filepath.Join(outerDir, "DataFolder")
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatalf("Failed to create data directory: %v", err)
-	}
-
-	dataFile := filepath.Join(dataDir, "InputFile.txt")
-	content := "line1\nline2\nline3\n"
-	if err := os.WriteFile(dataFile, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to create input file: %v", err)
-	}
-
-	batContent := `@echo off
-cd ` + outerDir + `
-gawk "{print}" datafolder/inputfile.txt
-`
-
-	env := processor.NewEnvironment(true)
-	var stdout bytes.Buffer
-	proc := processor.New(env, []string{"test.bat"}, executor.New())
-	proc.Stdout = &stdout
-	proc.Echo = false
-
-	src := processor.Phase0ReadLine(batContent)
-	nodes := processor.ParseExpanded(src)
-
-	err = proc.Execute(nodes)
-	if err != nil {
-		t.Errorf("Execute failed: %v", err)
-	}
-
-	got := stdout.String()
-	want := "line1\nline2\nline3\n"
-
-	if got != want {
-		t.Errorf("Gawk output after cd mismatch\nGOT:\n%s\nWANT:\n%s", got, want)
-	}
-}
-
-func TestGawkAfterPushdCaseInsensitive(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping gawk test on Windows")
-	}
-
-	if _, err := os.Stat("/usr/bin/gawk"); os.IsNotExist(err) {
-		t.Skip("gawk not available, skipping test")
-	}
-
-	tmpDir := t.TempDir()
-
-	outerDir := filepath.Join(tmpDir, "ProjectRoot")
-	dataDir := filepath.Join(outerDir, "SourceData")
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatalf("Failed to create data directory: %v", err)
-	}
-
-	dataFile := filepath.Join(dataDir, "Records.txt")
-	content := "alpha\nbeta\ngamma\n"
-	if err := os.WriteFile(dataFile, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to create input file: %v", err)
-	}
-
-	batContent := `@echo off
-pushd ` + outerDir + `
-gawk "{print}" sourcedata/records.txt
-popd
-`
-
-	env := processor.NewEnvironment(true)
-	var stdout bytes.Buffer
-	proc := processor.New(env, []string{"test.bat"}, executor.New())
-	proc.Stdout = &stdout
-	proc.Echo = false
-
-	src := processor.Phase0ReadLine(batContent)
-	nodes := processor.ParseExpanded(src)
-
-	err := proc.Execute(nodes)
-	if err != nil {
-		t.Errorf("Execute failed: %v", err)
-	}
-
-	got := stdout.String()
-	want := "alpha\nbeta\ngamma\n"
-
-	if got != want {
-		t.Errorf("Gawk output after pushd mismatch\nGOT:\n%s\nWANT:\n%s", got, want)
-	}
-}
-
-func TestGawkNestedCdCaseInsensitive(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping gawk test on Windows")
-	}
-
-	if _, err := os.Stat("/usr/bin/gawk"); os.IsNotExist(err) {
-		t.Skip("gawk not available, skipping test")
-	}
-
-	tmpDir := t.TempDir()
-	oldDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldDir)
-
-	level1 := filepath.Join(tmpDir, "LevelOne")
-	level2 := filepath.Join(level1, "LevelTwo")
-	dataDir := filepath.Join(level2, "FinalData")
-
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatalf("Failed to create nested directories: %v", err)
-	}
-
-	dataFile := filepath.Join(dataDir, "File.txt")
-	content := "nested content\n"
-	if err := os.WriteFile(dataFile, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to create input file: %v", err)
-	}
-
-	batContent := `@echo off
-cd ` + level1 + `
-cd leveltwo
-gawk "{print}" finaldata/file.txt
-`
-
-	env := processor.NewEnvironment(true)
-	var stdout bytes.Buffer
-	proc := processor.New(env, []string{"test.bat"}, executor.New())
-	proc.Stdout = &stdout
-	proc.Echo = false
-
-	src := processor.Phase0ReadLine(batContent)
-	nodes := processor.ParseExpanded(src)
-
-	err = proc.Execute(nodes)
-	if err != nil {
-		t.Errorf("Execute failed: %v", err)
-	}
-
-	got := stdout.String()
-	want := "nested content\n"
-
-	if got != want {
-		t.Errorf("Gawk output after nested cd mismatch\nGOT:\n%s\nWANT:\n%s", got, want)
-	}
-}
-
-func TestDelCaseInsensitiveWildcard(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping case-insensitive wildcard test on Windows")
-	}
-
-	tmpDir := t.TempDir()
-	oldDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldDir)
-
-	files := []string{
-		"File1.txt",
-		"File2.TXT",
-		"File3.log",
-		"Other.txt",
-	}
-
-	for _, f := range files {
-		if err := os.WriteFile(f, []byte("content"), 0644); err != nil {
-			t.Fatalf("Failed to create test file: %v", err)
-		}
-	}
-
-	batContent := `@echo off
-del *.txt
-`
-
-	env := processor.NewEnvironment(true)
-	var stdout bytes.Buffer
-	proc := processor.New(env, []string{"test.bat"}, executor.New())
-	proc.Stdout = &stdout
-	proc.Stderr = &stdout
-	proc.Echo = false
-
-	src := processor.Phase0ReadLine(batContent)
-	nodes := processor.ParseExpanded(src)
-
-	err = proc.Execute(nodes)
-	if err != nil {
-		t.Errorf("Execute failed: %v", err)
-	}
-
-	remaining, _ := filepath.Glob("*")
-	expectedRemaining := []string{"File3.log"}
-	if len(remaining) != len(expectedRemaining) {
-		t.Errorf("Expected %d remaining files, got %d: %v", len(expectedRemaining), len(remaining), remaining)
-	}
-}
-
-func TestCopyCaseInsensitiveWildcard(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping case-insensitive wildcard test on Windows")
-	}
-
-	tmpDir := t.TempDir()
-	oldDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldDir)
-
-	srcDir := "SourceDir"
-	dstDir := "DestDir"
-	if err := os.Mkdir(srcDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(dstDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	files := []string{
-		filepath.Join(srcDir, "File1.txt"),
-		filepath.Join(srcDir, "File2.TXT"),
-	}
-
-	for _, f := range files {
-		if err := os.WriteFile(f, []byte("content"), 0644); err != nil {
-			t.Fatalf("Failed to create test file: %v", err)
-		}
-	}
-
-	batContent := `@echo off
-copy sourcedir\*.txt destdir\
-`
-
-	env := processor.NewEnvironment(true)
-	var stdout bytes.Buffer
-	proc := processor.New(env, []string{"test.bat"}, executor.New())
-	proc.Stdout = &stdout
-	proc.Stderr = &stdout
-	proc.Echo = false
-
-	src := processor.Phase0ReadLine(batContent)
-	nodes := processor.ParseExpanded(src)
-
-	err = proc.Execute(nodes)
-	if err != nil {
-		t.Errorf("Execute failed: %v", err)
-	}
-
-	copied, _ := filepath.Glob(filepath.Join(dstDir, "*"))
-	if len(copied) != 2 {
-		t.Errorf("Expected 2 copied files, got %d: %v", len(copied), copied)
-	}
-}
-
-func TestIfExistWildcardCaseInsensitive(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping case-insensitive test on Windows")
-	}
-
-	tmpDir := t.TempDir()
-	oldDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldDir)
-
-	dataDir := "DataFolder"
-	if err := os.Mkdir(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	testFiles := []string{
-		filepath.Join(dataDir, "gpsfile1.lst"),
-		filepath.Join(dataDir, "gpsfile2.lst"),
-	}
-	for _, f := range testFiles {
-		if err := os.WriteFile(f, []byte("content"), 0644); err != nil {
-			t.Fatalf("Failed to create test file: %v", err)
-		}
-	}
-
-	batContent := `@echo off
-if exist DATAFOLDER\gps*.lst (
-    echo found
-) else (
-    echo not found
-)
-`
-
-	env := processor.NewEnvironment(true)
-	var stdout bytes.Buffer
-	proc := processor.New(env, []string{"test.bat"}, executor.New())
-	proc.Stdout = &stdout
-	proc.Stderr = &stdout
-	proc.Echo = false
-
-	src := processor.Phase0ReadLine(batContent)
-	nodes := processor.ParseExpanded(src)
-
-	err = proc.Execute(nodes)
-	if err != nil {
-		t.Errorf("Execute failed: %v", err)
-	}
-
-	got := strings.TrimSpace(stdout.String())
-	want := "found"
-	if got != want {
-		t.Errorf("IF EXIST with wildcard and wrong-case dir failed\nGOT: %q\nWANT: %q", got, want)
-	}
-}
-
-func TestIfExistWildcardNoMatch(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping case-insensitive test on Windows")
-	}
-
-	tmpDir := t.TempDir()
-	oldDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldDir)
-
-	dataDir := "DataFolder"
-	if err := os.Mkdir(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	testFiles := []string{
-		filepath.Join(dataDir, "other1.txt"),
-		filepath.Join(dataDir, "other2.txt"),
-	}
-	for _, f := range testFiles {
-		if err := os.WriteFile(f, []byte("content"), 0644); err != nil {
-			t.Fatalf("Failed to create test file: %v", err)
-		}
-	}
-
-	batContent := `@echo off
-if exist DATAFOLDER\gps*.lst (
-    echo found
-) else (
-    echo not found
-)
-`
-
-	env := processor.NewEnvironment(true)
-	var stdout bytes.Buffer
-	proc := processor.New(env, []string{"test.bat"}, executor.New())
-	proc.Stdout = &stdout
-	proc.Stderr = &stdout
-	proc.Echo = false
-
-	src := processor.Phase0ReadLine(batContent)
-	nodes := processor.ParseExpanded(src)
-
-	err = proc.Execute(nodes)
-	if err != nil {
-		t.Errorf("Execute failed: %v", err)
-	}
-
-	got := strings.TrimSpace(stdout.String())
-	want := "not found"
-	if got != want {
-		t.Errorf("IF EXIST with wildcard no-match failed\nGOT: %q\nWANT: %q", got, want)
-	}
-}
-
-func TestGawkRedirectOutWithQuotedProgram(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping gawk test on Windows")
-	}
-
-	if _, err := os.Stat("/usr/bin/gawk"); os.IsNotExist(err) {
-		t.Skip("gawk not available, skipping test")
-	}
-
-	tmpDir := t.TempDir()
-	oldDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldDir)
-
-	batContent := `@echo off
-gawk "BEGIN {print systime()}" > timetemp.txt
-`
-
-	env := processor.NewEnvironment(true)
-	var stdout bytes.Buffer
-	proc := processor.New(env, []string{"test.bat"}, executor.New())
-	proc.Stdout = &stdout
-	proc.Stderr = &stdout
-	proc.Echo = false
-
-	src := processor.Phase0ReadLine(batContent)
-	nodes := processor.ParseExpanded(src)
-
-	err = proc.Execute(nodes)
-	if err != nil {
-		t.Errorf("Execute failed: %v", err)
-	}
-
-	content, err := os.ReadFile("timetemp.txt")
-	if err != nil {
-		t.Fatalf("timetemp.txt was not created: %v", err)
-	}
-
-	timestamp := strings.TrimSpace(string(content))
-	if len(timestamp) < 10 {
-		t.Errorf("Expected timestamp in timetemp.txt, got: %q", timestamp)
-	}
-}
-
-func TestEchoRedirectAfterQuotedArg(t *testing.T) {
-	tmpDir := t.TempDir()
-	oldDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldDir)
-
-	batContent := `@echo off
-echo "hello world" > output.txt
-`
-
-	env := processor.NewEnvironment(true)
-	var stdout bytes.Buffer
-	proc := processor.New(env, []string{"test.bat"}, executor.New())
-	proc.Stdout = &stdout
-	proc.Stderr = &stdout
-	proc.Echo = false
-
-	src := processor.Phase0ReadLine(batContent)
-	nodes := processor.ParseExpanded(src)
-
-	err = proc.Execute(nodes)
-	if err != nil {
-		t.Errorf("Execute failed: %v", err)
-	}
-
-	content, err := os.ReadFile("output.txt")
-	if err != nil {
-		t.Fatalf("output.txt was not created: %v", err)
-	}
-
-	got := strings.TrimSpace(string(content))
-	want := `"hello world"`
-	if got != want {
-		t.Errorf("Expected %q in output.txt, got: %q", want, got)
-	}
-}
-
-func TestGawkNoRedirect(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping gawk test on Windows")
-	}
-
-	if _, err := os.Stat("/usr/bin/gawk"); os.IsNotExist(err) {
-		t.Skip("gawk not available, skipping test")
-	}
-
-	batContent := `@echo off
-gawk "BEGIN {print 12345}"
-`
-
-	env := processor.NewEnvironment(true)
-	var stdout bytes.Buffer
-	proc := processor.New(env, []string{"test.bat"}, executor.New())
-	proc.Stdout = &stdout
-	proc.Stderr = &stdout
-	proc.Echo = false
-
-	src := processor.Phase0ReadLine(batContent)
-	nodes := processor.ParseExpanded(src)
-
-	err := proc.Execute(nodes)
-	if err != nil {
-		t.Errorf("Execute failed: %v", err)
-	}
-
-	got := strings.TrimSpace(stdout.String())
-	want := "12345"
-	if got != want {
-		t.Errorf("Expected %q, got: %q", want, got)
-	}
-}
-
-func TestGawkRedirectAppendWithQuotedProgram(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping gawk test on Windows")
-	}
-
-	if _, err := os.Stat("/usr/bin/gawk"); os.IsNotExist(err) {
-		t.Skip("gawk not available, skipping test")
-	}
-
-	tmpDir := t.TempDir()
-	oldDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldDir)
-
-	if err := os.WriteFile("timetemp.txt", []byte("1234567890\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	batContent := `@echo off
-gawk "{print systime()-$1 \" seconds to process GRV1_TA\" }  " timetemp.txt >> time.txt
-`
-
-	env := processor.NewEnvironment(true)
-	var stdout bytes.Buffer
-	proc := processor.New(env, []string{"test.bat"}, executor.New())
-	proc.Stdout = &stdout
-	proc.Stderr = &stdout
-	proc.Echo = false
-
-	src := processor.Phase0ReadLine(batContent)
-	nodes := processor.ParseExpanded(src)
-
-	err = proc.Execute(nodes)
-	if err != nil {
-		t.Errorf("Execute failed: %v", err)
-	}
-
-	content, err := os.ReadFile("time.txt")
-	if err != nil {
-		t.Fatalf("time.txt was not created: %v", err)
-	}
-
-	output := strings.TrimSpace(string(content))
-	if !strings.Contains(output, "seconds to process GRV1_TA") {
-		t.Errorf("Expected output containing 'seconds to process GRV1_TA', got: %q", output)
-	}
-}
-
-func TestEmbeddedQuotesPreserved(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping test on Windows")
-	}
-
-	tmpDir := t.TempDir()
-	oldDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldDir)
-
-	// Create a script that prints its arguments to verify they're passed correctly
-	script := filepath.Join(tmpDir, "print_args.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/bash\nfor arg in \"$@\"; do echo \"ARG: [$arg]\"; done\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	// Test that embedded quotes are preserved when passed as arguments
-	// This simulates: myprogram Instrument="King Radar"
-	// The program should receive: Instrument="King Radar" (with quotes)
-	batContent := `@echo off
-bash ` + script + ` Instrument="King Radar"
-`
-
-	env := processor.NewEnvironment(true)
-	var stdout bytes.Buffer
-	proc := processor.New(env, []string{"test.bat"}, executor.New())
-	proc.Stdout = &stdout
-	proc.Stderr = &stdout
-	proc.Echo = false
-
-	src := processor.Phase0ReadLine(batContent)
-	nodes := processor.ParseExpanded(src)
-
-	err = proc.Execute(nodes)
-	if err != nil {
-		t.Errorf("Execute failed: %v", err)
-	}
-
-	got := strings.TrimSpace(stdout.String())
-	want := `ARG: [Instrument="King Radar"]`
-	if got != want {
-		t.Errorf("Expected %q, got: %q", want, got)
+func TestToolInteractions(t *testing.T) {
+	_, gawkErr := os.Stat("/usr/bin/gawk")
+
+	cases := []toolCase{
+		{
+			name:       "gawk_absolute_path_wrong_case",
+			needsGawk:  true,
+			setupFiles: map[string]string{"DataFolder/InputFile.txt": "line1\nline2\nline3\n"},
+			script:     "@echo off\ngawk \"{print}\" %TESTDIR%/datafolder/inputfile.txt\n",
+			wantStdout: "line1\nline2\nline3\n",
+		},
+		{
+			name:       "gawk_relative_path_wrong_case",
+			needsGawk:  true,
+			setupFiles: map[string]string{"MyData/Records.txt": "apple\nbanana\ncherry\n"},
+			script:     "@echo off\ngawk \"{print}\" ./mydata/records.txt\n",
+			wantStdout: "apple\nbanana\ncherry\n",
+		},
+		{
+			name:       "gawk_after_cd_wrong_case",
+			needsGawk:  true,
+			setupFiles: map[string]string{"OuterDir/DataFolder/InputFile.txt": "line1\nline2\nline3\n"},
+			script:     "@echo off\ncd %TESTDIR%/OuterDir\ngawk \"{print}\" datafolder/inputfile.txt\n",
+			wantStdout: "line1\nline2\nline3\n",
+		},
+		{
+			name:       "gawk_after_pushd_wrong_case",
+			needsGawk:  true,
+			setupFiles: map[string]string{"ProjectRoot/SourceData/Records.txt": "alpha\nbeta\ngamma\n"},
+			script:     "@echo off\npushd %TESTDIR%/ProjectRoot\ngawk \"{print}\" sourcedata/records.txt\npopd\n",
+			wantStdout: "alpha\nbeta\ngamma\n",
+		},
+		{
+			name:       "gawk_after_nested_cd_wrong_case",
+			needsGawk:  true,
+			setupFiles: map[string]string{"LevelOne/LevelTwo/FinalData/File.txt": "nested content\n"},
+			script:     "@echo off\ncd %TESTDIR%/LevelOne\ncd leveltwo\ngawk \"{print}\" finaldata/file.txt\n",
+			wantStdout: "nested content\n",
+		},
+		{
+			name: "del_wildcard_case_insensitive",
+			setupFiles: map[string]string{
+				"File1.txt": "content",
+				"File2.TXT": "content",
+				"File3.log": "content",
+				"Other.txt": "content",
+			},
+			script:        "@echo off\ndel *.txt\n",
+			wantRemaining: []string{"File3.log"},
+		},
+		{
+			name:      "copy_wildcard_case_insensitive",
+			setupDirs: []string{"DestDir"},
+			setupFiles: map[string]string{
+				"SourceDir/File1.txt": "content",
+				"SourceDir/File2.TXT": "content",
+			},
+			script:     "@echo off\ncopy sourcedir\\*.txt destdir\\\n",
+			wantStdout: "File1.txt\nFile2.TXT\n        2 file(s) copied.\n",
+			wantFiles: map[string]string{
+				"DestDir/File1.txt": "content",
+				"DestDir/File2.TXT": "content",
+			},
+		},
+		{
+			name:       "if_exist_wildcard_case_insensitive",
+			setupFiles: map[string]string{"DataFolder/gpsfile1.lst": "content", "DataFolder/gpsfile2.lst": "content"},
+			script:     "@echo off\nif exist DATAFOLDER\\gps*.lst (\n    echo found\n) else (\n    echo not found\n)\n",
+			wantStdout: "found\n",
+		},
+		{
+			name:       "if_exist_wildcard_no_match",
+			setupFiles: map[string]string{"DataFolder/other1.txt": "content", "DataFolder/other2.txt": "content"},
+			script:     "@echo off\nif exist DATAFOLDER\\gps*.lst (\n    echo found\n) else (\n    echo not found\n)\n",
+			wantStdout: "not found\n",
+		},
+		{
+			name:           "gawk_quoted_program_to_file",
+			needsGawk:      true,
+			script:         "@echo off\ngawk \"BEGIN {print systime()}\" > timetemp.txt\n",
+			wantFileMinLen: map[string]int{"timetemp.txt": 10},
+		},
+		{
+			name:      "echo_quoted_arg_to_file",
+			script:    "@echo off\necho \"hello world\" > output.txt\n",
+			wantFiles: map[string]string{"output.txt": "\"hello world\" \r\n"},
+		},
+		{
+			name:       "gawk_quoted_program_to_console",
+			needsGawk:  true,
+			script:     "@echo off\ngawk \"BEGIN {print 12345}\"\n",
+			wantStdout: "12345\n",
+		},
+		{
+			name:              "gawk_append_with_nested_quotes",
+			needsGawk:         true,
+			setupFiles:        map[string]string{"timetemp.txt": "1234567890\n"},
+			script:            "@echo off\ngawk \"{print systime()-$1 \\\" seconds to process GRV1_TA\\\" }  \" timetemp.txt >> time.txt\n",
+			wantFilesContains: map[string]string{"time.txt": "seconds to process GRV1_TA"},
+		},
+		{
+			name:       "embedded_quotes_preserved_for_external",
+			setupFiles: map[string]string{"print_args.sh": "#!/bin/bash\nfor arg in \"$@\"; do echo \"ARG: [$arg]\"; done\n"},
+			script:     "@echo off\nbash print_args.sh Instrument=\"King Radar\"\n",
+			wantStdout: "ARG: [Instrument=\"King Radar\"]\n",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.needsGawk && gawkErr != nil {
+				t.Skip("system gawk not available")
+			}
+			dir := isolate(t)
+			for _, d := range tc.setupDirs {
+				mkdir(t, d)
+			}
+			for name, content := range tc.setupFiles {
+				writeFile(t, name, content)
+			}
+
+			got := runScript(t, strings.ReplaceAll(tc.script, "%TESTDIR%", dir))
+			if got.stdout != tc.wantStdout {
+				t.Errorf("stdout = %q, want %q", got.stdout, tc.wantStdout)
+			}
+			for name, want := range tc.wantFiles {
+				assertFile(t, name, want)
+			}
+			for name, want := range tc.wantFilesContains {
+				assertFileContains(t, name, want)
+			}
+			for name, minLen := range tc.wantFileMinLen {
+				assertFileMinLen(t, name, minLen)
+			}
+			if tc.wantRemaining != nil {
+				assertDirEntries(t, ".", tc.wantRemaining)
+			}
+		})
 	}
 }

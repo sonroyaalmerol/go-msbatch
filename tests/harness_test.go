@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/executor"
@@ -93,5 +95,43 @@ func assertFileExists(t *testing.T, name string) {
 	t.Helper()
 	if _, err := os.Stat(name); err != nil {
 		t.Errorf("%s: %v", name, err)
+	}
+}
+
+func assertFileContains(t *testing.T, name, want string) {
+	t.Helper()
+	got, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	if !strings.Contains(string(got), want) {
+		t.Errorf("%s content %q does not contain %q", name, got, want)
+	}
+}
+
+func assertFileMinLen(t *testing.T, name string, minLen int) {
+	t.Helper()
+	got, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	if len(strings.TrimSpace(string(got))) < minLen {
+		t.Errorf("%s content %q shorter than %d bytes", name, got, minLen)
+	}
+}
+
+func assertDirEntries(t *testing.T, dir string, want []string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Name())
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("%s entries = %v, want %v", dir, got, want)
 	}
 }
