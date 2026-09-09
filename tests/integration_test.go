@@ -17,6 +17,14 @@ func TestIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(files) == 0 {
+		t.Fatal("no .bat fixtures found")
+	}
+
+	fixtures, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for _, batFile := range files {
 		t.Run(batFile, func(t *testing.T) {
@@ -25,21 +33,41 @@ func TestIntegration(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			expectedFile := strings.TrimSuffix(batFile, ".bat") + ".out"
+			stem := strings.TrimSuffix(batFile, ".bat")
+			expectedFile := stem + ".out"
 			expected, err := os.ReadFile(expectedFile)
+			containsMode := false
 			if err != nil {
-				t.Logf("Warning: No .out file for %s, skipping comparison", batFile)
+				expectedFile = stem + ".contains"
+				expected, err = os.ReadFile(expectedFile)
+				containsMode = true
+			}
+			if err != nil {
+				t.Errorf("no golden %s (.out or .contains) for fixture %s", expectedFile, batFile)
 				return
 			}
+
+			workDir := t.TempDir()
+			for _, e := range fixtures {
+				data, err := os.ReadFile(e.Name())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(workDir, e.Name()), data, 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Chdir(workDir)
 
 			if batFile == "29_exe_mapping_path.bat" {
 				t.Setenv("MSBATCH_DRIVE_C", "/usr/")
 			}
 			env := processor.NewEnvironment(true)
-			var stdout bytes.Buffer
+			var stdout, stderr bytes.Buffer
 			proc := processor.New(env, []string{batFile, "A", "B", "C"}, executor.New())
 			proc.Stdout = &stdout
-			proc.Echo = false // Match @echo off behavior for comparison
+			proc.Stderr = &stderr
+			proc.Echo = false
 
 			src := string(content)
 			src = processor.Phase0ReadLine(src)
@@ -51,10 +79,26 @@ func TestIntegration(t *testing.T) {
 			}
 
 			got := normalize(stdout.String())
+
+			if containsMode {
+				for marker := range strings.SplitSeq(normalize(string(expected)), "\n") {
+					if marker != "" && !strings.Contains(got, marker) {
+						t.Errorf("output for %s missing marker %q", batFile, marker)
+					}
+				}
+				return
+			}
+
 			want := normalize(string(expected))
 
 			if got != want {
 				t.Errorf("Output mismatch for %s\nGOT:\n%s\nWANT:\n%s", batFile, got, want)
+			}
+
+			if errExpected, err := os.ReadFile(filepath.Join("..", expectedFile[:len(expectedFile)-4]+".err")); err == nil {
+				if gotErr := normalize(stderr.String()); gotErr != normalize(string(errExpected)) {
+					t.Errorf("Stderr mismatch for %s\nGOT:\n%s\nWANT:\n%s", batFile, gotErr, normalize(string(errExpected)))
+				}
 			}
 		})
 	}

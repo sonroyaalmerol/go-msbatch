@@ -1,0 +1,10 @@
+Test 1: Create zip file
+PKZIP created archive successfully
+Test 2: Extract zip file
+PKUNZIP extracted successfully
+test content
+Test 3: Create with recurse
+PKZIP -r created archive successfully
+Test 4: Extract to output directory
+PKUNZIP to output_dir succeeded
+Done with PKZIP tests
