@@ -28,6 +28,12 @@ func isolate(t *testing.T) string {
 func runScript(t *testing.T, script string, args ...string) result {
 	t.Helper()
 
+	callerDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(callerDir) }()
+
 	var stdout, stderr bytes.Buffer
 	env := processor.NewEnvironment(true)
 	proc := processor.New(env, append([]string{"test.bat"}, args...), executor.New())
@@ -80,5 +86,12 @@ func assertNoFile(t *testing.T, name string) {
 	t.Helper()
 	if _, err := os.Stat(name); err == nil {
 		t.Errorf("%s exists, want it absent", name)
+	}
+}
+
+func assertFileExists(t *testing.T, name string) {
+	t.Helper()
+	if _, err := os.Stat(name); err != nil {
+		t.Errorf("%s: %v", name, err)
 	}
 }
