@@ -36,6 +36,86 @@ type Processor struct {
 	DirStack     []string
 	Executor     CommandExecutor
 	Debugger     *Debugger
+	FDs          map[int]*FDHandle
+}
+
+// FDHandle is one open redirection target. Writers keep both the CRLF-translated and the raw stream, because duplicating into 1 or 2 must preserve the raw stream that external processes write to.
+type FDHandle struct {
+	W    io.Writer
+	Raw  io.Writer
+	R    io.Reader
+	File *os.File
+}
+
+// FDStreams returns the streams currently bound to fd, reporting false when the handle was never opened.
+func (p *Processor) FDStreams(fd int) (w, raw io.Writer, r io.Reader, ok bool) {
+	switch fd {
+	case 0:
+		return nil, nil, p.Stdin, p.Stdin != nil
+	case 1:
+		return p.Stdout, p.RawStdout, nil, p.Stdout != nil
+	case 2:
+		return p.Stderr, p.RawStderr, nil, p.Stderr != nil
+	}
+	if h, exists := p.FDs[fd]; exists && h != nil {
+		return h.W, h.Raw, h.R, true
+	}
+	return nil, nil, nil, false
+}
+
+// ExtraFiles maps handles 3..N onto exec.Cmd.ExtraFiles, whose entry i is the child's descriptor 3+i. Gaps are filled with os.DevNull so the numbering cannot shift. The returned func closes those placeholders.
+func (p *Processor) ExtraFiles() ([]*os.File, func()) {
+	noop := func() {}
+
+	handleFile := func(fd int) *os.File {
+		h, ok := p.FDs[fd]
+		if !ok || h == nil {
+			return nil
+		}
+		if h.File != nil {
+			return h.File
+		}
+		if f, isFile := h.Raw.(*os.File); isFile {
+			return f
+		}
+		if f, isFile := h.W.(*os.File); isFile {
+			return f
+		}
+		return nil
+	}
+
+	maxFD := 0
+	for fd := range p.FDs {
+		if fd > maxFD && handleFile(fd) != nil {
+			maxFD = fd
+		}
+	}
+	if maxFD < 3 {
+		return nil, noop
+	}
+
+	var placeholders []*os.File
+	cleanup := func() {
+		for _, f := range placeholders {
+			f.Close()
+		}
+	}
+
+	files := make([]*os.File, 0, maxFD-2)
+	for fd := 3; fd <= maxFD; fd++ {
+		if f := handleFile(fd); f != nil {
+			files = append(files, f)
+			continue
+		}
+		devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+		if err != nil {
+			cleanup()
+			return nil, noop
+		}
+		placeholders = append(placeholders, devNull)
+		files = append(files, devNull)
+	}
+	return files, cleanup
 }
 
 // NewCRLF wraps w so bare LF line endings become CRLF, matching CMD console

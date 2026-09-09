@@ -128,8 +128,11 @@ func (p *Processor) executeBlock(node *parser.Block) error {
 				FD:     r.FD,
 			})
 		}
-		rm.apply(p, expandedRedirects)
+		applied := rm.apply(p, expandedRedirects)
 		defer rm.close(p)
+		if !applied {
+			return nil
+		}
 	}
 
 	for _, bn := range node.Body {
@@ -270,8 +273,11 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 	defer rm.close(p)
 
 	if !expanded.RedirectsApplied {
-		rm.apply(p, expanded.Redirects)
+		applied := rm.apply(p, expanded.Redirects)
 		expanded.RedirectsApplied = true
+		if !applied {
+			return nil
+		}
 	}
 
 	name := strings.ToLower(expanded.Name)
@@ -439,6 +445,41 @@ func (p *Processor) applyFD(fd int, stream any, rawStream any) {
 		if s, ok := rawStream.(io.Writer); ok {
 			p.RawStderr = s
 		}
+	default:
+		if fd < 3 || fd > 9 {
+			return
+		}
+		h := &FDHandle{}
+		if s, ok := stream.(io.Writer); ok {
+			h.W = s
+		}
+		if s, ok := rawStream.(io.Writer); ok {
+			h.Raw = s
+		}
+		if s, ok := stream.(io.Reader); ok {
+			h.R = s
+		}
+		if f, ok := stream.(*os.File); ok {
+			h.File = f
+		}
+		if p.FDs == nil {
+			p.FDs = make(map[int]*FDHandle)
+		}
+		p.FDs[fd] = h
+	}
+}
+
+// bindRedirectWriter attaches an opened redirection target to fd. Handle 0 is
+// treated as 1 for output redirects, matching how cmd.exe resolves "0>file".
+func (p *Processor) bindRedirectWriter(fd int, w io.Writer, raw io.Writer, f *os.File) {
+	if fd == 0 {
+		fd = 1
+	}
+	p.applyFD(fd, w, raw)
+	if f != nil {
+		if h, ok := p.FDs[fd]; ok && h != nil {
+			h.File = f
+		}
 	}
 }
 
@@ -448,6 +489,7 @@ type redirectManager struct {
 	origStderr    io.Writer
 	origRawStdout io.Writer
 	origRawStderr io.Writer
+	origFDs       map[int]*FDHandle
 	openedFiles   []*os.File
 }
 
@@ -477,6 +519,7 @@ func (p *Processor) newRedirectManager() *redirectManager {
 		origStderr:    p.Stderr,
 		origRawStdout: p.RawStdout,
 		origRawStderr: p.RawStderr,
+		origFDs:       maps.Clone(p.FDs),
 	}
 }
 
@@ -490,9 +533,13 @@ func (rm *redirectManager) close(p *Processor) {
 	p.Stderr = rm.origStderr
 	p.RawStdout = rm.origRawStdout
 	p.RawStderr = rm.origRawStderr
+	p.FDs = rm.origFDs
 }
 
-func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) {
+// apply binds redirects and reports whether they all succeeded. cmd.exe skips
+// the command entirely when a redirection fails, so the caller must not run it.
+func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) bool {
+	ok := true
 	for _, r := range redirects {
 		targetPath := pathutil.MapPath(r.Target)
 		isNul := strings.EqualFold(r.Target, "nul")
@@ -513,26 +560,14 @@ func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) {
 		case parser.RedirectOut:
 			if isNul {
 				p.Logger.Debug("redirect to nul", "fd", r.FD)
-				switch r.FD {
-				case 0, 1:
-					p.Stdout = io.Discard
-				case 2:
-					p.Stderr = io.Discard
-				}
+				p.bindRedirectWriter(r.FD, io.Discard, io.Discard, nil)
 			} else {
 				p.Trace.RedirectWrite(r.Target)
 				f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
 				if err == nil {
 					rm.openedFiles = append(rm.openedFiles, f)
 					dw := &debugWriter{underlying: f, logger: p.Logger, fd: r.FD, target: targetPath}
-					switch r.FD {
-					case 0, 1:
-						p.Stdout = &NewCRLF{w: dw}
-						p.RawStdout = dw
-					case 2:
-						p.Stderr = &NewCRLF{w: dw}
-						p.RawStderr = dw
-					}
+					p.bindRedirectWriter(r.FD, &NewCRLF{w: dw}, dw, f)
 				} else {
 					p.Logger.Debug("redirect open failed", "path", targetPath, "error", err)
 				}
@@ -540,26 +575,14 @@ func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) {
 		case parser.RedirectAppend:
 			if isNul {
 				p.Logger.Debug("redirect to nul (append)", "fd", r.FD)
-				switch r.FD {
-				case 0, 1:
-					p.Stdout = io.Discard
-				case 2:
-					p.Stderr = io.Discard
-				}
+				p.bindRedirectWriter(r.FD, io.Discard, io.Discard, nil)
 			} else {
 				p.Trace.RedirectAppend(r.Target)
 				f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
 				if err == nil {
 					rm.openedFiles = append(rm.openedFiles, f)
 					dw := &debugWriter{underlying: f, logger: p.Logger, fd: r.FD, target: targetPath}
-					switch r.FD {
-					case 0, 1:
-						p.Stdout = &NewCRLF{w: dw}
-						p.RawStdout = dw
-					case 2:
-						p.Stderr = &NewCRLF{w: dw}
-						p.RawStderr = dw
-					}
+					p.bindRedirectWriter(r.FD, &NewCRLF{w: dw}, dw, f)
 				} else {
 					p.Logger.Debug("redirect open failed", "path", targetPath, "error", err)
 				}
@@ -580,16 +603,25 @@ func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) {
 			}
 		case parser.RedirectOutFD, parser.RedirectInFD:
 			p.Logger.Debug("redirect fd to fd", "from", r.FD, "to", r.Target)
-			switch r.Target {
-			case "0":
-				p.applyFD(r.FD, p.Stdin, nil)
-			case "1":
-				p.applyFD(r.FD, p.Stdout, p.RawStdout)
-			case "2":
-				p.applyFD(r.FD, p.Stderr, p.RawStderr)
+			src, convErr := strconv.Atoi(r.Target)
+			if convErr != nil {
+				continue
 			}
+			w, raw, rd, open := p.FDStreams(src)
+			if !open {
+				fmt.Fprintf(p.Stderr, "The handle could not be duplicated during redirection of handle %d.\n", r.FD)
+				p.Failure()
+				ok = false
+				continue
+			}
+			if w == nil && rd != nil {
+				p.applyFD(r.FD, rd, nil)
+				continue
+			}
+			p.applyFD(r.FD, w, raw)
 		}
 	}
+	return ok
 }
 
 func (p *Processor) executeIf(n *parser.IfNode) error {

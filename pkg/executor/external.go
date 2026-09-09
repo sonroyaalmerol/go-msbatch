@@ -428,6 +428,10 @@ func runOSCommand(p *processor.Processor, name string, args []string, displayNam
 	c.Stderr = rawWriter(p.RawStderr, p.Stderr)
 	c.Stdin = p.Stdin
 
+	extraFiles, closeExtra := p.ExtraFiles()
+	defer closeExtra()
+	c.ExtraFiles = extraFiles
+
 	// Build a deduplicated environment: start with the OS environment as the
 	// baseline, then let batch-level SET variables override it.  This matches
 	// Windows CMD behaviour where SET changes are visible to child processes
