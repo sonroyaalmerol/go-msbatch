@@ -101,9 +101,19 @@ func (e *Environment) DelayedExpansion() bool {
 	return v
 }
 
+// SetBatchMode changes whether percent-number expressions expand as batch arguments.
+func (e *Environment) SetBatchMode(enabled bool) {
+	e.mu.Lock()
+	e.batchMode = enabled
+	e.mu.Unlock()
+}
+
 // BatchMode reports whether the environment is in batch-file mode.
 func (e *Environment) BatchMode() bool {
-	return e.batchMode
+	e.mu.RLock()
+	v := e.batchMode
+	e.mu.RUnlock()
+	return v
 }
 
 // Snapshot returns a shallow copy of all current variables.

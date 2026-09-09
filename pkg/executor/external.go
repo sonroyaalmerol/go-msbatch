@@ -509,6 +509,10 @@ func resolveBatchFile(name string) (string, bool) {
 }
 
 func runBatchFile(p *processor.Processor, batPath string, args []string) error {
+	batchMode := p.Env.BatchMode()
+	p.Env.SetBatchMode(true)
+	defer p.Env.SetBatchMode(batchMode)
+
 	cwd, _ := os.Getwd()
 	p.Logger.Debug("running batch file", "path", batPath, "args", args, "cwd", cwd)
 	p.Trace.CallFile(batPath, args)

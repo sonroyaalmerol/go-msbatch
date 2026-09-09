@@ -1,8 +1,36 @@
 package executor
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
 )
+
+func TestRunBatchFileEnablesBatchMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "args.bat")
+	if err := os.WriteFile(path, []byte("@echo off\r\necho A=%1 B=%2 ALL=%*\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	env := processor.NewEmptyEnvironment(false)
+	proc := processor.New(env, nil, New())
+	var stdout bytes.Buffer
+	proc.Stdout = &stdout
+
+	if err := runBatchFile(proc, path, []string{"one", "two"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := stdout.String(), "A=one B=two ALL=one two\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if env.BatchMode() {
+		t.Fatal("batch mode was not restored")
+	}
+}
 
 func TestErrCommandNotFound(t *testing.T) {
 	if ErrCommandNotFound == nil {
