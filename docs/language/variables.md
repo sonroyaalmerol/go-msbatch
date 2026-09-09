@@ -115,7 +115,7 @@ Without delayed expansion, `%COUNT%` inside the loop body would be expanded once
 **Caveats:**
 
 - `SETLOCAL ENABLEDELAYEDEXPANSION` must appear before use; there is no command-line flag to pre-enable it.
-- `DISABLEDELAYEDEXPANSION` is not supported as an explicit SETLOCAL argument. Delayed expansion is controlled per-scope: `ENDLOCAL` reverts to the state of the enclosing scope.
+- `SETLOCAL DISABLEDELAYEDEXPANSION` turns delayed expansion off within the scope, as in cmd.exe.
 - `!` inside a `FOR /F` command string is expanded before the command runs, which can interfere with shell metacharacters in the command.
 
 ## SETLOCAL / ENDLOCAL Scoping

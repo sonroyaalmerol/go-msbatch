@@ -145,7 +145,7 @@ Removes `%1` and shifts all remaining arguments left: `%2`→`%1`, `%3`→`%2`, 
 
 `%0` (script name) is never shifted.
 
-**Caveat:** The `/n` form (shift starting from argument n) is **not implemented**. Only the no-argument form is supported, which always shifts from position 1.
+**Caveat:** `SHIFT /n` starts shifting from argument `n`, as in cmd.exe.
 
 ---
 
