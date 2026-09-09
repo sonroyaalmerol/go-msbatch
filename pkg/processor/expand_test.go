@@ -378,6 +378,36 @@ func TestPhase5DelayedMissingCmdLineUnchanged(t *testing.T) {
 
 // TestPhase5DelayedCaretEscapedBang tests guideline:
 // ^! inside a !-containing token → literal !.
+func TestPhase5DelayedSubstrAndSubst(t *testing.T) {
+	env := processor.NewEmptyEnvironment(true)
+	env.Set("STR", "hello world")
+	env.SetDelayedExpansion(true)
+
+	tests := map[string]string{
+		"!STR:~0,5!":     "hello",
+		"!STR:hello=hi!": "hi world",
+	}
+	for input, want := range tests {
+		if got := processor.Phase5DelayedExpand(input, env); got != want {
+			t.Errorf("Phase5DelayedExpand(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestPhase5DelayedRecursesPercentVars(t *testing.T) {
+	env := processor.NewEmptyEnvironment(true)
+	env.Set("DATAFLT", "C:\\Data")
+	env.Set("DATAGRV1TA", "%DATAFLT%\\TA")
+	env.SetDelayedExpansion(true)
+
+	got := processor.Phase5DelayedExpand("!DATAGRV1TA!", env)
+	if got != "C:\\Data\\TA" {
+		t.Errorf("expected C:\\Data\\TA, got %q", got)
+	}
+}
+
+// TestPhase5DelayedCaretEscapedBang tests guideline:
+// ^! inside a !-containing token → literal !.
 func TestPhase5DelayedCaretEscapedBang(t *testing.T) {
 	env := processor.NewEmptyEnvironment(true)
 	env.SetDelayedExpansion(true)
