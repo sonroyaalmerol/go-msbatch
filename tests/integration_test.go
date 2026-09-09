@@ -94,7 +94,7 @@ func TestIntegration(t *testing.T) {
 				t.Errorf("Output mismatch for %s\nGOT:\n%s\nWANT:\n%s", batFile, got, want)
 			}
 
-			if errExpected, err := os.ReadFile(filepath.Join("..", expectedFile[:len(expectedFile)-4]+".err")); err == nil {
+			if errExpected, err := os.ReadFile(expectedFile[:len(expectedFile)-4] + ".err"); err == nil {
 				if gotErr := normalize(stderr.String()); gotErr != normalize(string(errExpected)) {
 					t.Errorf("Stderr mismatch for %s\nGOT:\n%s\nWANT:\n%s", batFile, gotErr, normalize(string(errExpected)))
 				}
