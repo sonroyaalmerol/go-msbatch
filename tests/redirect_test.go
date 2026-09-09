@@ -67,14 +67,14 @@ func TestRedirects(t *testing.T) {
 		{
 			name:      "both_streams_to_file",
 			script:    "@echo off\necho output > combined.txt 2>&1\n",
-			wantFiles: map[string]string{"combined.txt": "output  \r\n"},
+			wantFiles: map[string]string{"combined.txt": "output \r\n"},
 		},
 		{
 			name:       "separate_stdout_stderr_files",
 			script:     "@echo off\necho stdout message > stdout.txt 2> stderr.txt\necho stderr message >&2\n",
 			wantStderr: "stderr message \n",
 			wantFiles: map[string]string{
-				"stdout.txt": "stdout message  \r\n",
+				"stdout.txt": "stdout message \r\n",
 				"stderr.txt": "",
 			},
 		},
@@ -138,7 +138,7 @@ func TestRedirects(t *testing.T) {
 		{
 			name:      "stderr_append_with_dup",
 			script:    "@echo off\necho error1>> err.txt 2>&1\necho error2>> err.txt 2>&1\n",
-			wantFiles: map[string]string{"err.txt": "error1 \r\nerror2 \r\n"},
+			wantFiles: map[string]string{"err.txt": "error1\r\nerror2\r\n"},
 		},
 		{
 			name:       "stdin_and_stdout_redirected",

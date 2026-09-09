@@ -221,12 +221,9 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		sb.WriteString(expanded.Name)
 		sb.WriteString(strings.Join(expanded.RawArgs, ""))
 
-		// Include redirections in the echoed output
 		for _, r := range expanded.Redirects {
 			sb.WriteString(" ")
-			if r.FD != 1 && r.FD != 0 {
-				sb.WriteString(strconv.Itoa(r.FD))
-			}
+			sb.WriteString(strconv.Itoa(r.FD))
 			switch r.Kind {
 			case parser.RedirectOut:
 				sb.WriteString(">")
@@ -240,6 +237,9 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 				sb.WriteString("<&")
 			}
 			sb.WriteString(r.Target)
+		}
+		if len(expanded.RawArgs) > 0 || len(expanded.Redirects) > 0 {
+			sb.WriteString(" ")
 		}
 
 		p.Logger.Debug("echo console output", "line", sb.String())

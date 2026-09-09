@@ -298,6 +298,7 @@ func (p *Parser) parseSimpleCommand(suppressed bool) *SimpleCommand {
 func (p *Parser) collectArgs(cmd *SimpleCommand, endLine, endCol int) (int, int) {
 	var cur strings.Builder
 	parenDepth := 0
+	seenRedirect := false
 
 	flushArg := func() {
 		if cur.Len() > 0 {
@@ -327,7 +328,9 @@ func (p *Parser) collectArgs(cmd *SimpleCommand, endLine, endCol int) (int, int)
 				}
 				if nextTok.Type == lexer.TokenRedirect {
 					consumed := p.consume()
-					cmd.RawArgs = append(cmd.RawArgs, val(consumed))
+					if !seenRedirect {
+						cmd.RawArgs = append(cmd.RawArgs, val(consumed))
+					}
 					skipThisWS = true
 				}
 				break
@@ -390,6 +393,7 @@ func (p *Parser) collectArgs(cmd *SimpleCommand, endLine, endCol int) (int, int)
 
 		case lexer.TokenRedirect:
 			flushArg()
+			seenRedirect = true
 			el, ec := p.collectRedirect(cmd, endLine, endCol)
 			endLine, endCol = el, ec
 
