@@ -10,7 +10,7 @@ call helper_26.bat hello
 echo helper returned: %ERRORLEVEL%
 if "%HELPER_RAN%"=="yes" (echo env propagated) else (echo env not propagated)
 
-rem Direct invocation (no CALL) — also runs in-process.
+rem Direct invocation (no CALL) transfers control and does not return.
 echo @echo off>direct_26.bat
 echo echo direct ran>>direct_26.bat
 

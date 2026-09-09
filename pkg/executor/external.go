@@ -112,7 +112,7 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			}
 			batArgs = append(batArgs, mapped)
 		}
-		return runBatchFile(p, batPath, batArgs)
+		return runBatchFile(p, batPath, batArgs, cmd.Called)
 	}
 
 	if isExe {
@@ -512,7 +512,7 @@ func resolveBatchFile(name string) (string, bool) {
 	return "", false
 }
 
-func runBatchFile(p *processor.Processor, batPath string, args []string) error {
+func runBatchFile(p *processor.Processor, batPath string, args []string, called bool) error {
 	batchMode := p.Env.BatchMode()
 	p.Env.SetBatchMode(true)
 	defer p.Env.SetBatchMode(batchMode)
@@ -557,6 +557,9 @@ func runBatchFile(p *processor.Processor, batPath string, args []string) error {
 	}
 
 	p.Echo = child.Echo
+	if batchMode && !called {
+		p.Exited = true
+	}
 
 	if execErr != nil && execErr.Error() == "EXIT_LOCAL" {
 		return nil

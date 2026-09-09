@@ -171,6 +171,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 	expanded := &parser.SimpleCommand{
 		Suppressed:       n.Suppressed,
 		RedirectsApplied: n.RedirectsApplied,
+		Called:           n.Called,
 	}
 	expanded.Name = strings.TrimSpace(p.ExpandPhase4(p.ExpandPhase1(n.Name)))
 	for _, arg := range n.Args {
@@ -361,6 +362,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 			RawArgs:          reconstructedRaw,
 			Suppressed:       true,
 			RedirectsApplied: true,
+			Called:           true,
 		})
 		p.Trace.Dedent()
 		return err

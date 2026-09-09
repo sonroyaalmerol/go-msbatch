@@ -21,7 +21,7 @@ func TestRunBatchFileEnablesBatchMode(t *testing.T) {
 	var stdout bytes.Buffer
 	proc.Stdout = &stdout
 
-	if err := runBatchFile(proc, path, []string{"one", "two"}); err != nil {
+	if err := runBatchFile(proc, path, []string{"one", "two"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := stdout.String(), "A=one B=two ALL=one two\n"; got != want {

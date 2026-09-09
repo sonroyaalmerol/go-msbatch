@@ -66,12 +66,13 @@ type Redirect struct {
 
 // SimpleCommand is a leaf command: name, arguments, and redirections.
 type SimpleCommand struct {
-	Line             int  // 0-based source line of the command name token
-	Col              int  // 0-based source column of the command name token
-	EndLine          int  // 0-based source line of the end of the command
-	EndCol           int  // 0-based source column of the end of the command
-	Suppressed       bool // true when preceded by @
-	RedirectsApplied bool // internal flag to avoid re-applying redirections in recursive dispatches
+	Line             int // 0-based source line of the command name token
+	Col              int // 0-based source column of the command name token
+	EndLine          int // 0-based source line of the end of the command
+	EndCol           int // 0-based source column of the end of the command
+	Suppressed       bool
+	RedirectsApplied bool
+	Called           bool
 	Name             string
 	Args             []string
 	RawArgs          []string
