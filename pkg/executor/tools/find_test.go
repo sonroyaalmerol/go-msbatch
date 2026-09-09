@@ -103,11 +103,9 @@ func TestFindInFile(t *testing.T) {
 	if errorLevel(p) != "0" {
 		t.Error("expected ERRORLEVEL 0")
 	}
-	if !strings.Contains(out.String(), "beta") {
-		t.Errorf("expected 'beta' in output, got: %q", out.String())
-	}
-	if strings.Contains(out.String(), "alpha") || strings.Contains(out.String(), "gamma") {
-		t.Errorf("expected only matching line, got: %q", out.String())
+	want := "\n---------- " + strings.ToUpper(path) + "\nbeta\n"
+	if got := out.String(); got != want {
+		t.Errorf("output = %q, want %q", got, want)
 	}
 }
 
@@ -119,8 +117,8 @@ func TestFindCountInFile(t *testing.T) {
 	if errorLevel(p) != "0" {
 		t.Error("expected ERRORLEVEL 0")
 	}
-	// /C with a file prints "<label>: <count>"
-	if !strings.Contains(out.String(), "3") {
-		t.Errorf("expected count 3, got: %q", out.String())
+	want := "---------- " + strings.ToUpper(path) + ": 3\n"
+	if got := out.String(); got != want {
+		t.Errorf("output = %q, want %q", got, want)
 	}
 }

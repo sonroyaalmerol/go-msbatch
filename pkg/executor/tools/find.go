@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
@@ -38,7 +39,11 @@ func Find(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	printLineNums := false
 	invertMatch := false
 	searchStr := ""
-	var files []string
+	type inputFile struct {
+		path  string
+		label string
+	}
+	var files []inputFile
 
 	for _, arg := range cmd.Args {
 		switch strings.ToLower(arg) {
@@ -59,7 +64,7 @@ func Find(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			if searchStr == "" {
 				searchStr = strings.Trim(arg, "\"")
 			} else {
-				files = append(files, pathutil.MapPath(arg))
+				files = append(files, inputFile{path: pathutil.MapPath(arg), label: arg})
 			}
 		}
 	}
@@ -117,21 +122,30 @@ func Find(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 		scan(p.Stdin, "")
 	} else {
-		for _, pat := range files {
-			matches, err := pathutil.GlobCaseInsensitive(pat)
+		for _, input := range files {
+			matches, err := pathutil.GlobCaseInsensitive(input.path)
 			if err != nil || len(matches) == 0 {
-				matches = []string{pat}
+				matches = []string{input.path}
 			}
-			for _, m := range matches {
-				f, err := os.Open(m)
+			for _, match := range matches {
+				f, err := os.Open(match)
 				if err != nil {
-					fmt.Fprintf(p.Stderr, "File not found - %s\n", m)
+					fmt.Fprintf(p.Stderr, "File not found - %s\n", match)
 					continue
 				}
-				if len(files) > 1 || len(matches) > 1 {
-					fmt.Fprintf(p.Stdout, "\n---------- %s\n", m)
+				label := input.label
+				if strings.ContainsAny(label, "*?") {
+					if i := strings.LastIndexAny(label, `\/`); i >= 0 {
+						label = label[:i+1] + filepath.Base(match)
+					} else {
+						label = filepath.Base(match)
+					}
 				}
-				scan(f, m)
+				label = strings.ToUpper(label)
+				if !printCount {
+					fmt.Fprintf(p.Stdout, "\n---------- %s\n", label)
+				}
+				scan(f, label)
 				f.Close()
 			}
 		}

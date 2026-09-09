@@ -1,3 +1,4 @@
+---------- FIND_FAIL_25.TXT
 find-nomatch ok
 sort-empty ok
 where-missing ok
