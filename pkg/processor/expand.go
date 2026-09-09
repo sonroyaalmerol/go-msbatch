@@ -172,10 +172,7 @@ func Phase1PercentExpand(src string, env *Environment, args []string, originalAr
 				if idx < len(args) {
 					argVal = args[idx]
 				}
-				// Strip surrounding quotes — the base %~ behaviour.
-				if len(argVal) >= 2 && argVal[0] == '"' && argVal[len(argVal)-1] == '"' {
-					argVal = argVal[1 : len(argVal)-1]
-				}
+				argVal = stripSurroundingQuotes(argVal)
 				if pathVar != "" {
 					// Search for the file in the directories listed in the named variable.
 					if searchPath, ok := env.Get(pathVar); ok {
@@ -248,6 +245,30 @@ func SplitVarModifier(expr string) (name, modifier string) {
 		return before, after
 	}
 	return expr, ""
+}
+
+// stripSurroundingQuotes removes one balanced pair of surrounding double
+// quotes, which is what a bare %~ does to a positional or FOR variable.
+func stripSurroundingQuotes(s string) string {
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
+// absPathForModifiers resolves val against the current directory, keeping the separator style of the input so a Windows-style argument never comes back as a Unix path.
+func absPathForModifiers(val string) string {
+	if val == "" || pathutil.IsRooted(val) {
+		return val
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return val
+	}
+	if strings.Contains(val, `\`) {
+		return strings.TrimSuffix(pathutil.ToWindowsPath(cwd), `\`) + `\` + val
+	}
+	return filepath.Join(cwd, val)
 }
 
 func indexRuneFrom(runes []rune, r rune, start int) int {
@@ -368,7 +389,7 @@ func Phase4ForVarExpand(src string, forVars map[string]string) string {
 					mods := string(runes[j:varIdx])
 					varName := string(runes[varIdx])
 					if val, ok := forVars[varName]; ok {
-						sb.WriteString(applyForVarModifiers(val, mods))
+						sb.WriteString(applyForVarModifiers(stripSurroundingQuotes(val), mods))
 						i = varIdx
 						continue
 					}
@@ -407,52 +428,31 @@ func Phase4ForVarExpand(src string, forVars map[string]string) string {
 func applyForVarModifiers(val, mods string) string {
 	lower := strings.ToLower(mods)
 
-	// f / s / e: resolve to absolute path first.
-	if strings.ContainsAny(lower, "fse") {
-		if abs, err := filepath.Abs(val); err == nil {
-			val = abs
-		}
-	}
-
 	hasD := strings.ContainsRune(lower, 'd')
 	hasP := strings.ContainsRune(lower, 'p')
 	hasN := strings.ContainsRune(lower, 'n')
 	hasX := strings.ContainsRune(lower, 'x')
 
+	if strings.ContainsAny(lower, "fse") || hasD || hasP {
+		val = absPathForModifiers(val)
+	}
+
 	if hasD || hasP || hasN || hasX {
-		// Separate the drive prefix so p/n/x operate on the path portion only.
-		drive := ""
-		pathPart := val
-		if len(val) >= 2 && val[1] == ':' {
-			drive = val[:2]
-			pathPart = val[2:]
-		}
+		drive, dir, base := pathutil.SplitWindows(val)
+		ext := filepath.Ext(base)
 
 		var result strings.Builder
 		if hasD {
 			result.WriteString(drive)
 		}
 		if hasP {
-			dir := filepath.Dir(pathPart)
-			switch {
-			case dir == ".":
-				// Relative filename with no directory component → empty.
-			case dir == "/" || dir == string(filepath.Separator):
-				result.WriteString(dir)
-			default:
-				result.WriteString(dir)
-				if !strings.HasSuffix(dir, string(filepath.Separator)) {
-					result.WriteRune(filepath.Separator)
-				}
-			}
+			result.WriteString(dir)
 		}
 		if hasN {
-			base := filepath.Base(val)
-			ext := filepath.Ext(base)
 			result.WriteString(base[:len(base)-len(ext)])
 		}
 		if hasX {
-			result.WriteString(filepath.Ext(filepath.Base(val)))
+			result.WriteString(ext)
 		}
 		val = result.String()
 	}

@@ -253,6 +253,23 @@ func ToWindowsPath(unixPath string) string {
 	return UnixToWinePath(unixPath)
 }
 
+// IsRooted reports whether p is absolute in either Windows or Unix form.
+func IsRooted(p string) bool {
+	return strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) ||
+		(len(p) >= 2 && p[1] == ':')
+}
+
+// SplitWindows splits p into drive, directory (with trailing separator) and base name, treating both separators like cmd.exe rather than only '/' as path/filepath does on Unix.
+func SplitWindows(p string) (drive, dir, base string) {
+	if len(p) >= 2 && p[1] == ':' {
+		drive, p = p[:2], p[2:]
+	}
+	if i := strings.LastIndexAny(p, `\/`); i >= 0 {
+		return drive, p[:i+1], p[i+1:]
+	}
+	return drive, "", p
+}
+
 func HasWildcard(pattern string) bool {
 	return strings.ContainsAny(pattern, "*?[")
 }

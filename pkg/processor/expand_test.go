@@ -1,6 +1,8 @@
 package processor_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
@@ -200,7 +202,81 @@ func TestPhase1TildeOutOfRange(t *testing.T) {
 	}
 }
 
-// ---- Phase 4 (FOR variable expansion) --------------------------------------
+// TestPhase1TildePathModifiers covers the %~ location modifiers on both
+// Windows- and Unix-style values. cmd.exe splits on '\' as well as '/', which
+// path/filepath does not do on Unix.
+func TestPhase1TildePathModifiers(t *testing.T) {
+	tests := []struct {
+		name string
+		expr string
+		arg  string
+		want string
+	}{
+		{"name_windows", "%~n1", `C:\dir\f.txt`, "f"},
+		{"ext_windows", "%~x1", `C:\dir\f.txt`, ".txt"},
+		{"name_ext_windows", "%~nx1", `C:\dir\f.txt`, "f.txt"},
+		{"drive_windows", "%~d1", `C:\dir\f.txt`, "C:"},
+		{"dir_windows", "%~p1", `C:\dir\f.txt`, `\dir\`},
+		{"drive_and_dir_windows", "%~dp1", `C:\dir\f.txt`, `C:\dir\`},
+		{"name_unix", "%~n1", "/tmp/dir/f.txt", "f"},
+		{"dir_unix", "%~p1", "/tmp/dir/f.txt", "/tmp/dir/"},
+		{"quotes_stripped", "%~1", `"q w"`, "q w"},
+		{"quoted_windows_path", "%~nx1", `"C:\dir\f.txt"`, "f.txt"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := processor.NewEmptyEnvironment(true)
+			got := processor.Phase1PercentExpand(tt.expr, env, []string{"script.bat", tt.arg}, nil)
+			if got != tt.want {
+				t.Errorf("Phase1PercentExpand(%q) with %%1=%q = %q, want %q", tt.expr, tt.arg, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPhase1TildeResolvesRelativeValue pins the %~dp0 contract: cmd.exe
+// resolves location modifiers against the current directory, so a script
+// invoked by a relative path still reports its real directory.
+func TestPhase1TildeResolvesRelativeValue(t *testing.T) {
+	t.Chdir(t.TempDir())
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env := processor.NewEmptyEnvironment(true)
+	got := processor.Phase1PercentExpand("%~dp0", env, []string{"sub/s.bat"}, nil)
+
+	want := filepath.Join(cwd, "sub") + "/"
+	if got != want {
+		t.Errorf("%%~dp0 = %q, want %q", got, want)
+	}
+}
+
+// TestPhase4ForVarTildeStripsQuotes pins that a bare %~ on a FOR variable
+// removes surrounding quotes, matching positional %~1.
+func TestPhase4ForVarTildeStripsQuotes(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		val  string
+		want string
+	}{
+		{"bare_tilde", "%~a", `"q w"`, "q w"},
+		{"name_ext_quoted_windows", "%~nxa", `"C:\dir\f.txt"`, "f.txt"},
+		{"unquoted_value_untouched", "%~a", "plain", "plain"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := processor.Phase4ForVarExpand(tt.src, map[string]string{"a": tt.val})
+			if got != tt.want {
+				t.Errorf("Phase4ForVarExpand(%q) with %%a=%q = %q, want %q", tt.src, tt.val, got, tt.want)
+			}
+		})
+	}
+}
 
 // TestPhase4ForVarBasic tests guideline phase 4: %%X in batch → %X after
 // phase 1, which phase 4 then resolves against the loop-variable map.
