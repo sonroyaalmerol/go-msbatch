@@ -129,7 +129,7 @@ echo line2>> out.txt
 	}
 
 	got := strings.TrimRight(string(content), " \t\r\n")
-	want := "line1\nline2"
+	want := "line1\r\nline2"
 	if got != want {
 		t.Errorf("Expected %q, got: %q", want, got)
 	}
@@ -695,7 +695,7 @@ func TestRedirectBlock(t *testing.T) {
 	}
 
 	got := strings.TrimSpace(string(content))
-	want := "sample text1\nsample text2"
+	want := "sample text1\r\nsample text2"
 	if got != want {
 		t.Errorf("Expected %q, got: %q", want, got)
 	}
@@ -909,7 +909,7 @@ echo error2>> err.txt 2>&1
 	}
 
 	got := strings.TrimRight(string(content), " \t\r\n")
-	want := "error1\nerror2"
+	want := "error1\r\nerror2"
 	if got != want {
 		t.Errorf("Expected %q, got: %q", want, got)
 	}
@@ -954,7 +954,7 @@ type < names.txt > output.txt
 	}
 
 	got := strings.TrimSpace(string(content))
-	want := "Jones\nSmith\nWilson"
+	want := "Jones\r\nSmith\r\nWilson"
 	if got != want {
 		t.Errorf("Expected %q, got: %q", want, got)
 	}

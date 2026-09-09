@@ -414,7 +414,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 	return nil
 }
 
-func (p *Processor) applyFD(fd int, stream any) {
+func (p *Processor) applyFD(fd int, stream any, rawStream any) {
 	switch fd {
 	case 0:
 		if s, ok := stream.(io.Reader); ok {
@@ -424,18 +424,26 @@ func (p *Processor) applyFD(fd int, stream any) {
 		if s, ok := stream.(io.Writer); ok {
 			p.Stdout = s
 		}
+		if s, ok := rawStream.(io.Writer); ok {
+			p.RawStdout = s
+		}
 	case 2:
 		if s, ok := stream.(io.Writer); ok {
 			p.Stderr = s
+		}
+		if s, ok := rawStream.(io.Writer); ok {
+			p.RawStderr = s
 		}
 	}
 }
 
 type redirectManager struct {
-	origStdout  io.Writer
-	origStdin   io.Reader
-	origStderr  io.Writer
-	openedFiles []*os.File
+	origStdout    io.Writer
+	origStdin     io.Reader
+	origStderr    io.Writer
+	origRawStdout io.Writer
+	origRawStderr io.Writer
+	openedFiles   []*os.File
 }
 
 type debugWriter struct {
@@ -459,9 +467,11 @@ func (dw *debugWriter) Write(p []byte) (n int, err error) {
 
 func (p *Processor) newRedirectManager() *redirectManager {
 	return &redirectManager{
-		origStdout: p.Stdout,
-		origStdin:  p.Stdin,
-		origStderr: p.Stderr,
+		origStdout:    p.Stdout,
+		origStdin:     p.Stdin,
+		origStderr:    p.Stderr,
+		origRawStdout: p.RawStdout,
+		origRawStderr: p.RawStderr,
 	}
 }
 
@@ -473,6 +483,8 @@ func (rm *redirectManager) close(p *Processor) {
 	p.Stdout = rm.origStdout
 	p.Stdin = rm.origStdin
 	p.Stderr = rm.origStderr
+	p.RawStdout = rm.origRawStdout
+	p.RawStderr = rm.origRawStderr
 }
 
 func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) {
@@ -507,11 +519,14 @@ func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) {
 				f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
 				if err == nil {
 					rm.openedFiles = append(rm.openedFiles, f)
+					dw := &debugWriter{underlying: f, logger: p.Logger, fd: r.FD, target: targetPath}
 					switch r.FD {
 					case 0, 1:
-						p.Stdout = &debugWriter{underlying: f, logger: p.Logger, fd: r.FD, target: targetPath}
+						p.Stdout = &NewCRLF{w: dw}
+						p.RawStdout = dw
 					case 2:
-						p.Stderr = &debugWriter{underlying: f, logger: p.Logger, fd: r.FD, target: targetPath}
+						p.Stderr = &NewCRLF{w: dw}
+						p.RawStderr = dw
 					}
 				} else {
 					p.Logger.Debug("redirect open failed", "path", targetPath, "error", err)
@@ -531,11 +546,14 @@ func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) {
 				f, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
 				if err == nil {
 					rm.openedFiles = append(rm.openedFiles, f)
+					dw := &debugWriter{underlying: f, logger: p.Logger, fd: r.FD, target: targetPath}
 					switch r.FD {
 					case 0, 1:
-						p.Stdout = &debugWriter{underlying: f, logger: p.Logger, fd: r.FD, target: targetPath}
+						p.Stdout = &NewCRLF{w: dw}
+						p.RawStdout = dw
 					case 2:
-						p.Stderr = &debugWriter{underlying: f, logger: p.Logger, fd: r.FD, target: targetPath}
+						p.Stderr = &NewCRLF{w: dw}
+						p.RawStderr = dw
 					}
 				} else {
 					p.Logger.Debug("redirect open failed", "path", targetPath, "error", err)
@@ -559,11 +577,11 @@ func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) {
 			p.Logger.Debug("redirect fd to fd", "from", r.FD, "to", r.Target)
 			switch r.Target {
 			case "0":
-				p.applyFD(r.FD, p.Stdin)
+				p.applyFD(r.FD, p.Stdin, nil)
 			case "1":
-				p.applyFD(r.FD, p.Stdout)
+				p.applyFD(r.FD, p.Stdout, p.RawStdout)
 			case "2":
-				p.applyFD(r.FD, p.Stderr)
+				p.applyFD(r.FD, p.Stderr, p.RawStderr)
 			}
 		}
 	}
