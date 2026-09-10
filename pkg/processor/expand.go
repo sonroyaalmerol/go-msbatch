@@ -479,11 +479,20 @@ func applyForVarModifiers(val, mods string) string {
 		val = result.String()
 	}
 
-	// Informational modifiers applied to the current value as a path.
+	var statKey string
+	var statFi os.FileInfo
+	var statTried bool
+	statFor := func(v string) os.FileInfo {
+		if !statTried || v != statKey {
+			statTried, statKey = true, v
+			statFi, _ = os.Stat(v)
+		}
+		return statFi
+	}
 	for _, mod := range lower {
 		switch mod {
 		case 'a':
-			if fi, err := os.Stat(val); err == nil {
+			if fi := statFor(val); fi != nil {
 				if fi.IsDir() {
 					val = "d---------"
 				} else {
@@ -491,11 +500,11 @@ func applyForVarModifiers(val, mods string) string {
 				}
 			}
 		case 't':
-			if fi, err := os.Stat(val); err == nil {
+			if fi := statFor(val); fi != nil {
 				val = fi.ModTime().Format("01/02/2006 03:04 PM")
 			}
 		case 'z':
-			if fi, err := os.Stat(val); err == nil {
+			if fi := statFor(val); fi != nil {
 				val = strconv.FormatInt(fi.Size(), 10)
 			}
 		}

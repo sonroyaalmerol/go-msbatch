@@ -2,6 +2,7 @@ package processor
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,13 +12,22 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 )
 
+// debugEnabled guards Debug calls whose argument evaluation costs syscalls.
+func (p *Processor) debugEnabled() bool {
+	return p.Logger.Enabled(context.Background(), slog.LevelDebug)
+}
+
 func (p *Processor) Execute(nodes []parser.Node) error {
-	p.Logger.Debug("executing nodes", "count", len(nodes), "env", p.Env.Snapshot(), "cwd", func() string { cwd, _ := os.Getwd(); return cwd }())
+	if p.debugEnabled() {
+		cwd, _ := os.Getwd()
+		p.Logger.Debug("executing nodes", "count", len(nodes), "env", p.Env.Snapshot(), "cwd", cwd)
+	}
 	p.Nodes = nodes
 	p.PC = 0
 	p.Exited = false
@@ -468,8 +478,6 @@ func (p *Processor) executeBlock(node *parser.Block) error {
 	p.echoBlockDepth++
 	defer func() { p.echoBlockDepth-- }()
 
-	rm := p.newRedirectManager()
-
 	if len(node.Redirects) > 0 {
 		var expandedRedirects []parser.Redirect
 		for _, r := range node.Redirects {
@@ -479,6 +487,7 @@ func (p *Processor) executeBlock(node *parser.Block) error {
 				FD:     r.FD,
 			})
 		}
+		rm := p.newRedirectManager()
 		applied := rm.apply(p, expandedRedirects)
 		defer rm.close(p)
 		if !applied {
@@ -587,9 +596,11 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		return p.ExpandPhase4(p.ExpandPhase1(s))
 	}
 	expanded.Name = strings.TrimSpace(expand(n.Name))
+	expanded.Args = make([]string, 0, len(n.Args))
 	for _, arg := range n.Args {
 		expanded.Args = append(expanded.Args, expand(arg))
 	}
+	expanded.RawArgs = make([]string, 0, len(n.RawArgs))
 	for _, arg := range n.RawArgs {
 		expanded.RawArgs = append(expanded.RawArgs, expand(arg))
 	}
@@ -601,28 +612,28 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		})
 	}
 
-	// 2. Command name splitting (e.g. %VAR% containing "cmd args")
-	words := strings.Fields(expanded.Name)
-	if len(words) > 1 {
-		expanded.Name = words[0]
-		newArgs := words[1:]
-		expanded.Args = append(newArgs, expanded.Args...)
+	if strings.ContainsFunc(expanded.Name, unicode.IsSpace) {
+		words := strings.Fields(expanded.Name)
+		if len(words) > 1 {
+			expanded.Name = words[0]
+			newArgs := words[1:]
+			expanded.Args = append(newArgs, expanded.Args...)
 
-		// Update RawArgs to keep mirroring the name and arguments correctly
-		var newRaw []string
-		for i, w := range newArgs {
-			if i > 0 {
+			// Update RawArgs to keep mirroring the name and arguments correctly
+			var newRaw []string
+			for i, w := range newArgs {
+				if i > 0 {
+					newRaw = append(newRaw, " ")
+				}
+				newRaw = append(newRaw, w)
+			}
+			if len(expanded.RawArgs) > 0 {
 				newRaw = append(newRaw, " ")
 			}
-			newRaw = append(newRaw, w)
+			expanded.RawArgs = append(newRaw, expanded.RawArgs...)
 		}
-		if len(expanded.RawArgs) > 0 {
-			newRaw = append(newRaw, " ")
-		}
-		expanded.RawArgs = append(newRaw, expanded.RawArgs...)
 	}
 
-	// 3. Command echoing (happens after Phase 1/4 but BEFORE Phase 5)
 	if p.ShouldEcho(n) {
 		prompt, ok := p.Env.Get("PROMPT")
 		if !ok {
@@ -674,7 +685,10 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		expanded.Redirects[i].Target = strings.TrimSpace(p.ExpandPhase5(expanded.Redirects[i].Target))
 	}
 
-	p.Logger.Debug("executing command", "name", expanded.Name, "args", expanded.Args, "cwd", func() string { cwd, _ := os.Getwd(); return cwd }())
+	if p.debugEnabled() {
+		cwd, _ := os.Getwd()
+		p.Logger.Debug("executing command", "name", expanded.Name, "args", expanded.Args, "cwd", cwd)
+	}
 
 	// 5. Clean up args for commands that expect words (removing empty expanded arguments)
 	var filteredArgs []string
@@ -684,11 +698,10 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		}
 	}
 
-	rm := p.newRedirectManager()
-	defer rm.close(p)
-
-	if !expanded.RedirectsApplied {
+	if len(expanded.Redirects) > 0 && !expanded.RedirectsApplied {
+		rm := p.newRedirectManager()
 		applied := rm.apply(p, expanded.Redirects)
+		defer rm.close(p)
 		expanded.RedirectsApplied = true
 		if !applied {
 			return nil
@@ -1061,15 +1074,20 @@ func (p *Processor) executeIf(n *parser.IfNode) error {
 	case parser.CondExist:
 		rawPath := p.ProcessLine(cond.Arg)
 		path := pathutil.MapPath(rawPath)
-		cwd, _ := os.Getwd()
 		if strings.ContainsAny(path, "*?[") {
 			matches, err := pathutil.GlobCaseInsensitive(path)
 			conditionMet = (err == nil && len(matches) > 0)
-			p.Logger.Debug("IF EXIST check (wildcard)", "raw", rawPath, "mapped", path, "cwd", cwd, "matches", len(matches), "result", conditionMet)
+			if p.debugEnabled() {
+				cwd, _ := os.Getwd()
+				p.Logger.Debug("IF EXIST check (wildcard)", "raw", rawPath, "mapped", path, "cwd", cwd, "matches", len(matches), "result", conditionMet)
+			}
 		} else {
 			_, err := os.Stat(path)
 			conditionMet = (err == nil)
-			p.Logger.Debug("IF EXIST check", "raw", rawPath, "mapped", path, "cwd", cwd, "error", err, "result", conditionMet)
+			if p.debugEnabled() {
+				cwd, _ := os.Getwd()
+				p.Logger.Debug("IF EXIST check", "raw", rawPath, "mapped", path, "cwd", cwd, "error", err, "result", conditionMet)
+			}
 		}
 	case parser.CondCompare:
 		left := p.ProcessLine(cond.Left)
