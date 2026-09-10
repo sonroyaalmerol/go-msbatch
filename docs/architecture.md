@@ -85,19 +85,19 @@ The `Processor` struct holds:
 - `DirStack` — `PUSHD`/`POPD` directory stack
 - `ForVars` — active FOR loop variable bindings
 
-`Processor.Execute(nodes)` iterates the node slice using `PC`. Flow-control nodes (`GOTO`, `CALL`, `EXIT`) manipulate `PC` or spawn child processors.
+`Processor.Execute(nodes)` iterates the node slice using `PC`. Flow-control nodes (`GOTO`, `CALL`, `EXIT`) manipulate `PC`; pipe execution runs each side on a copied `Processor` value.
 
 ### CALL and subroutine semantics
 
-`CALL :label` creates a **child** `Processor` that shares the **same** `Env` pointer and the same I/O streams, so `SET` changes inside the subroutine are visible to the caller — matching cmd.exe's single-session behaviour.
+`CALL :label` runs on the **same** `Processor` — the positional parameters (`%1`–`%9`, `%*`) are rebound to the call's arguments and restored when the subroutine returns, so `SET` changes inside the subroutine are visible to the caller — matching cmd.exe's single-session behaviour.
 
-`EXIT /B` signals the child to stop via an `EXIT_LOCAL` sentinel error; the parent resumes after the `CALL` instruction.
+`EXIT /B` stops the subroutine via an `EXIT_LOCAL` sentinel; execution resumes after the `CALL` instruction.
 
-Plain `EXIT` sets `child.Exited = true`, which the parent propagates to itself, terminating the entire session.
+Plain `EXIT` sets `Exited`, terminating the entire session.
 
 ### Batch file invocation
 
-When a bare command name resolves to a `.bat` or `.cmd` file (searched in CWD then `PATH`), it is executed **in-process** via the same mechanism as `CALL`, sharing the parent environment. This matches cmd.exe's single-session semantics for batch-calling batch.
+When a bare command name resolves to a `.bat` or `.cmd` file (searched in CWD then `PATH`), it is executed **in-process**, sharing the parent environment. A direct invocation transfers control (the caller does not resume); `CALL` returns when the child ends — matching cmd.exe.
 
 ### Pipes
 
