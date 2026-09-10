@@ -295,7 +295,7 @@ func (r *Result) collectVarRefsFromTokens(tokens []lexer.Item) {
 	for _, t := range tokens {
 		switch t.Type {
 		case lexer.TokenVariable, lexer.TokenDelayedExpansion:
-			varName := string(t.Value)
+			varName := t.Value
 			varName = strings.TrimPrefix(varName, "%")
 			varName = strings.TrimSuffix(varName, "%")
 			varName = strings.TrimPrefix(varName, "!")
@@ -331,7 +331,7 @@ func (r *Result) collectVarRefsFromTokens(tokens []lexer.Item) {
 			}
 
 		case lexer.TokenForVar:
-			varName := strings.ToUpper(string(t.Value))
+			varName := strings.ToUpper(t.Value)
 			varName = strings.TrimPrefix(varName, "%%")
 			if len(varName) > 1 {
 				varName = varName[:1]

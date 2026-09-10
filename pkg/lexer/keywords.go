@@ -46,18 +46,18 @@ var Keywords []string
 
 func init() {
 	// command-position keywords
-	registerKeyword("rem", func(bl *BatchLexer) stateFn { return bl.stateRem })
-	registerKeyword("set", func(bl *BatchLexer) stateFn { return bl.stateSet })
-	registerKeyword("for", func(bl *BatchLexer) stateFn { return bl.stateFor })
-	registerKeyword("if", func(bl *BatchLexer) stateFn { return bl.stateIf })
-	registerKeyword("goto", func(bl *BatchLexer) stateFn { return bl.stateGoto })
-	registerKeyword("call", func(bl *BatchLexer) stateFn { return bl.stateCall })
+	registerKeyword("rem", func(bl *BatchLexer) stateFn { return bl.fnRem })
+	registerKeyword("set", func(bl *BatchLexer) stateFn { return bl.fnSet })
+	registerKeyword("for", func(bl *BatchLexer) stateFn { return bl.fnFor })
+	registerKeyword("if", func(bl *BatchLexer) stateFn { return bl.fnIf })
+	registerKeyword("goto", func(bl *BatchLexer) stateFn { return bl.fnGoto })
+	registerKeyword("call", func(bl *BatchLexer) stateFn { return bl.fnCall })
 
 	// IF modifier keywords (order matters: "not" must precede terminal modifiers)
 	registerIfModifier("not", func(_ *BatchLexer) stateFn { return nil }) // prefix – continue
-	registerIfModifier("exist", func(bl *BatchLexer) stateFn { return bl.stateFollow })
-	registerIfModifier("defined", func(bl *BatchLexer) stateFn { return bl.stateFollow })
-	registerIfModifier("errorlevel", func(bl *BatchLexer) stateFn { return bl.stateFollow })
+	registerIfModifier("exist", func(bl *BatchLexer) stateFn { return bl.fnFollow })
+	registerIfModifier("defined", func(bl *BatchLexer) stateFn { return bl.fnFollow })
+	registerIfModifier("errorlevel", func(bl *BatchLexer) stateFn { return bl.fnFollow })
 
 	kws := make([]string, 0, len(keywordTable))
 	for k := range keywordTable {
