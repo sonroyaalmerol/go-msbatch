@@ -83,8 +83,12 @@ func resolveVariable(rawName string, env *Environment) (string, bool) {
 
 // Phase1PercentExpand performs phase-1 percent expansion on src.
 func Phase1PercentExpand(src string, env *Environment, args []string, originalArgs []string) string {
+	if !strings.ContainsRune(src, '%') {
+		return src
+	}
 	runes := []rune(src)
 	var sb strings.Builder
+	sb.Grow(len(src))
 	for i := 0; i < len(runes); {
 		r := runes[i]
 
@@ -371,11 +375,12 @@ func applySubstitution(val, old, new string) string {
 
 // Phase4ForVarExpand performs phase-4 FOR-variable expansion on src.
 func Phase4ForVarExpand(src string, forVars map[string]string) string {
-	if len(forVars) == 0 {
+	if len(forVars) == 0 || !strings.ContainsRune(src, '%') {
 		return src
 	}
 	runes := []rune(src)
 	var sb strings.Builder
+	sb.Grow(len(src))
 	for i := 0; i < len(runes); i++ {
 		r := runes[i]
 		if r == '%' && i+1 < len(runes) {
@@ -514,11 +519,12 @@ func applyForVarModifiers(val, mods string) string {
 
 // Phase5DelayedExpand performs phase-5 delayed variable expansion (!VAR!).
 func Phase5DelayedExpand(src string, env *Environment) string {
-	if !env.DelayedExpansion() {
+	if !env.DelayedExpansion() || !strings.ContainsRune(src, '!') {
 		return src
 	}
 	runes := []rune(src)
 	var sb strings.Builder
+	sb.Grow(len(src))
 	for i := 0; i < len(runes); {
 		r := runes[i]
 

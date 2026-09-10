@@ -113,7 +113,7 @@ func readDirCached(dir string) ([]string, bool) {
 	e, ok := dirCache[dir]
 	dirCacheMu.Unlock()
 	if ok && e.modTime.Equal(modTime) {
-		return e.names, true
+		return e.names, time.Since(modTime) <= time.Second
 	}
 
 	names := dirEntryNames(dir)
@@ -175,7 +175,7 @@ func ResolveCaseInsensitive(path string) string {
 			continue
 		}
 
-		names, fromCache := readDirCached(currentPath)
+		names, stale := readDirCached(currentPath)
 		if names == nil {
 			if strings.ContainsAny(part, "*?[") {
 				return currentPath + "/" + part
@@ -184,7 +184,7 @@ func ResolveCaseInsensitive(path string) string {
 		}
 
 		matchName := scanEntryNames(names, part)
-		if fromCache {
+		if stale {
 			if matchName != "" {
 				if _, err := os.Stat(filepath.Join(currentPath, matchName)); err != nil {
 					matchName = ""

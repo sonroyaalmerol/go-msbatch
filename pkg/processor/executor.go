@@ -709,9 +709,9 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 	}
 
 	name := strings.ToLower(expanded.Name)
-	cmdWords := expanded.Words()
 	switch name {
 	case "goto":
+		cmdWords := expanded.Words()
 		if len(cmdWords) == 0 {
 			return nil
 		}
@@ -726,6 +726,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		}
 		return p.jumpToLabel(label)
 	case "call":
+		cmdWords := expanded.Words()
 		if len(cmdWords) == 0 {
 			return nil
 		}
