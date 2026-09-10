@@ -566,6 +566,9 @@ func (p *Processor) respliceExpanded(n parser.Node) ([]parser.Node, bool) {
 // hasUnquotedOperator reports whether s contains a bare &, |, < or > outside
 // quotes (honoring ^ escapes): the only expansions that change command structure.
 func hasUnquotedOperator(s string) bool {
+	if !strings.ContainsAny(s, "&|<>") {
+		return false
+	}
 	var inQuote bool
 	for i := 0; i < len(s); i++ {
 		switch s[i] {
@@ -596,14 +599,15 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		return p.ExpandPhase4(p.ExpandPhase1(s))
 	}
 	expanded.Name = strings.TrimSpace(expand(n.Name))
-	expanded.Args = make([]string, 0, len(n.Args))
+	buf := make([]string, 0, len(n.Args)+len(n.RawArgs))
 	for _, arg := range n.Args {
-		expanded.Args = append(expanded.Args, expand(arg))
+		buf = append(buf, expand(arg))
 	}
-	expanded.RawArgs = make([]string, 0, len(n.RawArgs))
+	expanded.Args = buf[:len(n.Args):len(n.Args)]
 	for _, arg := range n.RawArgs {
-		expanded.RawArgs = append(expanded.RawArgs, expand(arg))
+		buf = append(buf, expand(arg))
 	}
+	expanded.RawArgs = buf[len(n.Args):]
 	for _, r := range n.Redirects {
 		expanded.Redirects = append(expanded.Redirects, parser.Redirect{
 			Kind:   r.Kind,
@@ -690,11 +694,16 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		p.Logger.Debug("executing command", "name", expanded.Name, "args", expanded.Args, "cwd", cwd)
 	}
 
-	// 5. Clean up args for commands that expect words (removing empty expanded arguments)
-	var filteredArgs []string
+	filteredArgs := expanded.Args
 	for _, arg := range expanded.Args {
-		if strings.TrimSpace(arg) != "" || (len(arg) >= 2 && (arg[0] == '"' || arg[0] == '\'')) {
-			filteredArgs = append(filteredArgs, arg)
+		if strings.TrimSpace(arg) == "" && !(len(arg) >= 2 && (arg[0] == '"' || arg[0] == '\'')) {
+			filteredArgs = nil
+			for _, a := range expanded.Args {
+				if strings.TrimSpace(a) != "" || (len(a) >= 2 && (a[0] == '"' || a[0] == '\'')) {
+					filteredArgs = append(filteredArgs, a)
+				}
+			}
+			break
 		}
 	}
 

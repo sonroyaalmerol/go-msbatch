@@ -75,7 +75,11 @@ func NewWithLine(src string, line int) *BatchLexer {
 	return bl
 }
 
-// NextItem returns the next Item from the token stream.
+// InputLen returns the byte length of the source being lexed.
+func (bl *BatchLexer) InputLen() int {
+	return len(bl.input)
+}
+
 func (bl *BatchLexer) NextItem() Item {
 	for {
 		if bl.head < len(bl.pending) {

@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"unicode/utf8"
+
 	"github.com/sonroyaalmerol/go-msbatch/pkg/lexer"
 )
 
@@ -14,10 +16,10 @@ type Parser struct {
 
 // New drains all tokens from src into a Parser.
 func New(src *lexer.BatchLexer) *Parser {
-	var tokens []lexer.Item
+	tokens := make([]lexer.Item, 0, src.InputLen()/3+8)
 	for {
 		t := src.NextItem()
-		if t.Type == lexer.TokenEOF || (t.Type == 0 && len(t.Value) == 0) {
+		if t.Type == lexer.TokenEOF || (t.Type == 0 && runeLen(t.Value) == 0) {
 			break
 		}
 		tokens = append(tokens, t)
@@ -46,7 +48,7 @@ func (p *Parser) Parse() []Node {
 		} else {
 			t := p.peek()
 			if t.Type != lexer.TokenEOF {
-				p.addErrorAtToken(t, "unexpected token: "+string(t.Value))
+				p.addErrorAtToken(t, "unexpected token: "+t.Value)
 			}
 			p.pos++
 		}
@@ -76,9 +78,13 @@ func (p *Parser) consume() lexer.Item {
 	return t
 }
 
-// val returns the rune slice of a token as a string.
+// val returns a token's value; tokens hold zero-copy source substrings.
 func val(t lexer.Item) string {
-	return string(t.Value)
+	return t.Value
+}
+
+func runeLen(s string) int {
+	return utf8.RuneCountInString(s)
 }
 
 // skipSpaces advances past whitespace tokens but stops at a line break.
@@ -146,8 +152,8 @@ func isPipeOrAmpVal(v string) bool {
 
 // updatePos returns updated endLine and endCol if the token extends beyond the current position.
 func (p *Parser) updatePos(endLine, endCol int, t lexer.Item) (int, int) {
-	if t.Line > endLine || (t.Line == endLine && t.Col+len(t.Value) > endCol) {
-		return t.Line, t.Col + len(t.Value)
+	if t.Line > endLine || (t.Line == endLine && t.Col+runeLen(t.Value) > endCol) {
+		return t.Line, t.Col + runeLen(t.Value)
 	}
 	return endLine, endCol
 }

@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"strconv"
+	"unicode/utf8"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/executor/tools"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/lexer"
@@ -96,7 +97,7 @@ func (s *Server) initialize(context *glsp.Context, params *protocol.InitializePa
 		Capabilities: *capabilities,
 		ServerInfo: &protocol.InitializeResultServerInfo{
 			Name:    lsName,
-			Version: ptr("0.1.0"),
+			Version: new("0.1.0"),
 		},
 	}, nil
 }
@@ -113,8 +114,9 @@ func (s *Server) exit(context *glsp.Context) error {
 	return nil
 }
 
+//go:fix inline
 func ptr[T any](v T) *T {
-	return &v
+	return new(v)
 }
 
 func (s *Server) didOpen(context *glsp.Context, params *protocol.DidOpenTextDocumentParams) error {
@@ -161,14 +163,14 @@ func (s *Server) publishDiagnostics(context *glsp.Context, uri string, version i
 				End:   protocol.Position{Line: protocol.UInteger(d.EndLine), Character: protocol.UInteger(d.EndCol)},
 			},
 			Severity: &severity,
-			Source:   ptr("msbatch"),
+			Source:   new("msbatch"),
 			Message:  d.Message,
 		}
 	}
 
 	context.Notify(protocol.ServerTextDocumentPublishDiagnostics, protocol.PublishDiagnosticsParams{
 		URI:         uri,
-		Version:     ptr(protocol.UInteger(version)),
+		Version:     new(protocol.UInteger(version)),
 		Diagnostics: lspDiags,
 	})
 }
@@ -471,7 +473,7 @@ func (s *Server) getLabelCompletions(doc *store.Document, prefix string) []proto
 			items = append(items, protocol.CompletionItem{
 				Label:  prefix + name,
 				Kind:   ptr(protocol.CompletionItemKindFunction),
-				Detail: ptr("Label"),
+				Detail: new("Label"),
 			})
 		}
 	}
@@ -489,7 +491,7 @@ func (s *Server) getVariableCompletions(doc *store.Document, prefix string) []pr
 			items = append(items, protocol.CompletionItem{
 				Label:  name,
 				Kind:   ptr(protocol.CompletionItemKindVariable),
-				Detail: ptr("Variable"),
+				Detail: new("Variable"),
 			})
 		}
 	}
@@ -520,7 +522,7 @@ func (s *Server) getCommandCompletions(doc *store.Document) []protocol.Completio
 		items[i] = protocol.CompletionItem{
 			Label:  cmd,
 			Kind:   ptr(protocol.CompletionItemKindKeyword),
-			Detail: ptr("Command"),
+			Detail: new("Command"),
 		}
 	}
 	return items
@@ -570,7 +572,7 @@ func encodeSemanticTokens(tokens []lexer.Item, legend *protocol.SemanticTokensLe
 
 		line := protocol.UInteger(tok.Line)
 		char := protocol.UInteger(tok.Col)
-		length := protocol.UInteger(len(tok.Value))
+		length := protocol.UInteger(utf8.RuneCountInString(tok.Value))
 
 		deltaLine := line - protocol.UInteger(prevLine)
 		var deltaChar protocol.UInteger

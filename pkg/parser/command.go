@@ -94,7 +94,7 @@ func (p *Parser) collectLeadingRedirects() []Redirect {
 // parseSingleRedirect parses a single redirect and returns it with updated positions.
 func (p *Parser) parseSingleRedirect() (Redirect, int, int) {
 	rt := p.consume()
-	endLine, endCol := rt.Line, rt.Col+len(rt.Value)
+	endLine, endCol := rt.Line, rt.Col+runeLen(rt.Value)
 	v := val(rt)
 	r := Redirect{}
 
@@ -189,7 +189,7 @@ func (p *Parser) parsePrimary() Node {
 			Line:       t.Line,
 			Col:        t.Col,
 			EndLine:    t.Line,
-			EndCol:     t.Col + len(t.Value),
+			EndCol:     t.Col + runeLen(t.Value),
 			Text:       val(t),
 			Suppressed: suppressed,
 		}
@@ -207,7 +207,7 @@ func (p *Parser) parsePrimary() Node {
 				Line:    colonLine,
 				Col:     lt.Col,
 				EndLine: lt.Line,
-				EndCol:  lt.Col + len(lt.Value),
+				EndCol:  lt.Col + runeLen(lt.Value),
 				Name:    labelVal,
 			}
 		}
@@ -241,7 +241,7 @@ func (p *Parser) parsePrimary() Node {
 			Line:    t.Line,
 			Col:     t.Col,
 			EndLine: t.Line,
-			EndCol:  t.Col + len(t.Value),
+			EndCol:  t.Col + runeLen(t.Value),
 			Name:    val(t),
 		}
 	}
@@ -326,12 +326,20 @@ func (p *Parser) parseSimpleCommand(suppressed bool) *SimpleCommand {
 }
 
 func rawTokenText(toks []lexer.Item) string {
+	n := 0
+	for _, t := range toks {
+		n += len(t.Value)
+		if t.Type == lexer.TokenEscape {
+			n++
+		}
+	}
 	var sb strings.Builder
+	sb.Grow(n)
 	for _, t := range toks {
 		if t.Type == lexer.TokenEscape {
-			sb.WriteRune('^')
+			sb.WriteByte('^')
 		}
-		sb.WriteString(string(t.Value))
+		sb.WriteString(t.Value)
 	}
 	return sb.String()
 }

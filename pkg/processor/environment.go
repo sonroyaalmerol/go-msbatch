@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 )
@@ -16,17 +17,17 @@ import (
 type Environment struct {
 	mu               sync.RWMutex
 	vars             map[string]string
-	delayedExpansion bool // phase 5 enabled flag
-	batchMode        bool // true = batch file, false = command-line mode
+	delayedExpansion atomic.Bool
+	batchMode        atomic.Bool
 	stack            []envFrame
 }
 
 // NewEnvironment creates an Environment pre-populated from the OS environment.
 func NewEnvironment(batchMode bool) *Environment {
 	e := &Environment{
-		vars:      make(map[string]string),
-		batchMode: batchMode,
+		vars: make(map[string]string),
 	}
+	e.batchMode.Store(batchMode)
 	for _, kv := range os.Environ() {
 		if before, after, ok := strings.Cut(kv, "="); ok {
 			e.vars[strings.ToUpper(before)] = after
@@ -59,9 +60,9 @@ func BuiltinVarNames() map[string]bool {
 // Useful for deterministic tests.
 func NewEmptyEnvironment(batchMode bool) *Environment {
 	e := &Environment{
-		vars:      make(map[string]string),
-		batchMode: batchMode,
+		vars: make(map[string]string),
 	}
+	e.batchMode.Store(batchMode)
 	e.SetErrorLevel(0)
 	return e
 }
@@ -90,32 +91,22 @@ func (e *Environment) Delete(name string) {
 
 // SetDelayedExpansion enables or disables phase-5 delayed expansion.
 func (e *Environment) SetDelayedExpansion(enabled bool) {
-	e.mu.Lock()
-	e.delayedExpansion = enabled
-	e.mu.Unlock()
+	e.delayedExpansion.Store(enabled)
 }
 
 // DelayedExpansion reports whether delayed expansion is enabled.
 func (e *Environment) DelayedExpansion() bool {
-	e.mu.RLock()
-	v := e.delayedExpansion
-	e.mu.RUnlock()
-	return v
+	return e.delayedExpansion.Load()
 }
 
 // SetBatchMode changes whether percent-number expressions expand as batch arguments.
 func (e *Environment) SetBatchMode(enabled bool) {
-	e.mu.Lock()
-	e.batchMode = enabled
-	e.mu.Unlock()
+	e.batchMode.Store(enabled)
 }
 
 // BatchMode reports whether the environment is in batch-file mode.
 func (e *Environment) BatchMode() bool {
-	e.mu.RLock()
-	v := e.batchMode
-	e.mu.RUnlock()
-	return v
+	return e.batchMode.Load()
 }
 
 // Snapshot returns a shallow copy of all current variables.
@@ -166,7 +157,7 @@ func (e *Environment) Pop() {
 	frame := e.stack[len(e.stack)-1]
 	e.stack = e.stack[:len(e.stack)-1]
 	e.vars = frame.vars
-	e.delayedExpansion = frame.delayedExpansion
+	e.delayedExpansion.Store(frame.delayedExpansion)
 	e.mu.Unlock()
 
 	pathutil.RestoreDriveDirs(frame.driveDirs)

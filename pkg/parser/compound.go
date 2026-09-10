@@ -31,7 +31,7 @@ func (p *Parser) parseBlock() *Block {
 			if lt := p.peek(); lt.Type == lexer.TokenLabel {
 				p.consume()
 				lbl.Name = val(lt)
-				lbl.EndLine, lbl.EndCol = lt.Line, lt.Col+len(lt.Value)
+				lbl.EndLine, lbl.EndCol = lt.Line, lt.Col+runeLen(lt.Value)
 			}
 			for p.pos < len(p.tokens) {
 				nt := p.peek()
