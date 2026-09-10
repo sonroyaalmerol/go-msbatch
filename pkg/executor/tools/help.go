@@ -11,6 +11,7 @@ var ToolHelp = map[string]string{
 	"xcopy":    xcopyHelp,
 	"robocopy": robocopyHelp,
 	"timeout":  timeoutHelp,
+	"choice":   choiceHelp,
 	"where":    whereHelp,
 	"hostname": hostnameHelp,
 	"whoami":   whoamiHelp,

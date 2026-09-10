@@ -195,6 +195,7 @@ func registerBuiltins(r *Registry) {
 	// ---- external commands with native cross-platform implementations ----
 	r.HandleFunc("hostname", tools.Hostname)
 	r.HandleFunc("whoami", tools.Whoami)
+	r.HandleFunc("choice", tools.Choice)
 	r.HandleFunc("timeout", tools.Timeout)
 	r.HandleFunc("sort", tools.Sort)
 	r.HandleFunc("where", tools.Where)

@@ -343,7 +343,7 @@ func ensureWineBridge(p *processor.Processor) string {
 		// Built-ins like 'cd' don't make sense as external calls.
 		switch name {
 		case "pkzip", "pkunzip", "pkzipc", "robocopy", "xcopy", "find", "findstr",
-			"sort", "tree", "where", "timeout", "hostname", "whoami", "time", "date":
+			"sort", "tree", "where", "timeout", "hostname", "whoami", "time", "date", "choice":
 			scriptPath := filepath.Join(tmp, name+".exe")
 			// We use a shell script with a shebang. Wine/Linux will see the shebang
 			// and execute it via /bin/sh, which then runs our native msbatch.
