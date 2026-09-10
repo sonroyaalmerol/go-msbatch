@@ -108,18 +108,27 @@ func Choice(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		return choiceError(p, "/D")
 	}
 
+	display := func(s string) string {
+		if caseSensitive {
+			return s
+		}
+		return strings.ToUpper(s)
+	}
+	prompt := ""
 	if message != "" {
-		_, _ = fmt.Fprint(p.Stdout, message)
+		prompt = message + " "
 	}
 	if !hideList {
-		_, _ = fmt.Fprintf(p.Stdout, " [%s]?", strings.Join(strings.Split(choices, ""), ","))
+		_, _ = fmt.Fprintf(p.Stdout, "%s[%s]?", prompt, strings.Join(strings.Split(display(choices), ""), ","))
+	} else if prompt != "" {
+		_, _ = fmt.Fprint(p.Stdout, prompt)
 	}
 
 	readByte := choiceReader(p)
 
 	pick := func(b byte) (int, bool) {
 		if n := index(string(b)); n != 0 {
-			_, _ = fmt.Fprintf(p.Stdout, "%s\n", string(b))
+			_, _ = fmt.Fprintf(p.Stdout, "%s\n", display(string(b)))
 			return n, true
 		}
 		return 0, false
@@ -143,12 +152,12 @@ func Choice(p *processor.Processor, cmd *parser.SimpleCommand) error {
 					return nil
 				}
 			} else {
-				_, _ = fmt.Fprint(p.Stdout, "\n")
+				_, _ = fmt.Fprintf(p.Stdout, "%s\n", display(defChoice))
 				p.SetErrorLevel(defIndex)
 				return nil
 			}
 		case <-time.After(time.Duration(timeout) * time.Second):
-			_, _ = fmt.Fprint(p.Stdout, "\n")
+			_, _ = fmt.Fprintf(p.Stdout, "%s\n", display(defChoice))
 			p.SetErrorLevel(defIndex)
 			return nil
 		}
@@ -209,6 +218,7 @@ func choiceError(p *processor.Processor, arg string) error {
 
 func choiceEOF(p *processor.Processor) error {
 	_, _ = fmt.Fprint(p.Stdout, "\n")
+	_, _ = fmt.Fprintln(p.Stderr, "ERROR: The file is either empty or does not contain the valid choices.")
 	p.SetErrorLevel(255)
 	return nil
 }
