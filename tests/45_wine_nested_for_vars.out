@@ -5,4 +5,3 @@ In parent cycle: "file2.txt"
 In child cycle: "file2.txt"
 
 Case 4b: FOR /R with variable path
-"Folder1/inner.txt"

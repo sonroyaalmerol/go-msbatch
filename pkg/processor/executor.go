@@ -767,6 +767,22 @@ func splitForSetItems(s string) []string {
 	return result
 }
 
+func formatForPath(mapped, source string, absolute bool) string {
+	if absolute {
+		if path, err := filepath.Abs(mapped); err == nil {
+			mapped = path
+		}
+		return pathutil.ToWindowsPath(mapped)
+	}
+	if pathutil.IsRooted(source) {
+		return pathutil.ToWindowsPath(mapped)
+	}
+	if strings.Contains(source, `\`) {
+		return strings.ReplaceAll(mapped, "/", `\`)
+	}
+	return mapped
+}
+
 func (p *Processor) executeFor(n *parser.ForNode) error {
 	oldForVars := p.ForVars
 	p.ForVars = make(map[string]string)
@@ -782,7 +798,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 					matches = []string{part}
 				}
 				for _, m := range matches {
-					p.ForVars[n.Variable] = m
+					p.ForVars[n.Variable] = formatForPath(m, part, false)
 					if err := p.ExecuteNode(n.Do); err != nil {
 						return err
 					}
@@ -845,7 +861,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 						continue
 					}
 					if pathutil.MatchCaseInsensitive(pattern, e.Name()) {
-						p.ForVars[n.Variable] = filepath.Join(dir, e.Name())
+						p.ForVars[n.Variable] = formatForPath(filepath.Join(dir, e.Name()), part, false)
 						if err := p.ExecuteNode(n.Do); err != nil {
 							return err
 						}
@@ -866,11 +882,14 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 		rootDir := "."
 		if n.Options != "" {
 			opt := strings.TrimSpace(n.Options)
-			opt = p.ProcessLine(opt)
+			opt = p.ExpandPhase5(p.ExpandPhase1(opt))
 			if len(opt) >= 2 && opt[0] == '"' && opt[len(opt)-1] == '"' {
 				opt = opt[1 : len(opt)-1]
 			}
 			rootDir = pathutil.MapPath(opt)
+		}
+		if path, err := filepath.Abs(rootDir); err == nil {
+			rootDir = path
 		}
 		var walkErr error
 		err := filepath.Walk(rootDir, func(dirPath string, info os.FileInfo, err error) error {
@@ -887,7 +906,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 							continue
 						}
 						for _, m := range matches {
-							p.ForVars[n.Variable] = m
+							p.ForVars[n.Variable] = formatForPath(m, part, true)
 							if err := p.ExecuteNode(n.Do); err != nil {
 								walkErr = err
 								return errors.New("stop")
@@ -897,7 +916,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 							}
 						}
 					} else {
-						p.ForVars[n.Variable] = fullPattern
+						p.ForVars[n.Variable] = formatForPath(fullPattern, part, true)
 						if err := p.ExecuteNode(n.Do); err != nil {
 							walkErr = err
 							return errors.New("stop")
