@@ -7,6 +7,14 @@ import (
 	"testing"
 )
 
+func TestWinePathSync(t *testing.T) {
+	isolate(t)
+	got := runScript(t, "@echo off\nset MSBATCH_EXE_PREFIX=sh -c env\nset PATH=/opt/vendor/tools;%PATH%\nprobe.exe\n")
+	if !strings.Contains(got.stdout, `Z:\opt\vendor\tools`) {
+		t.Errorf("exe dispatch should mirror PATH into WINEPATH, stdout:\n%s", got.stdout)
+	}
+}
+
 func TestSetPathDrivesResolution(t *testing.T) {
 	dir := isolate(t)
 	if err := os.WriteFile(filepath.Join(dir, "hello-tool"), []byte("#!/bin/sh\necho from-path-dir\n"), 0o755); err != nil {

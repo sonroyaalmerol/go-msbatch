@@ -167,6 +167,7 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 				p.Logger.Debug("updated WINEPATH for wine bridge", "new_winepath", newWinePath)
 			}
 		}
+		syncWinePath(p)
 
 		// Pass the original Windows path (cmd.Name) to the prefix tool, NOT the
 		// Unix-mapped cmdName.  Wine resolves "C:\foo\app.exe" via WINEPREFIX/drive_c;
@@ -241,7 +242,50 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	return err
 }
 
-// runExeViaWine runs a command via Wine with the MSBATCH_EXE_PREFIX.
+// syncWinePath mirrors the interpreter PATH into WINEPATH so prefixed exe
+// dispatch resolves binaries the same way the batch script sees them.
+// Windows-style entries pass through; Unix entries are drive-mapped.
+func syncWinePath(p *processor.Processor) {
+	pathVal, ok := p.Env.Get("PATH")
+	if !ok || pathVal == "" {
+		return
+	}
+	if done, _ := p.Env.Get("_MSBATCH_WINEPATH_SYNC"); done == pathVal {
+		return
+	}
+	winePath, _ := p.Env.Get("WINEPATH")
+	seen := make(map[string]bool)
+	for e := range strings.SplitSeq(winePath, ";") {
+		if e != "" {
+			seen[strings.ToLower(e)] = true
+		}
+	}
+	for _, dir := range pathutil.SplitPathList(pathVal) {
+		if dir == "" {
+			continue
+		}
+		winDir := dir
+		if !isWindowsPath(dir) {
+			winDir = pathutil.ToWindowsPath(dir)
+		}
+		key := strings.ToLower(winDir)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if winePath != "" {
+			winePath += ";"
+		}
+		winePath += winDir
+	}
+	p.Env.Set("WINEPATH", winePath)
+	p.Env.Set("_MSBATCH_WINEPATH_SYNC", pathVal)
+}
+
+func isWindowsPath(s string) bool {
+	return len(s) >= 3 && s[1] == ':' && (s[2] == '\\' || s[2] == '/')
+}
+
 func runExeViaWine(p *processor.Processor, cmd *parser.SimpleCommand, exeName string, cmdWords []string) error {
 	prefix := exePrefix(p)
 	if len(prefix) == 0 {
@@ -268,6 +312,7 @@ func runExeViaWine(p *processor.Processor, cmd *parser.SimpleCommand, exeName st
 			p.Logger.Debug("updated WINEPATH for wine bridge", "new_winepath", newWinePath)
 		}
 	}
+	syncWinePath(p)
 
 	// Build args for Wine execution with case-insensitive path resolution
 	exeArgs := make([]string, 0, len(cmdWords))
