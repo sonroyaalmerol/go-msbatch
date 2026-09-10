@@ -235,3 +235,27 @@ func TestParseMultipleCommands(t *testing.T) {
 		t.Errorf("expected >= 2 nodes, got %d", len(nodes))
 	}
 }
+
+// TestParseBlockLabelStaysInside: real cmd keeps looping past label lines inside a parenthesised body.
+func TestParseBlockLabelStaysInside(t *testing.T) {
+	nodes := parse("for %%a in (1) do (\n echo one\n :S2\n echo two\n)\n")
+	var fn *parser.ForNode
+	for _, n := range nodes {
+		if f, ok := n.(*parser.ForNode); ok {
+			fn = f
+		}
+	}
+	if fn == nil {
+		t.Fatal("expected a ForNode")
+	}
+	blk, ok := fn.Do.(*parser.Block)
+	if !ok {
+		t.Fatalf("expected Do to be a Block, got %T", fn.Do)
+	}
+	if len(blk.Body) != 3 {
+		t.Fatalf("expected 3 body nodes, got %d", len(blk.Body))
+	}
+	if _, ok := blk.Body[1].(*parser.LabelNode); !ok {
+		t.Errorf("expected body[1] to be a LabelNode, got %T", blk.Body[1])
+	}
+}

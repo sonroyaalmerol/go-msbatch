@@ -139,6 +139,19 @@ func TestEchoTrace(t *testing.T) {
 				"m1\nm2\n",
 		},
 		{
+			name:   "for body with label lines continues",
+			script: "@echo on\r\nfor %%a in (1) do (\r\n echo one\r\n :S2\r\n echo two\r\n)\r\n",
+			want: "\n>for %a in (1) do (\n" +
+				"echo one  \n" +
+				" echo two \n" +
+				") \n" +
+				"\n>(\n" +
+				"echo one  \n" +
+				" echo two \n" +
+				") \n" +
+				"one\ntwo\n",
+		},
+		{
 			name:   "binary compound one line",
 			script: "@echo on\r\necho a & echo b\r\n",
 			want: "\n>echo a   & echo b \n" +
