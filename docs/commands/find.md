@@ -28,7 +28,7 @@ TYPE output.txt | FIND /V "debug"
 FIND /C "TODO" src\*.go
 ```
 
-With multiple files, output is grouped by filename with a header:
+Every file argument gets a blank line and an uppercase `---------- FILENAME` header, even for a single file, matching cmd.exe:
 
 ```
 ---------- FILE1.TXT
@@ -42,6 +42,6 @@ another match
 
 - **String must be double-quoted.** Unlike grep, the search string is always given as a quoted argument. `FIND error file.txt` (without quotes) will attempt to open a file named `error`.
 - **No regex support.** The search string is treated as a literal substring, not a regular expression. Use `FINDSTR` (passthrough to host) for regex.
-- `/C` prints a count line even for files with zero matches (count is `0`), matching cmd.exe behaviour.
+- `/C` renders the count appended to the header (`---------- FILENAME: 2`) and prints `0` counts for files with zero matches, matching cmd.exe behaviour.
 - `FIND` is implemented natively in Go and works cross-platform without needing the host `find` utility.
 - File arguments support glob expansion. `FIND "x" *.txt` expands to all matching `.txt` files before the search runs.

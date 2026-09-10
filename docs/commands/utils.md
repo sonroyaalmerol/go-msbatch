@@ -94,7 +94,7 @@ TIMEOUT /T seconds [/NOBREAK]
 | Flag | Status | Meaning |
 |------|--------|---------|
 | `/T seconds` | Implemented | Sleep for `seconds` seconds |
-| `/NOBREAK` | Accepted, no effect | Prevent Ctrl-C from interrupting |
+| `/NOBREAK` | Implemented | Ignore key presses (Ctrl-C still interrupts) |
 | `/T -1` | **Not implemented** | Wait indefinitely for a keypress |
 
 ### Behaviour
@@ -104,11 +104,10 @@ TIMEOUT /T 5
 TIMEOUT /T 10 /NOBREAK
 ```
 
-Sleeps for the given number of seconds using `time.Sleep`.
+Prints `Waiting for N seconds, press a key to continue ...` (no trailing newline), then counts down one digit per second, each digit preceded by a backspace, ending with a newline — matching cmd.exe byte for byte.
 
 ### Caveats
 
 - **`/T -1` (wait indefinitely for keypress) is not implemented.** go-msbatch will treat `-1` seconds as immediately returning (zero sleep duration is clamped).
-- **`/NOBREAK` is accepted but ignored.** The timeout can always be interrupted by signals (Ctrl-C) since go-msbatch does not intercept them during sleep.
-- Real cmd.exe counts down and displays `Waiting for X seconds, press a key to continue ...`. go-msbatch sleeps silently without any countdown display.
+- **`/NOBREAK`** prints `Waiting for N seconds, press CTRL+C to quit ...` instead and ignores key presses. Without it, a key press ends the wait early (only when stdin is a terminal).
 - Implemented natively in Go.

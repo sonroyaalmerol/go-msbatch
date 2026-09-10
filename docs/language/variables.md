@@ -120,7 +120,7 @@ Without delayed expansion, `%COUNT%` inside the loop body would be expanded once
 
 ## SETLOCAL / ENDLOCAL Scoping
 
-`SETLOCAL` pushes the current variable snapshot onto a stack. `ENDLOCAL` pops it, discarding all variable changes made since the last `SETLOCAL`.
+`SETLOCAL` pushes the current variable snapshot, working directory, and per-drive directory state onto a stack. `ENDLOCAL` pops it, discarding variable changes since the `SETLOCAL` and restoring the captured directories, like cmd.exe.
 
 ```bat
 SET X=outer
@@ -134,7 +134,7 @@ ECHO %X%       :: outer
 **Caveats:**
 
 - `SETLOCAL` scopes are not automatically closed when a subroutine returns via `EXIT /B`. Scripts that use `SETLOCAL` inside a `:label` subroutine should call `ENDLOCAL` before `EXIT /B`, or the scope stack will accumulate.
-- Real cmd.exe implicitly closes unclosed `SETLOCAL` scopes at the end of a batch file. go-msbatch does the same only for the top-level batch invocation; nested `CALL` returns do not auto-close inner scopes.
+- Real cmd.exe implicitly closes unclosed `SETLOCAL` scopes at the end of a batch file. go-msbatch does the same at the end of every batch file, including ones reached through nested `CALL`. `EXIT /B` from a `:label` subroutine does not auto-close scopes opened inside it.
 
 ## Special Variables
 

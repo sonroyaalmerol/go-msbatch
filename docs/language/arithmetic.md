@@ -66,7 +66,7 @@ SET /A R=!0        :: 1  (logical NOT of 0)
 
 ## Caveats
 
-- **Division and modulo by zero** silently return `0` rather than raising an error. Real cmd.exe prints `Divide by zero error.` and sets `ERRORLEVEL` to a non-zero value.
+- **Division and modulo by zero** print `Divide by zero error.`, set `ERRORLEVEL` to 1073750993, leave the destination variable unchanged, and skip any remaining comma-separated assignments, matching cmd.exe.
 - **Integer size** is 64-bit signed. Overflow wraps silently.
 - **`%` in batch scripts** must be doubled (`%%`) to produce a literal `%` for the modulo operator when used inside a `.bat` file. In interactive (non-batch) mode, a single `%` is sufficient.
   ```bat

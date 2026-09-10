@@ -28,16 +28,16 @@ Each line (after line-continuation joining) is processed through these phases be
 
 Performed at parse time before the lexer sees the text.
 
-| Syntax | Meaning |
-|--------|---------|
-| `%%` | Literal `%` |
-| `%0`–`%9` | Positional parameters |
-| `%*` | All positional parameters joined |
-| `%VAR%` | Environment variable |
-| `%VAR:~start,len%` | Substring of variable |
-| `%VAR:old=new%` | String substitution (case-insensitive, all occurrences) |
-| `%~[mods]n` | Tilde modifier on positional parameter |
-| `%~$PATHVAR:n` | Search positional parameter in a path variable |
+| Syntax             | Meaning                                                 |
+| ------------------ | ------------------------------------------------------- |
+| `%%`               | Literal `%`                                             |
+| `%0`–`%9`          | Positional parameters                                   |
+| `%*`               | All positional parameters joined                        |
+| `%VAR%`            | Environment variable                                    |
+| `%VAR:~start,len%` | Substring of variable                                   |
+| `%VAR:old=new%`    | String substitution (case-insensitive, all occurrences) |
+| `%~[mods]n`        | Tilde modifier on positional parameter                  |
+| `%~$PATHVAR:n`     | Search positional parameter in a path variable          |
 
 See [variables.md](language/variables.md) for full modifier table.
 
@@ -109,5 +109,5 @@ Each side of a `|` runs concurrently in a goroutine. An `os.Pipe()` connects the
 - **No `DOSKEY` support** — macro definitions are not implemented.
 - **No `CMDEXTVERSION` conditional** always evaluates as version `2`.
 - **`ENABLEEXTENSIONS`** is accepted by `SETLOCAL` but has no effect; extensions are always active.
-- **No `DISABLEDELAYEDEXPANSION`** — once enabled in a SETLOCAL scope, it cannot be turned off within that scope (ENDLOCAL restores the previous state correctly).
-- **FOR variable names** are single ASCII letters only (A–Z, a–z). Multi-character variable names are not supported.
+- **`DISABLEDELAYEDEXPANSION`** turns delayed expansion off within the scope, as in cmd.exe.
+- **FOR variable names** are single characters (any character except `%`); multi-character names are not supported, matching cmd.exe.

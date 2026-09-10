@@ -94,8 +94,8 @@ VERIFY OFF
 Stores state in the internal `__VERIFY__` environment variable.
 
 ```
-VERIFY is OFF
-VERIFY is ON
+VERIFY is off.
+VERIFY is on.
 ```
 
 ### Caveats

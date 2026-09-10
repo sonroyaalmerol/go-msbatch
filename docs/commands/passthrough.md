@@ -4,7 +4,7 @@ Any command that is not a built-in or a natively-implemented tool is forwarded t
 
 ## Behaviour
 
-- Arguments are forwarded verbatim after Windows-style path mapping and glob expansion.
+- Arguments are forwarded verbatim after Windows-style path mapping. Like cmd.exe, arguments are never glob-expanded — a literal `*` reaches the child process unchanged and wildcard handling is left to the invoked program.
 - The child process inherits a merged environment (host environment + interpreter's current variable snapshot).
 - `ERRORLEVEL` is set to the exit code returned by the child process.
 - `.bat` / `.cmd` files found on the path are executed in-process instead (see [architecture.md](../architecture.md)).

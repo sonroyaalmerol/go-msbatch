@@ -250,7 +250,7 @@ When a command falls through to `os/exec` (not a `.bat`/`.cmd` file), the child 
 
 ## SET /A division and modulo by zero
 
-Real cmd.exe raises a divide-by-zero error. go-msbatch silently returns `0` for both `/` and `%` when the divisor is zero.
+go-msbatch matches cmd.exe: `/` and `%` with a zero divisor print `Divide by zero error.`, set `ERRORLEVEL` to 1073750993, leave the destination unchanged, and skip the remaining comma-separated assignments.
 
 ## Debug Logging
 
