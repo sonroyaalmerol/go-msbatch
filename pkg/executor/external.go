@@ -39,10 +39,7 @@ func exePrefix(p *processor.Processor) []string {
 // parent's environment and I/O). Otherwise the command is forwarded to the
 // host OS via os/exec.
 //
-// On non-Windows systems, commands whose resolved name ends in .exe are
-// dispatched through the prefix defined by MSBATCH_EXE_PREFIX; without it
-// they fail immediately with a descriptive error.
-//
+
 // Argument handling differs between prefixed and native dispatch:
 //   - Native: Windows-style paths in arguments are converted via MapPath and
 //     glob patterns are expanded against the Unix filesystem.
@@ -118,6 +115,16 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	if isExe {
 		prefix := exePrefix(p)
 		if len(prefix) == 0 {
+			if !fileExists(cmdName) {
+				if !fileExists(filepath.Dir(cmdName)) {
+					fmt.Fprintf(p.Stderr, "The system cannot find the path specified.\n")
+					p.FailureWithCode(3)
+					return nil
+				}
+				fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command,\noperable program or batch file.\n", cmd.Name)
+				p.FailureWithCode(9009)
+				return nil
+			}
 			fmt.Fprintf(p.Stderr, "cannot execute '%s': no exe prefix configured (set MSBATCH_EXE_PREFIX, e.g. MSBATCH_EXE_PREFIX=wine)\n", cmd.Name)
 			p.FailureWithCode(9009)
 			return nil
