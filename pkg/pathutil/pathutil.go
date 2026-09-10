@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 )
 
 func StripQuotes(s string) string {
@@ -81,6 +82,75 @@ func uncMount(server, share string) string {
 	return ""
 }
 
+type dirCacheEntry struct {
+	modTime time.Time
+	names   []string
+}
+
+var (
+	dirCacheMu sync.Mutex
+	dirCache   = map[string]dirCacheEntry{}
+)
+
+const dirCacheMax = 4096
+
+var dirCacheOff = sync.OnceValue(func() bool {
+	return os.Getenv("MSBATCH_NO_FS_CACHE") != ""
+})
+
+func readDirCached(dir string) ([]string, bool) {
+	if dirCacheOff() {
+		return dirEntryNames(dir), false
+	}
+
+	fi, err := os.Stat(dir)
+	if err != nil || !fi.IsDir() {
+		return nil, false
+	}
+	modTime := fi.ModTime()
+
+	dirCacheMu.Lock()
+	e, ok := dirCache[dir]
+	dirCacheMu.Unlock()
+	if ok && e.modTime.Equal(modTime) {
+		return e.names, true
+	}
+
+	names := dirEntryNames(dir)
+	if names == nil {
+		return nil, false
+	}
+
+	dirCacheMu.Lock()
+	if len(dirCache) >= dirCacheMax {
+		clear(dirCache)
+	}
+	dirCache[dir] = dirCacheEntry{modTime: modTime, names: names}
+	dirCacheMu.Unlock()
+	return names, false
+}
+
+func dirEntryNames(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, len(entries))
+	for i, ent := range entries {
+		names[i] = ent.Name()
+	}
+	return names
+}
+
+func scanEntryNames(names []string, part string) string {
+	for _, name := range names {
+		if strings.EqualFold(name, part) {
+			return name
+		}
+	}
+	return ""
+}
+
 func ResolveCaseInsensitive(path string) string {
 	if _, err := os.Stat(path); err == nil {
 		return path
@@ -105,32 +175,41 @@ func ResolveCaseInsensitive(path string) string {
 			continue
 		}
 
-		entries, err := os.ReadDir(currentPath)
-		if err != nil {
+		names, fromCache := readDirCached(currentPath)
+		if names == nil {
 			if strings.ContainsAny(part, "*?[") {
 				return currentPath + "/" + part
 			}
 			return path
 		}
 
-		matched := false
-		for _, entry := range entries {
-			if strings.EqualFold(entry.Name(), part) {
-				currentPath = filepath.Join(currentPath, entry.Name())
-				matched = true
-				break
+		matchName := scanEntryNames(names, part)
+		if fromCache {
+			if matchName != "" {
+				if _, err := os.Stat(filepath.Join(currentPath, matchName)); err != nil {
+					matchName = ""
+				}
+			}
+			if matchName == "" {
+				if fresh := dirEntryNames(currentPath); fresh != nil {
+					names = fresh
+					matchName = scanEntryNames(names, part)
+				}
 			}
 		}
 
-		if !matched {
-			if strings.ContainsAny(part, "*?[") {
-				if filepath.IsAbs(path) && currentPath == "/" {
-					return "/" + part
-				}
-				return currentPath + "/" + strings.Join(parts[i:], "/")
-			}
-			return path
+		if matchName != "" {
+			currentPath = filepath.Join(currentPath, matchName)
+			continue
 		}
+
+		if strings.ContainsAny(part, "*?[") {
+			if filepath.IsAbs(path) && currentPath == "/" {
+				return "/" + part
+			}
+			return currentPath + "/" + strings.Join(parts[i:], "/")
+		}
+		return path
 	}
 
 	if strings.HasPrefix(path, "./") && !strings.HasPrefix(currentPath, "./") {
@@ -429,17 +508,17 @@ func GlobCaseInsensitive(pattern string) ([]string, error) {
 		dir = ResolveCaseInsensitive(dir)
 	}
 
-	entries, err := os.ReadDir(dir)
-	if err != nil {
+	names := dirEntryNames(dir)
+	if names == nil {
 		return nil, nil
 	}
 
 	patternLower := strings.ToLower(base)
 	var result []string
 
-	for _, entry := range entries {
-		if matched, _ := filepath.Match(patternLower, strings.ToLower(entry.Name())); matched {
-			result = append(result, filepath.Join(dir, entry.Name()))
+	for _, name := range names {
+		if matched, _ := filepath.Match(patternLower, strings.ToLower(name)); matched {
+			result = append(result, filepath.Join(dir, name))
 		}
 	}
 

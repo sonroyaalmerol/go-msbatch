@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStripQuotes(t *testing.T) {
@@ -803,5 +804,60 @@ func TestLookPathIn(t *testing.T) {
 	t.Setenv("MSBATCH_DRIVE_C", "/")
 	if got, err := LookPathIn(`C:`+strings.ReplaceAll(bin, "/", `\`), "probe-tool"); err != nil || got != filepath.Join(bin, "probe-tool") {
 		t.Errorf("LookPathIn windows-style dir = %q, %v", got, err)
+	}
+}
+
+func TestResolveCaseInsensitiveCacheInvalidation(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Alpha.txt"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveCaseInsensitive(filepath.Join(dir, "ALPHA.TXT")); filepath.Base(got) != "Alpha.txt" {
+		t.Fatalf("initial resolve = %q", got)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "Beta.txt"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bumpDirMtime(t, dir)
+	if got := ResolveCaseInsensitive(filepath.Join(dir, "BETA.TXT")); filepath.Base(got) != "Beta.txt" {
+		t.Fatalf("resolve after create = %q", got)
+	}
+
+	if err := os.Remove(filepath.Join(dir, "Beta.txt")); err != nil {
+		t.Fatal(err)
+	}
+	bumpDirMtime(t, dir)
+	if got := ResolveCaseInsensitive(filepath.Join(dir, "BETA.TXT")); filepath.Base(got) == "Beta.txt" {
+		t.Fatalf("resolve after delete = %q", got)
+	}
+}
+
+func TestGlobCaseInsensitiveSeesNewFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "one.dat"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := GlobCaseInsensitive(filepath.Join(dir, "*.dat")); len(got) != 1 {
+		t.Fatalf("initial glob = %v", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "two.dat"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bumpDirMtime(t, dir)
+	if got, _ := GlobCaseInsensitive(filepath.Join(dir, "*.dat")); len(got) != 2 {
+		t.Fatalf("glob after create = %v", got)
+	}
+}
+
+func bumpDirMtime(t *testing.T, dir string) {
+	t.Helper()
+	fi, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	future := fi.ModTime().Add(2 * time.Second)
+	if err := os.Chtimes(dir, future, future); err != nil {
+		t.Fatal(err)
 	}
 }
