@@ -396,6 +396,9 @@ func (p *Parser) collectQuotedStringWithToken() (string, lexer.Item) {
 	}
 
 	for p.pos < len(p.tokens) {
+		if p.peek().Type == lexer.TokenNewline || p.peek().Type == lexer.TokenEOF {
+			break
+		}
 		t2 := p.consume()
 		sb.WriteString(val(t2))
 		lastTok = t2

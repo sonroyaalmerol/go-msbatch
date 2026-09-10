@@ -104,6 +104,12 @@ func (bl *BatchLexer) lexStringDoubleBody(next stateFn) stateFn {
 			case 0:
 				bl.emit(TokenStringDouble)
 				return nil
+			case '\r', '\n':
+				bl.prev()
+				if bl.width() > 0 {
+					bl.emit(TokenStringDouble)
+				}
+				return next
 			case '"':
 				bl.emit(TokenStringDouble)
 				return next
