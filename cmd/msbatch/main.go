@@ -210,17 +210,11 @@ func runFile(filename string, args []string, debugMode processor.DebugMode) {
 	if err := proc.Execute(nodes); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
-	exitWithErrorLevel(proc)
+	exitWithCommandStatus(proc)
 }
 
-// exitWithErrorLevel exits with the interpreter's final ERRORLEVEL, as cmd.exe does.
-func exitWithErrorLevel(proc *processor.Processor) {
-	if lv, ok := proc.Env.Get("ERRORLEVEL"); ok {
-		if code, err := strconv.Atoi(lv); err == nil {
-			os.Exit(code)
-		}
-	}
-	os.Exit(0)
+func exitWithCommandStatus(proc *processor.Processor) {
+	os.Exit(proc.ExitCode)
 }
 
 // runCommand executes a single command string and exits.
@@ -228,10 +222,13 @@ func runCommand(cmdStr string, debugMode processor.DebugMode) {
 	env := processor.NewEnvironment(false)
 	proc := newProcessor(env, nil, executor.New(), debugMode)
 	nodes := processor.ParseExpanded(cmdStr)
+	for _, n := range nodes {
+		parser.SetSuppressed(n)
+	}
 	if err := proc.Execute(nodes); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
-	exitWithErrorLevel(proc)
+	exitWithCommandStatus(proc)
 }
 
 // First word → complete registered command names.

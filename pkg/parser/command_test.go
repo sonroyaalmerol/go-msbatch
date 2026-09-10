@@ -1,6 +1,7 @@
 package parser_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
@@ -188,5 +189,76 @@ func TestCommandRedirectAfterQuotedArg(t *testing.T) {
 	}
 	if r.Target != "timetemp.txt" {
 		t.Errorf("expected target=timetemp.txt, got %q", r.Target)
+	}
+}
+
+func TestCommandOperatorsDoNotCrossNewlines(t *testing.T) {
+	nodes := parse("echo a &\necho b\n")
+	if len(nodes) != 2 {
+		t.Fatalf("got %d nodes, want 2", len(nodes))
+	}
+	for i, want := range []string{"echo", "echo"} {
+		cmd, ok := nodes[i].(*parser.SimpleCommand)
+		if !ok {
+			t.Fatalf("node %d has type %T, want *parser.SimpleCommand", i, nodes[i])
+		}
+		if cmd.Name != want {
+			t.Errorf("node %d name = %q, want %q", i, cmd.Name, want)
+		}
+	}
+}
+
+func TestCommandLeadingOperatorAborts(t *testing.T) {
+	nodes := parse("& echo unreachable\n")
+	if len(nodes) == 0 {
+		t.Fatal("got no nodes")
+	}
+	binary, ok := nodes[0].(*parser.BinaryNode)
+	if !ok {
+		t.Fatalf("first node has type %T, want *parser.BinaryNode", nodes[0])
+	}
+	abort, ok := binary.Left.(*parser.AbortNode)
+	if !ok {
+		t.Fatalf("left node has type %T, want *parser.AbortNode", binary.Left)
+	}
+	if abort.Message != "& was unexpected at this time." {
+		t.Errorf("message = %q", abort.Message)
+	}
+}
+
+func TestCommandRawPreservesEscapedOperators(t *testing.T) {
+	nodes := parse("echo left^&right\n")
+	cmd, ok := nodes[0].(*parser.SimpleCommand)
+	if !ok {
+		t.Fatalf("first node has type %T, want *parser.SimpleCommand", nodes[0])
+	}
+	if cmd.Raw != "echo left^&right" {
+		t.Errorf("raw = %q", cmd.Raw)
+	}
+}
+
+func TestCommandRawPreservesCompoundStatements(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		raw    func(parser.Node) string
+	}{
+		{name: "if", source: "if %V%==1 echo yes\n", raw: func(n parser.Node) string { return n.(*parser.IfNode).Raw }},
+		{name: "for", source: "for %%a in (1) do echo %%a\n", raw: func(n parser.Node) string { return n.(*parser.ForNode).Raw }},
+		{name: "block", source: "(echo %V%)\n", raw: func(n parser.Node) string { return n.(*parser.Block).Raw }},
+		{name: "binary", source: "echo %V% & echo tail\n", raw: func(n parser.Node) string { return n.(*parser.BinaryNode).Raw }},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			nodes := parse(tc.source)
+			if len(nodes) != 1 {
+				t.Fatalf("got %d nodes, want 1", len(nodes))
+			}
+			want := strings.TrimSuffix(tc.source, "\n")
+			if got := tc.raw(nodes[0]); got != want {
+				t.Errorf("raw = %q, want %q", got, want)
+			}
+		})
 	}
 }

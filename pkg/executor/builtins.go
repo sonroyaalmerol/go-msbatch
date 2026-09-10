@@ -85,7 +85,9 @@ func cmdSet(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 
 	if strings.HasPrefix(strings.ToLower(arg), "/p") {
-		promptStr := arg[2:]
+		rest := strings.TrimSpace(arg[2:])
+		rest = strings.Trim(rest, "\"")
+		promptStr := rest
 		if before, after, ok := strings.Cut(promptStr, "="); ok {
 			fmt.Fprint(p.Stdout, after)
 			var input string

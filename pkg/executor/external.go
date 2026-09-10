@@ -547,6 +547,7 @@ func runBatchFile(p *processor.Processor, batPath string, args []string, called 
 	nodes := processor.ParseExpanded(src)
 
 	execErr := child.Execute(nodes)
+	p.ExitCode = child.ExitCode
 
 	for p.Env.StackDepth() > initialDepth {
 		p.Env.Pop()

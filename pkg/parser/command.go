@@ -9,12 +9,13 @@ import (
 
 // parseBinary handles |, &, ||, && at the top level.
 func (p *Parser) parseBinary() Node {
+	startPos := p.pos
 	left := p.parsePrimary()
 	if left == nil {
 		return nil
 	}
 	for {
-		p.skipWS()
+		p.skipSpaces()
 		t := p.peek()
 		if t.Type != lexer.TokenPunctuation {
 			break
@@ -34,7 +35,11 @@ func (p *Parser) parseBinary() Node {
 		if op == 0 {
 			break
 		}
-		p.consume() // consume operator
+		p.consume()
+		p.skipSpaces()
+		if nt := p.peek(); nt.Type == lexer.TokenNewline || nt.Type == lexer.TokenEOF {
+			break
+		}
 		right := p.parsePrimary()
 		if right == nil {
 			break
@@ -59,6 +64,13 @@ func (p *Parser) parseBinary() Node {
 				Right:   right,
 			}
 		}
+	}
+	raw := rawTokenText(p.tokens[startPos:p.pos])
+	switch node := left.(type) {
+	case *BinaryNode:
+		node.Raw = raw
+	case *PipeNode:
+		node.Raw = raw
 	}
 	return left
 }
@@ -143,6 +155,9 @@ func (p *Parser) parsePrimary() Node {
 	if t.Type == lexer.TokenEOF {
 		return nil
 	}
+	if t.Type == lexer.TokenPunctuation && isOperatorRun(val(t)) {
+		return &AbortNode{Line: t.Line, Col: t.Col, Message: val(t) + " was unexpected at this time."}
+	}
 
 	leadingRedirects := p.collectLeadingRedirects()
 
@@ -158,8 +173,11 @@ func (p *Parser) parsePrimary() Node {
 	// Compound block
 	if t.Type == lexer.TokenPunctuation && val(t) == "(" {
 		block := p.parseBlock()
-		if block != nil && len(leadingRedirects) > 0 {
-			block.Redirects = append(leadingRedirects, block.Redirects...)
+		if block != nil {
+			block.Suppressed = suppressed
+			if len(leadingRedirects) > 0 {
+				block.Redirects = append(leadingRedirects, block.Redirects...)
+			}
 		}
 		return block
 	}
@@ -168,11 +186,12 @@ func (p *Parser) parsePrimary() Node {
 	if t.Type == lexer.TokenComment {
 		p.consume()
 		return &CommentNode{
-			Line:    t.Line,
-			Col:     t.Col,
-			EndLine: t.Line,
-			EndCol:  t.Col + len(t.Value),
-			Text:    val(t),
+			Line:       t.Line,
+			Col:        t.Col,
+			EndLine:    t.Line,
+			EndCol:     t.Col + len(t.Value),
+			Text:       val(t),
+			Suppressed: suppressed,
 		}
 	}
 
@@ -199,11 +218,19 @@ func (p *Parser) parsePrimary() Node {
 	if t.Type == lexer.TokenKeyword {
 		switch strings.ToLower(val(t)) {
 		case "if":
-			return p.parseIf()
+			n := p.parseIf()
+			if suppressed {
+				SetSuppressed(n)
+			}
+			return n
 		case "for":
 			return p.parseFor(suppressed)
 		case "rem":
-			return p.parseRem()
+			n := p.parseRem()
+			if suppressed {
+				SetSuppressed(n)
+			}
+			return n
 		}
 	}
 
@@ -254,6 +281,7 @@ func (p *Parser) parseSimpleCommand(suppressed bool) *SimpleCommand {
 		return nil
 	}
 	cmd := &SimpleCommand{Suppressed: suppressed, Line: t.Line, Col: t.Col}
+	startPos := p.pos
 	firstTok := p.consume()
 	cmd.Name = val(firstTok)
 	endLine := firstTok.Line
@@ -293,7 +321,19 @@ func (p *Parser) parseSimpleCommand(suppressed bool) *SimpleCommand {
 	endLine, endCol = p.collectArgs(cmd, endLine, endCol)
 	cmd.EndLine = endLine
 	cmd.EndCol = endCol
+	cmd.Raw = rawTokenText(p.tokens[startPos:p.pos])
 	return cmd
+}
+
+func rawTokenText(toks []lexer.Item) string {
+	var sb strings.Builder
+	for _, t := range toks {
+		if t.Type == lexer.TokenEscape {
+			sb.WriteRune('^')
+		}
+		sb.WriteString(string(t.Value))
+	}
+	return sb.String()
 }
 
 // collectArgs reads tokens after the command name and fills cmd.Args and cmd.Redirects.

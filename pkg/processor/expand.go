@@ -217,6 +217,14 @@ func Phase1PercentExpand(src string, env *Environment, args []string, originalAr
 			rawName := string(runes[i+1 : end])
 			i = end + 1
 
+			if varName, manipulation := SplitVarModifier(rawName); manipulation != "" &&
+				!strings.HasPrefix(manipulation, "~") && !strings.Contains(manipulation, "=") {
+				if _, defined := env.Get(varName); defined {
+					sb.WriteString(rawName)
+					continue
+				}
+			}
+
 			val, ok := resolveVariable(rawName, env)
 
 			if !ok {
@@ -288,6 +296,9 @@ func applySlicing(val, sliceExpr string) string {
 	if before, after, ok := strings.Cut(sliceExpr, ","); ok {
 		startStr = before
 		lenStr = after
+		if after == "" {
+			return ""
+		}
 	}
 
 	start, _ := strconv.Atoi(startStr)
@@ -517,7 +528,6 @@ func Phase5DelayedExpand(src string, env *Environment) string {
 
 		end := indexRuneFrom(runes, '!', i+1)
 		if end < 0 {
-			sb.WriteRune('!')
 			i++
 			continue
 		}

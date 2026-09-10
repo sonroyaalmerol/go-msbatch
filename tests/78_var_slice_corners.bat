@@ -1,0 +1,11 @@
+@echo off
+set V=abcdef
+echo A=[%V:~0,0%]
+echo B=[%V:~,-0%]
+echo C=[%V:~0,-0%]
+echo D=[%V:~6,2%]
+echo E=[%V:~-99,3%]
+echo F=[%V:a=%]
+echo G=[%V:~1,%]
+echo H=[%V::~2%]
+echo end

@@ -1,0 +1,10 @@
+@echo off
+setlocal enabledelayedexpansion
+set V=a^&b
+echo plain=%V%
+echo delayed=!V!
+set "W=x!y"
+echo W=!W!
+set SPECIAL=one&two
+echo S=!SPECIAL!
+echo end

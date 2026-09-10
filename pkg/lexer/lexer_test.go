@@ -158,10 +158,8 @@ func TestSingleTokens(t *testing.T) {
 		{"punct_or_or", "||", []tok{{TokenPunctuation, "||"}}},
 		{"punct_amp", "&", []tok{{TokenPunctuation, "&"}}},
 		{"punct_and_and", "&&", []tok{{TokenPunctuation, "&&"}}},
+		{"punct_eq_before_newline", "=\n", []tok{{TokenPunctuation, "="}, {TokenNewline, "\n"}}},
 
-		// ── TokenOperator ─────────────────────────────────────────────────
-		// == is the only operator emitted from stateWord; arithmetic operators
-		// are covered in the combination tests.
 		{"operator_eq_eq", "==", []tok{{TokenOperator, "=="}}},
 	}
 

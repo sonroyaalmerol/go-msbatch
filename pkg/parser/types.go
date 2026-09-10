@@ -21,7 +21,19 @@ const (
 	NodeAndThen // &&
 	NodeLabel
 	NodeComment
+	NodeAbort
 )
+
+// AbortNode terminates the script with a cmd-style "was unexpected" diagnostic.
+type AbortNode struct {
+	Line    int
+	Col     int
+	Message string
+}
+
+func (a *AbortNode) Kind() NodeKind   { return NodeAbort }
+func (a *AbortNode) Pos() Position    { return Position{Line: a.Line, Col: a.Col} }
+func (a *AbortNode) EndPos() Position { return Position{Line: a.Line, Col: a.Col + len(a.Message)} }
 
 // Diagnostic represents a parse error or warning with source location.
 type Diagnostic struct {
@@ -50,12 +62,12 @@ type Position struct {
 type RedirectKind int
 
 const (
-	RedirectOut    RedirectKind = iota // >
-	RedirectAppend                     // >>
-	RedirectIn                         // <
-	RedirectOutFD                      // >&N
-	RedirectInFD                       // <&N
-	RedirectBadDoubleIn                // << (always a cmd.exe error)
+	RedirectOut         RedirectKind = iota // >
+	RedirectAppend                          // >>
+	RedirectIn                              // <
+	RedirectOutFD                           // >&N
+	RedirectInFD                            // <&N
+	RedirectBadDoubleIn                     // << (always a cmd.exe error)
 )
 
 // Redirect represents a single I/O redirection.
@@ -78,6 +90,38 @@ type SimpleCommand struct {
 	Args             []string
 	RawArgs          []string
 	Redirects        []Redirect
+	Raw              string
+	PreExpanded      bool
+}
+
+// MarkPreExpanded flags a whole statement tree as already percent-expanded.
+func MarkPreExpanded(n Node) {
+	switch node := n.(type) {
+	case *SimpleCommand:
+		node.PreExpanded = true
+	case *BinaryNode:
+		node.PreExpanded = true
+		MarkPreExpanded(node.Left)
+		MarkPreExpanded(node.Right)
+	case *PipeNode:
+		node.PreExpanded = true
+		MarkPreExpanded(node.Left)
+		MarkPreExpanded(node.Right)
+	case *Block:
+		node.PreExpanded = true
+		for _, b := range node.Body {
+			MarkPreExpanded(b)
+		}
+	case *IfNode:
+		node.PreExpanded = true
+		MarkPreExpanded(node.Then)
+		if node.Else != nil {
+			MarkPreExpanded(node.Else)
+		}
+	case *ForNode:
+		node.PreExpanded = true
+		MarkPreExpanded(node.Do)
+	}
 }
 
 func (c *SimpleCommand) Kind() NodeKind   { return NodeSimpleCommand }
@@ -133,12 +177,15 @@ func UnquoteArg(s string) string {
 
 // Block is a parenthesised sequence of commands: ( cmd1 \n cmd2 ).
 type Block struct {
-	Line      int // 0-based source line of the opening '('
-	Col       int // 0-based source column of the opening '('
-	EndLine   int // 0-based source line of the closing ')'; same as Line if unclosed
-	EndCol    int // 0-based source column after the closing ')'
-	Body      []Node
-	Redirects []Redirect // redirections after the closing ')'
+	Line        int
+	Col         int
+	EndLine     int
+	EndCol      int
+	Body        []Node
+	Redirects   []Redirect
+	Suppressed  bool
+	Raw         string
+	PreExpanded bool
 }
 
 func (b *Block) Kind() NodeKind   { return NodeBlock }
@@ -182,14 +229,17 @@ type Condition struct {
 
 // IfNode represents an IF statement.
 type IfNode struct {
-	Line            int // 0-based source line of the "if" keyword
-	Col             int // 0-based source column of the "if" keyword
-	EndLine         int // 0-based source line of the end of the IF statement
-	EndCol          int // 0-based source column of the end of the IF statement
+	Line            int
+	Col             int
+	EndLine         int
+	EndCol          int
 	CaseInsensitive bool
 	Cond            Condition
 	Then            Node
-	Else            Node // nil if absent
+	Else            Node
+	Suppressed      bool
+	Raw             string
+	PreExpanded     bool
 }
 
 func (n *IfNode) Kind() NodeKind   { return NodeIf }
@@ -209,17 +259,20 @@ const (
 
 // ForNode represents a FOR loop.
 type ForNode struct {
-	Line     int // 0-based source line of the "for" keyword
-	Col      int // 0-based source column of the "for" keyword
-	EndLine  int // 0-based source line of the end of the FOR statement
-	EndCol   int // 0-based source column of the end of the FOR statement
-	VarLine  int // 0-based source line of the loop variable token
-	VarCol   int // 0-based source column of the loop variable letter
-	Variant  ForKind
-	Options  string   // FOR /F option string (content of quotes, single-quotes, or backticks)
-	Variable string   // loop variable name, e.g. "i" for %%i
-	Set      []string // items between IN( and )
-	Do       Node
+	Line        int
+	Col         int
+	EndLine     int
+	EndCol      int
+	VarLine     int
+	VarCol      int
+	Variant     ForKind
+	Options     string
+	Variable    string
+	Set         []string
+	Do          Node
+	Suppressed  bool
+	Raw         string
+	PreExpanded bool
 }
 
 func (n *ForNode) Kind() NodeKind   { return NodeFor }
@@ -228,12 +281,14 @@ func (n *ForNode) EndPos() Position { return Position{Line: n.EndLine, Col: n.En
 
 // PipeNode represents cmd1 | cmd2.
 type PipeNode struct {
-	Line    int // 0-based source line of the left operand
-	Col     int // 0-based source column of the left operand
-	EndLine int // 0-based source line of the end of the pipe
-	EndCol  int // 0-based source column of the end of the pipe
-	Left    Node
-	Right   Node
+	Line        int
+	Col         int
+	EndLine     int
+	EndCol      int
+	Left        Node
+	Right       Node
+	Raw         string
+	PreExpanded bool
 }
 
 func (n *PipeNode) Kind() NodeKind   { return NodePipe }
@@ -242,13 +297,15 @@ func (n *PipeNode) EndPos() Position { return Position{Line: n.EndLine, Col: n.E
 
 // BinaryNode handles &&, ||, &.
 type BinaryNode struct {
-	Line    int      // 0-based source line of the left operand
-	Col     int      // 0-based source column of the left operand
-	EndLine int      // 0-based source line of the end of the binary expression
-	EndCol  int      // 0-based source column of the end of the binary expression
-	Op      NodeKind // NodeConcat, NodeOrElse, NodeAndThen
-	Left    Node
-	Right   Node
+	Line        int
+	Col         int
+	EndLine     int
+	EndCol      int
+	Op          NodeKind
+	Left        Node
+	Right       Node
+	Raw         string
+	PreExpanded bool
 }
 
 func (n *BinaryNode) Kind() NodeKind   { return n.Op }
@@ -270,11 +327,55 @@ func (n *LabelNode) EndPos() Position { return Position{Line: n.EndLine, Col: n.
 
 // CommentNode holds a REM comment or :: comment.
 type CommentNode struct {
-	Line    int // 0-based source line
-	Col     int // 0-based source column of the comment token
-	EndLine int // 0-based source line of the end of the comment
-	EndCol  int // 0-based source column after the comment
-	Text    string
+	Line       int
+	Col        int
+	EndLine    int
+	EndCol     int
+	Text       string
+	Suppressed bool
+}
+
+// Suppressed reports whether the statement's source line began with '@'.
+// CMD applies the prefix to the whole line, so compounds and pipes defer
+// to their leftmost operand.
+func Suppressed(n Node) bool {
+	switch node := n.(type) {
+	case *SimpleCommand:
+		return node.Suppressed
+	case *ForNode:
+		return node.Suppressed
+	case *IfNode:
+		return node.Suppressed
+	case *Block:
+		return node.Suppressed
+	case *CommentNode:
+		return node.Suppressed
+	case *BinaryNode:
+		return Suppressed(node.Left)
+	case *PipeNode:
+		return Suppressed(node.Left)
+	}
+	return false
+}
+
+// SetSuppressed marks a statement as if its line began with '@'.
+func SetSuppressed(n Node) {
+	switch node := n.(type) {
+	case *SimpleCommand:
+		node.Suppressed = true
+	case *ForNode:
+		node.Suppressed = true
+	case *IfNode:
+		node.Suppressed = true
+	case *Block:
+		node.Suppressed = true
+	case *CommentNode:
+		node.Suppressed = true
+	case *BinaryNode:
+		SetSuppressed(node.Left)
+	case *PipeNode:
+		SetSuppressed(node.Left)
+	}
 }
 
 func (n *CommentNode) Kind() NodeKind   { return NodeComment }

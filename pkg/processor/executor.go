@@ -37,6 +37,17 @@ func (p *Processor) ExecuteNode(n parser.Node) error {
 	if p.Exited {
 		return nil
 	}
+	if nodes, ok := p.respliceExpanded(n); ok {
+		for _, sub := range nodes {
+			if err := p.ExecuteNode(sub); err != nil {
+				return err
+			}
+			if p.Exited {
+				break
+			}
+		}
+		return nil
+	}
 	if p.Debugger.Enabled {
 		if action := p.checkDebugBreakpoint(n); action == ActionQuit {
 			p.Exited = true
@@ -68,6 +79,11 @@ func (p *Processor) ExecuteNode(n parser.Node) error {
 		return nil
 	case *parser.CommentNode:
 		p.echoComment(node)
+		return nil
+	case *parser.AbortNode:
+		fmt.Fprintf(p.Stderr, "%s\n", node.Message)
+		p.SetErrorLevel(255)
+		p.Exited = true
 		return nil
 	default:
 		return fmt.Errorf("unknown node type: %T", n)
@@ -242,8 +258,12 @@ func (p *Processor) emitTraceLines(lines []string) {
 	}
 }
 
+func (p *Processor) echoTraceable(n parser.Node) bool {
+	return p.Echo && p.echoBlockDepth == 0 && !parser.Suppressed(n)
+}
+
 func (p *Processor) echoComment(n *parser.CommentNode) {
-	if !p.Echo || p.echoBlockDepth > 0 || strings.HasPrefix(n.Text, ":") {
+	if !p.echoTraceable(n) || strings.HasPrefix(n.Text, ":") {
 		return
 	}
 	p.emitTraceLines([]string{"rem" + p.ExpandPhase1(n.Text) + " "})
@@ -296,7 +316,7 @@ func traceFormOf(n parser.Node) traceForm {
 }
 
 func (p *Processor) echoIf(n *parser.IfNode) {
-	if !p.Echo || p.echoBlockDepth > 0 {
+	if !p.echoTraceable(n) {
 		return
 	}
 	thenLines := p.renderTraceNodeNoForVars(n.Then)
@@ -343,14 +363,14 @@ func (p *Processor) renderPipeText(n *parser.PipeNode) string {
 }
 
 func (p *Processor) echoBinary(n *parser.BinaryNode) {
-	if !p.Echo || p.echoBlockDepth > 0 {
+	if !p.echoTraceable(n) {
 		return
 	}
 	p.emitTraceLines([]string{p.renderBinaryText(n) + " "})
 }
 
 func (p *Processor) echoPipe(n *parser.PipeNode) {
-	if !p.Echo || p.echoBlockDepth > 0 {
+	if !p.echoTraceable(n) {
 		return
 	}
 	p.emitTraceLines([]string{p.renderPipeText(n) + " "})
@@ -391,7 +411,7 @@ func (p *Processor) forHeaderText(n *parser.ForNode) string {
 }
 
 func (p *Processor) echoForHeader(n *parser.ForNode) {
-	if !p.Echo || p.echoBlockDepth > 0 {
+	if !p.echoTraceable(n) {
 		return
 	}
 	header := p.forHeaderText(n)
@@ -433,7 +453,7 @@ func (p *Processor) execForBody(n *parser.ForNode) error {
 }
 
 func (p *Processor) executeBlock(node *parser.Block) error {
-	if p.Echo && p.echoBlockDepth == 0 {
+	if p.echoTraceable(node) {
 		body := p.renderBodyLines(node.Body)
 		var lines []string
 		if traceFormOf(node) == traceMulti {
@@ -496,25 +516,87 @@ func (p *Processor) jumpToLabel(labelName string) error {
 	return fmt.Errorf("%s - %s", "The system cannot find the batch label specified", labelName)
 }
 
+func expansionSource(n parser.Node) (string, bool) {
+	switch node := n.(type) {
+	case *parser.SimpleCommand:
+		return node.Raw, node.PreExpanded
+	case *parser.Block:
+		return node.Raw, node.PreExpanded
+	case *parser.IfNode:
+		return node.Raw, node.PreExpanded
+	case *parser.ForNode:
+		return node.Raw, node.PreExpanded
+	case *parser.BinaryNode:
+		return node.Raw, node.PreExpanded
+	case *parser.PipeNode:
+		return node.Raw, node.PreExpanded
+	default:
+		return "", false
+	}
+}
+
+func (p *Processor) respliceExpanded(n parser.Node) ([]parser.Node, bool) {
+	raw, preExpanded := expansionSource(n)
+	if preExpanded || raw == "" || !strings.Contains(raw, "%") {
+		return nil, false
+	}
+	expanded := p.ExpandPhase1(raw)
+	if expanded == raw || hasUnquotedOperator(raw) || !hasUnquotedOperator(expanded) {
+		return nil, false
+	}
+	nodes := ParseExpanded(expanded)
+	for _, sub := range nodes {
+		parser.MarkPreExpanded(sub)
+		if parser.Suppressed(n) {
+			parser.SetSuppressed(sub)
+		}
+	}
+	return nodes, true
+}
+
+// hasUnquotedOperator reports whether s contains a bare &, |, < or > outside
+// quotes (honoring ^ escapes): the only expansions that change command structure.
+func hasUnquotedOperator(s string) bool {
+	var inQuote bool
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '^':
+			i++
+		case '"':
+			inQuote = !inQuote
+		case '&', '|', '<', '>':
+			if !inQuote {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
-	// 1. Initial expansion: Phase 1 (percents) and Phase 4 (FOR variables)
-	// These are expanded before command name resolution and echoing.
+	p.ExitCode = 0
 	expanded := &parser.SimpleCommand{
 		Suppressed:       n.Suppressed,
 		RedirectsApplied: n.RedirectsApplied,
 		Called:           n.Called,
 	}
-	expanded.Name = strings.TrimSpace(p.ExpandPhase4(p.ExpandPhase1(n.Name)))
+	expand := func(s string) string {
+		if n.PreExpanded {
+			return p.ExpandPhase4(s)
+		}
+		return p.ExpandPhase4(p.ExpandPhase1(s))
+	}
+	expanded.Name = strings.TrimSpace(expand(n.Name))
 	for _, arg := range n.Args {
-		expanded.Args = append(expanded.Args, p.ExpandPhase4(p.ExpandPhase1(arg)))
+		expanded.Args = append(expanded.Args, expand(arg))
 	}
 	for _, arg := range n.RawArgs {
-		expanded.RawArgs = append(expanded.RawArgs, p.ExpandPhase4(p.ExpandPhase1(arg)))
+		expanded.RawArgs = append(expanded.RawArgs, expand(arg))
 	}
 	for _, r := range n.Redirects {
 		expanded.Redirects = append(expanded.Redirects, parser.Redirect{
 			Kind:   r.Kind,
-			Target: strings.TrimSpace(p.ExpandPhase4(p.ExpandPhase1(r.Target))),
+			Target: strings.TrimSpace(expand(r.Target)),
 			FD:     r.FD,
 		})
 	}
@@ -575,10 +657,8 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		}
 
 		p.Logger.Debug("echo console output", "line", sb.String())
-		if p.echoBlockDepth == 0 {
-			fmt.Fprintln(p.Console)
-			fmt.Fprintln(p.Console, sb.String())
-		}
+		fmt.Fprintln(p.Console)
+		fmt.Fprintln(p.Console, sb.String())
 	}
 
 	// 4. Final expansion: Phase 5 (delayed expansion)
@@ -625,6 +705,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		label := strings.Join(cmdWords, "")
 		hasColon := strings.HasPrefix(label, ":")
 		label = strings.TrimLeft(label, ":")
+		label = strings.TrimRight(label, " \t;,=")
 		p.Trace.GotoLabel(label)
 		if hasColon && strings.ToLower(label) == "eof" {
 			p.PC = len(p.Nodes)
@@ -1417,27 +1498,31 @@ func applyForTokens(parts []string, tokens string, startVar string) map[string]s
 	baseChar := rune(startVar[0])
 	lastIdx := -1
 	for i, spec := range tokenSpecs {
+		varName := string(baseChar + rune(i))
 		if spec == "*" {
 			startFrom := 0
 			if lastIdx >= 0 {
 				startFrom = lastIdx + 1
 			}
 			if startFrom < len(parts) {
-				res[string(baseChar+rune(i))] = strings.Join(parts[startFrom:], " ")
+				res[varName] = strings.Join(parts[startFrom:], " ")
+			} else {
+				res[varName] = ""
 			}
 			continue
 		}
 		idx, _ := strconv.Atoi(spec)
 		if idx > 0 && idx <= len(parts) {
-			varName := string(baseChar + rune(i))
 			res[varName] = parts[idx-1]
 			if idx-1 > lastIdx {
 				lastIdx = idx - 1
 			}
+			continue
 		}
-	}
-	if len(tokenSpecs) == 1 && tokenSpecs[0] == "1" {
-		res[startVar] = parts[0]
+		if i == 0 {
+			return nil
+		}
+		res[varName] = ""
 	}
 	return res
 }
@@ -1499,6 +1584,7 @@ func (p *Processor) executePipe(n *parser.PipeNode) error {
 	}()
 	leftErr := <-leftErrChan
 	rightErr := <-rightErrChan
+	p.ExitCode = rightProcessor.ExitCode
 	if leftErr != nil {
 		return leftErr
 	}

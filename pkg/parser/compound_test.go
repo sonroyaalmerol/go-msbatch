@@ -322,3 +322,71 @@ func TestParseIfElseMultilineBlock(t *testing.T) {
 		t.Error("expected Else body to be set")
 	}
 }
+
+// TestParseIfOperatorAborts pins real-cmd aborts: an & or | run in an IF
+// condition or body-start position aborts regardless of condition truth.
+func TestParseIfOperatorAborts(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"left operand", "if 1&echo x echo y\n", "& was unexpected at this time."},
+		{"right operand", "if 1==1&echo x echo y\n", "& was unexpected at this time."},
+		{"false condition", "if 1==2&echo x echo y\n", "& was unexpected at this time."},
+		{"exist arg", "if exist f&echo x echo y\n", "& was unexpected at this time."},
+		{"defined arg", "if defined V&echo x echo y\n", "& was unexpected at this time."},
+		{"pipe in condition", "if 1|echo x echo y\n", "| was unexpected at this time."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nodes := parse(tt.src)
+			if len(nodes) == 0 {
+				t.Fatal("expected a node")
+			}
+			ab := abortOf(t, nodes[0])
+			if ab.Message != tt.want {
+				t.Errorf("message = %q, want %q", ab.Message, tt.want)
+			}
+		})
+	}
+}
+
+// abortOf digs the AbortNode that parseBinary wraps as its left operand.
+func abortOf(t *testing.T, n parser.Node) *parser.AbortNode {
+	t.Helper()
+	switch node := n.(type) {
+	case *parser.AbortNode:
+		return node
+	case *parser.BinaryNode:
+		return abortOf(t, node.Left)
+	case *parser.PipeNode:
+		return abortOf(t, node.Left)
+	}
+	t.Fatalf("no AbortNode under %T", n)
+	return nil
+}
+
+// TestParseForSetOperatorAborts pins a bare & inside a FOR set aborting.
+func TestParseForSetOperatorAborts(t *testing.T) {
+	nodes := parse("for %%a in (x&echo y) do echo z\n")
+	if len(nodes) == 0 {
+		t.Fatal("expected a node")
+	}
+	ab := abortOf(t, nodes[0])
+	if want := "& was unexpected at this time."; ab.Message != want {
+		t.Errorf("message = %q, want %q", ab.Message, want)
+	}
+}
+
+// TestParseIfCompoundBodyNotAborted guards against over-abort: an operator
+// after a valid then-command remains part of the compound.
+func TestParseIfCompoundBodyNotAborted(t *testing.T) {
+	nodes := parse("if 1==1 echo a & echo b\n")
+	if len(nodes) == 0 {
+		t.Fatal("expected a node")
+	}
+	if _, ok := nodes[0].(*parser.IfNode); !ok {
+		t.Fatalf("expected *parser.IfNode, got %T", nodes[0])
+	}
+}

@@ -8,6 +8,7 @@ import (
 )
 
 func (p *Parser) parseBlock() *Block {
+	startPos := p.pos
 	open := p.peek()
 	p.consume() // consume "("
 	p.compoundDepth++
@@ -63,13 +64,14 @@ func (p *Parser) parseBlock() *Block {
 		block.EndCol = ec
 	}
 
+	block.Raw = strings.TrimRight(rawTokenText(p.tokens[startPos:p.pos]), "\r\n")
 	return block
 }
 
-// parseIf parses an IF statement.
-func (p *Parser) parseIf() *IfNode {
+func (p *Parser) parseIf() Node {
+	startPos := p.pos
 	ifTok := p.peek()
-	p.consume() // consume "if"
+	p.consume()
 	n := &IfNode{Line: ifTok.Line, Col: ifTok.Col}
 
 	p.skipWS()
@@ -79,18 +81,25 @@ func (p *Parser) parseIf() *IfNode {
 		p.skipWS()
 	}
 
-	n.Cond = p.parseCondition()
+	cond, abort := p.parseCondition()
+	if abort != nil {
+		return abort
+	}
+	n.Cond = cond
 
-	// THEN body
+	if op := p.peekOperatorRun(); op != "" {
+		return operatorAbort(op, ifTok.Line, ifTok.Col)
+	}
+
 	n.Then = p.parseThenBody()
 
-	// ELSE branch
 	p.skipWS()
 	if p.peekKeyword("else") {
 		p.consume()
 		n.Else = p.parseThenBody()
 	}
 
+	n.Raw = strings.TrimRight(rawTokenText(p.tokens[startPos:p.pos]), "\r\n")
 	return n
 }
 
@@ -104,7 +113,8 @@ func (p *Parser) parseThenBody() Node {
 }
 
 // parseCondition parses the condition part of an IF statement.
-func (p *Parser) parseCondition() Condition {
+// The AbortNode result is non-nil when CMD would reject the syntax.
+func (p *Parser) parseCondition() (Condition, *AbortNode) {
 	p.skipWS()
 	cond := Condition{}
 
@@ -140,6 +150,9 @@ func (p *Parser) parseCondition() Condition {
 		p.skipWS()
 
 		opToken := p.peek()
+		if op := p.peekOperatorRun(); op != "" {
+			return cond, operatorAbort(op, opToken.Line, opToken.Col)
+		}
 		opVal := strings.ToLower(val(opToken))
 		isOp := false
 		switch opVal {
@@ -156,14 +169,15 @@ func (p *Parser) parseCondition() Condition {
 		cond.Right, _, _ = p.collectStokenWithPos(0, 0)
 	}
 
-	return cond
+	return cond, nil
 }
 
 // parseFor parses a FOR statement.
-func (p *Parser) parseFor(_ bool) *ForNode {
+func (p *Parser) parseFor(suppressed bool) Node {
+	startPos := p.pos
 	forTok := p.peek()
-	p.consume() // consume "for"
-	n := &ForNode{Line: forTok.Line, Col: forTok.Col}
+	p.consume()
+	n := &ForNode{Line: forTok.Line, Col: forTok.Col, Suppressed: suppressed}
 
 	p.skipWS()
 	t := p.peek()
@@ -232,7 +246,11 @@ func (p *Parser) parseFor(_ bool) *ForNode {
 
 	if p.peek().Type == lexer.TokenPunctuation && val(p.peek()) == "(" {
 		p.consume()
-		n.Set = p.collectForSet()
+		var abort *AbortNode
+		n.Set, abort = p.collectForSet()
+		if abort != nil {
+			return abort
+		}
 		p.skipWS()
 	}
 
@@ -242,10 +260,11 @@ func (p *Parser) parseFor(_ bool) *ForNode {
 	}
 
 	n.Do = p.parseBinary()
+	n.Raw = strings.TrimRight(rawTokenText(p.tokens[startPos:p.pos]), "\r\n")
 	return n
 }
 
-func (p *Parser) collectForSet() []string {
+func (p *Parser) collectForSet() ([]string, *AbortNode) {
 	var items []string
 	for p.pos < len(p.tokens) {
 		p.skipSetWS()
@@ -257,18 +276,22 @@ func (p *Parser) collectForSet() []string {
 			p.consume()
 			break
 		}
+		if t.Type == lexer.TokenPunctuation && isOperatorRun(val(t)) {
+			return nil, operatorAbort(val(t), t.Line, t.Col)
+		}
 
 		var stoken string
-		if t.Type == lexer.TokenStringDouble || t.Type == lexer.TokenStringSingle || t.Type == lexer.TokenStringBacktick {
+		switch t.Type {
+		case lexer.TokenStringDouble, lexer.TokenStringSingle, lexer.TokenStringBacktick:
 			stoken = p.collectQuotedString()
-		} else if t.Type == lexer.TokenText || t.Type == lexer.TokenWord {
+		case lexer.TokenText, lexer.TokenWord:
 			word := val(t)
 			if strings.HasPrefix(word, "`") || strings.HasPrefix(word, "'") {
 				stoken = p.collectQuotedCommandString(word[0])
 			} else {
 				stoken, _, _ = p.collectStokenWithPos(0, 0)
 			}
-		} else {
+		default:
 			stoken, _, _ = p.collectStokenWithPos(0, 0)
 		}
 
@@ -287,7 +310,7 @@ func (p *Parser) collectForSet() []string {
 			p.pos++
 		}
 	}
-	return items
+	return items, nil
 }
 
 func (p *Parser) skipSetWS() {

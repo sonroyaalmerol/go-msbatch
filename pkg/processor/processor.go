@@ -32,6 +32,7 @@ type Processor struct {
 	Nodes        []parser.Node
 	PC           int
 	Exited       bool
+	ExitCode     int
 	CallDepth    int
 	DirStack     []string
 	Executor     CommandExecutor
@@ -212,11 +213,8 @@ func (p *Processor) EnterBatchEcho() func() {
 	return func() { p.echoBlockDepth = old }
 }
 
-func (p *Processor) ShouldEcho(n *parser.SimpleCommand) bool {
-	if n.Suppressed {
-		return false
-	}
-	return p.Echo
+func (p *Processor) ShouldEcho(n parser.Node) bool {
+	return p.echoTraceable(n)
 }
 
 // HandleEchoBuiltin processes the "echo" builtin command, updating p.Echo and
@@ -256,6 +254,7 @@ func (p *Processor) HandleEchoBuiltin(args []string) (output string, stateChange
 
 func (p *Processor) SetErrorLevel(code int) {
 	p.Env.SetErrorLevel(code)
+	p.ExitCode = code
 	p.Trace.ErrorLevel(code)
 }
 

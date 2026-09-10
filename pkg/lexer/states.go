@@ -93,10 +93,10 @@ func (bl *BatchLexer) stateRoot() stateFn {
 		if r2 == '=' {
 			bl.emit(TokenOperator) // emit "=="
 		} else {
-			if r2 != 0 && !isNL(r2) {
+			if r2 != 0 {
 				bl.prev()
 			}
-			bl.emit(TokenPunctuation) // emit "="
+			bl.emit(TokenPunctuation)
 		}
 		return bl.stateRoot
 	case r == '/':
@@ -175,6 +175,8 @@ func (bl *BatchLexer) stateRem() stateFn {
 }
 
 func (bl *BatchLexer) stateLabelName() stateFn {
+	bl.acceptRun(IsWS)
+	bl.ignore()
 	bl.acceptRun(func(r rune) bool { return !IsWS(r) && !isNL(r) && r != 0 })
 	bl.emit(TokenLabel)
 	// In CMD, everything after the label name on a label line is a comment.

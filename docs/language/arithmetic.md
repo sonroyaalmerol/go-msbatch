@@ -75,5 +75,6 @@ SET /A R=!0        :: 1  (logical NOT of 0)
   :: Interactive:
   SET /A R=10%3     :: R=1
   ```
+- Unquoted `<`, `>`, `<<`, `>>` in a `SET /A` expression are lexed as redirections, exactly as cmd.exe does: `>>`/`>`/`<` become redirects (a lone digit directly before the operator is absorbed as the fd), and `<<` aborts the script with `N<< was unexpected at this time.`. Quote the expression (`SET /A "x=1<<4"`) to use shift or comparison operators.
 - **No floating-point** — all values are integers. `SET /A 5/2` is `2`, not `2.5`.
 - **Undefined variable** in an expression evaluates as `0`.

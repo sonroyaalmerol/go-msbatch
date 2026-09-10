@@ -16,6 +16,33 @@ type result struct {
 	stdout     string
 	stderr     string
 	errorlevel string
+	exitCode   int
+}
+
+func TestProcessExitCode(t *testing.T) {
+	cases := []struct {
+		name           string
+		script         string
+		wantErrorLevel string
+		wantExitCode   int
+	}{
+		{name: "successful_command_after_sticky_error", script: "@echo off\nset /a n=1/0\necho after\n", wantErrorLevel: "1073750993", wantExitCode: 0},
+		{name: "final_command_failure", script: "@echo off\ncopy missing.txt out.txt\n", wantErrorLevel: "1", wantExitCode: 1},
+		{name: "explicit_exit", script: "@echo off\nexit /b 7\n", wantErrorLevel: "7", wantExitCode: 7},
+		{name: "parser_abort", script: "@echo off\n& echo unreachable\n", wantErrorLevel: "255", wantExitCode: 255},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runScript(t, tc.script)
+			if got.errorlevel != tc.wantErrorLevel {
+				t.Errorf("ERRORLEVEL = %s, want %s", got.errorlevel, tc.wantErrorLevel)
+			}
+			if got.exitCode != tc.wantExitCode {
+				t.Errorf("exit code = %d, want %d", got.exitCode, tc.wantExitCode)
+			}
+		})
+	}
 }
 
 // isolate gives the test its own working directory. It uses t.Chdir, so these
@@ -49,7 +76,7 @@ func runScript(t *testing.T, script string, args ...string) result {
 	}
 
 	level, _ := env.Get("ERRORLEVEL")
-	return result{stdout: stdout.String(), stderr: stderr.String(), errorlevel: level}
+	return result{stdout: stdout.String(), stderr: stderr.String(), errorlevel: level, exitCode: proc.ExitCode}
 }
 
 func writeFile(t *testing.T, name, content string) {

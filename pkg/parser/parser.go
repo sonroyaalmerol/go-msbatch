@@ -81,7 +81,37 @@ func val(t lexer.Item) string {
 	return string(t.Value)
 }
 
-// skipWS advances past whitespace and newline tokens.
+// skipSpaces advances past whitespace tokens but stops at a line break.
+func (p *Parser) skipSpaces() {
+	for p.pos < len(p.tokens) && p.tokens[p.pos].Type == lexer.TokenWhitespace {
+		p.pos++
+	}
+}
+
+func isOperatorRun(v string) bool {
+	if v == "" {
+		return false
+	}
+	for _, r := range v {
+		if r != '&' && r != '|' {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *Parser) peekOperatorRun() string {
+	t := p.peek()
+	if t.Type == lexer.TokenPunctuation && isOperatorRun(val(t)) {
+		return val(t)
+	}
+	return ""
+}
+
+func operatorAbort(op string, line, col int) *AbortNode {
+	return &AbortNode{Line: line, Col: col, Message: op + " was unexpected at this time."}
+}
+
 func (p *Parser) skipWS() {
 	for p.pos < len(p.tokens) {
 		t := p.tokens[p.pos]
