@@ -131,34 +131,47 @@ func (c *SimpleCommand) EndPos() Position { return Position{Line: c.EndLine, Col
 // Words returns RawArgs grouped by true whitespace. This is useful for
 // external commands where delimiters like '=' or ',' should only split
 // arguments if they are surrounded by actual whitespace.
+
 func (c *SimpleCommand) Words() []string {
 	var words []string
 	var current strings.Builder
+	inQuotes := false
+	slashes := 0
+
+	flush := func() {
+		if current.Len() > 0 {
+			words = append(words, current.String())
+			current.Reset()
+		}
+	}
 
 	for _, arg := range c.RawArgs {
-		// Check if it's true whitespace
-		isTrueWS := false
-		if len(arg) > 0 {
-			r := rune(arg[0])
-			if lexer.IsWS(r) {
-				isTrueWS = true
+		if len(arg) > 0 && lexer.IsWS(rune(arg[0])) {
+			if inQuotes {
+				current.WriteString(arg)
+			} else {
+				flush()
+			}
+			slashes = 0
+			continue
+		}
+		for i := 0; i < len(arg); i++ {
+			switch arg[i] {
+			case '\\':
+				slashes++
+			case '"':
+				if slashes%2 == 0 {
+					inQuotes = !inQuotes
+				}
+				slashes = 0
+			default:
+				slashes = 0
 			}
 		}
-
-		if isTrueWS {
-			if current.Len() > 0 {
-				words = append(words, current.String())
-				current.Reset()
-			}
-		} else {
-			current.WriteString(arg)
-		}
+		current.WriteString(arg)
 	}
 
-	if current.Len() > 0 {
-		words = append(words, current.String())
-	}
-
+	flush()
 	return words
 }
 
