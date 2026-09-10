@@ -56,7 +56,7 @@ func Choice(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			if !hasValue {
 				return choiceError(p, "/M")
 			}
-			message = value
+			message = strings.Trim(value, `"`)
 			i++
 		case "/n":
 			hideList = true
