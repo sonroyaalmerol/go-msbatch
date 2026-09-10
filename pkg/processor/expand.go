@@ -224,6 +224,8 @@ func Phase1PercentExpand(src string, env *Environment, args []string, originalAr
 					sb.WriteRune('%')
 					sb.WriteString(rawName)
 					sb.WriteRune('%')
+				} else if _, mod := SplitVarModifier(rawName); mod != "" {
+					sb.WriteString(mod)
 				}
 				continue
 			}

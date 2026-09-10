@@ -1,0 +1,19 @@
+@echo off
+set /a a1=10%%-3
+echo a1=%a1%
+set /a a2=-10%%-3
+echo a2=%a2%
+set /a a3=1%%-3
+echo a3=%a3%
+set /a a4=-1%%-3
+echo a4=%a4%
+set /a a5=11%%-3
+echo a5=%a5%
+set /a a6=3%%-3
+echo a6=%a6%
+set /a a7=10%%3
+echo a7=%a7%
+set /a a8=-10%%3
+echo a8=%a8%
+set /a a9=0%%-3
+echo a9=%a9%

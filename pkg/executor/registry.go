@@ -113,6 +113,13 @@ func (r *Registry) ExecCommand(p *processor.Processor, cmd *parser.SimpleCommand
 		return h.ExecCommand(p, cmd)
 	}
 
+	// Echo separator forms with trailing text (echo.done, echo:x ...).
+	if len(lowerName) > 4 && lowerName[:4] == "echo" && strings.ContainsRune(".,;=:/", rune(lowerName[4])) {
+		if h, ok := r.handlers["echo"]; ok {
+			return h.ExecCommand(p, cmd)
+		}
+	}
+
 	// Handle full paths and .exe extensions (e.g. C:\Path\To\tool.exe)
 	// We check if the base name (minus extension) matches a registered tool.
 	base := strings.ToLower(cmd.Name)

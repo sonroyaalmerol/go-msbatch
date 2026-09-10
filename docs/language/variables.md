@@ -80,8 +80,7 @@ Applied to a positional parameter `%0`–`%9`.
 | `p` | Path only (directory, including trailing `\`) |
 | `n` | Filename without extension |
 | `x` | Extension (including leading `.`) |
-| `s` | Expand to short (8.3) path (approximated — returns the same path on Unix) |
-| `e` | Extension (alias for `x`) |
+| `s` | Expand to short (8.3) path (approximated — returns the absolute path on Unix) |
 | `a` | File attributes string (e.g. `--a------`) |
 | `t` | Last-modified timestamp |
 | `z` | File size in bytes |
@@ -91,7 +90,8 @@ Combinations are allowed: `%~dpn1` → drive + path + name of `%1`.
 
 **Caveats:**
 
-- `%~s` (short 8.3 name) is not available on Unix; returns the full path unchanged.
+- Invalid modifier letters (anything outside `f d p n x s a t z` and `$VAR:`) leave the whole expression literal, e.g. `echo [%~q1]` prints `[%~q1]`. Real cmd.exe prints a two-line "path operator ... is invalid" error and aborts the script.
+- `%~s` (short 8.3 name) is not available on Unix; returns the absolute path unchanged.
 - `%~a`, `%~t`, `%~z` require the file to exist. If it does not, an empty string (or an error string) is returned.
 - `%~$PATHVAR:n` only works when `PATHVAR` is defined and contains valid search paths. If the file is not found in any listed directory, the result is empty.
 

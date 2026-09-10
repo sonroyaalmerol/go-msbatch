@@ -26,12 +26,12 @@ func cmdEcho(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		strings.ContainsRune(echoDelimiterChars, rune(cmdNameLower[4]))
 
 	if isEchoVariant {
-		if len(cmd.RawArgs) == 0 {
+		text := cmd.Name[5:] + strings.Join(cmd.RawArgs, "")
+		if strings.TrimSpace(text) == "" {
 			fmt.Fprintln(p.Stdout)
-			return nil
+		} else {
+			fmt.Fprintln(p.Stdout, text)
 		}
-		output := processor.ExtractRawArgString(cmd.RawArgs)
-		fmt.Fprintln(p.Stdout, output)
 		return nil
 	}
 
@@ -66,14 +66,20 @@ func cmdSet(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	if strings.HasPrefix(strings.ToLower(arg), "/a") {
 		_, err := p.EvalArithmetic(arg[2:])
 		if err != nil {
-			if errors.Is(err, processor.ErrDivideByZero) {
+			switch {
+			case errors.Is(err, processor.ErrDivideByZero):
 				fmt.Fprintln(p.Stderr, "Divide by zero error.")
-			} else {
+				p.FailureWithCode(1073750993)
+			case errors.Is(err, processor.ErrInvalidNumber):
+				fmt.Fprint(p.Stderr, "Invalid number.  Numeric constants are either decimal (17),\nhexadecimal (0x11), or octal (021).\n")
+				p.FailureWithCode(1073750991)
+			case errors.Is(err, processor.ErrMissingOperand):
+				fmt.Fprintln(p.Stderr, "Missing operand.")
+				p.FailureWithCode(1073750989)
+			default:
 				fmt.Fprintln(p.Stderr, "Invalid number.")
+				p.FailureWithCode(1073750993)
 			}
-			p.FailureWithCode(1073750993)
-		} else {
-			p.Success()
 		}
 		return nil
 	}

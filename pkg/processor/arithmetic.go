@@ -10,6 +10,12 @@ import (
 // ErrDivideByZero indicates an arithmetic division or modulo by zero.
 var ErrDivideByZero = errors.New("processor: divide by zero")
 
+// ErrInvalidNumber indicates a numeric literal cmd.exe rejects (bad octal or hex digits).
+var ErrInvalidNumber = errors.New("processor: invalid number")
+
+// ErrMissingOperand indicates an expression ending where an operand is required.
+var ErrMissingOperand = errors.New("processor: missing operand")
+
 // EvalArithmetic evaluates a CMD-style arithmetic expression.
 func (p *Processor) EvalArithmetic(expr string) (int, error) {
 	// Strip carets (escapes) from the expression
@@ -49,6 +55,10 @@ type arithParser struct {
 	p      *Processor
 }
 
+func isHexDigit(r rune) bool {
+	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+}
+
 func tokenizeArithmetic(expr string) []string {
 	var tokens []string
 	runes := []rune(expr)
@@ -64,6 +74,12 @@ func tokenizeArithmetic(expr string) []string {
 			start := i
 			for i+1 < n && unicode.IsDigit(runes[i+1]) {
 				i++
+			}
+			if runes[start] == '0' && i+1 < n && (runes[i+1] == 'x' || runes[i+1] == 'X') {
+				i++ // consume x
+				for i+1 < n && isHexDigit(runes[i+1]) {
+					i++
+				}
 			}
 			tokens = append(tokens, string(runes[start:i+1]))
 		} else if unicode.IsLetter(r) || r == '_' {
@@ -394,16 +410,22 @@ func (ap *arithParser) parsePrimary() (int, error) {
 
 	t = ap.consume()
 	if t == "" {
-		return 0, nil
+		return 0, ErrMissingOperand
 	}
 
 	// Hex/Octal support (basic)
 	if strings.HasPrefix(t, "0x") || strings.HasPrefix(t, "0X") {
-		v, _ := strconv.ParseInt(t[2:], 16, 32)
+		v, err := strconv.ParseInt(t[2:], 16, 32)
+		if err != nil {
+			return 0, ErrInvalidNumber
+		}
 		return int(v), nil
 	}
 	if len(t) > 1 && t[0] == '0' {
-		v, _ := strconv.ParseInt(t[1:], 8, 32)
+		v, err := strconv.ParseInt(t[1:], 8, 32)
+		if err != nil {
+			return 0, ErrInvalidNumber
+		}
 		return int(v), nil
 	}
 

@@ -236,7 +236,7 @@ func (p *Processor) HandleEchoBuiltin(args []string) (output string, stateChange
 	// Space, Tab, Comma, Semicolon, Equal, or 0xA0.
 	if len(full) > 0 {
 		r := full[0]
-		if r == ' ' || r == '\t' || r == ',' || r == ';' || r == '=' || r == '\xa0' {
+		if r == ' ' || r == '\t' || r == ',' || r == ';' || r == '=' || r == '.' || r == ':' || r == '/' || r == '\xa0' {
 			full = full[1:]
 		}
 	}
