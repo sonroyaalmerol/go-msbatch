@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -738,8 +739,7 @@ func TestGlobCaseInsensitive(t *testing.T) {
 }
 
 func TestDriveMountWithEnvOverride(t *testing.T) {
-	os.Setenv("MSBATCH_DRIVE_C", "/custom/c")
-	defer os.Unsetenv("MSBATCH_DRIVE_C")
+	t.Setenv("MSBATCH_DRIVE_C", "/custom/c")
 
 	got := DriveMount('C')
 	if got != "/custom/c" {
@@ -748,8 +748,7 @@ func TestDriveMountWithEnvOverride(t *testing.T) {
 }
 
 func TestDriveMountWithPrefix(t *testing.T) {
-	os.Setenv("MSBATCH_PREFIX", "/wine/prefix")
-	defer os.Unsetenv("MSBATCH_PREFIX")
+	t.Setenv("MSBATCH_PREFIX", "/wine/prefix")
 
 	got := DriveMount('C')
 	if got != "/wine/prefix/drive_c" {
@@ -758,12 +757,8 @@ func TestDriveMountWithPrefix(t *testing.T) {
 }
 
 func TestDriveMountEnvOverrideTakesPrecedence(t *testing.T) {
-	os.Setenv("MSBATCH_PREFIX", "/wine/prefix")
-	os.Setenv("MSBATCH_DRIVE_D", "/custom/d")
-	defer func() {
-		os.Unsetenv("MSBATCH_PREFIX")
-		os.Unsetenv("MSBATCH_DRIVE_D")
-	}()
+	t.Setenv("MSBATCH_PREFIX", "/wine/prefix")
+	t.Setenv("MSBATCH_DRIVE_D", "/custom/d")
 
 	gotD := DriveMount('D')
 	if gotD != "/custom/d" {
@@ -777,11 +772,36 @@ func TestDriveMountEnvOverrideTakesPrecedence(t *testing.T) {
 }
 
 func TestMapPathWithEnvOverride(t *testing.T) {
-	os.Setenv("MSBATCH_DRIVE_Z", "/data")
-	defer os.Unsetenv("MSBATCH_DRIVE_Z")
+	t.Setenv("MSBATCH_DRIVE_Z", "/data")
 
 	got := MapPath(`Z:\Data\Flight`)
 	if got != "/data/Data/Flight" {
 		t.Errorf("MapPath with Z override = %q, want %q", got, "/data/Data/Flight")
+	}
+}
+
+func TestLookPathIn(t *testing.T) {
+	bin := t.TempDir()
+	other := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "probe-tool"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(other, "probe-tool"), []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := LookPathIn(bin, "probe-tool"); err != nil || got != filepath.Join(bin, "probe-tool") {
+		t.Errorf("LookPathIn hit = %q, %v", got, err)
+	}
+	if _, err := LookPathIn(other, "probe-tool"); err == nil {
+		t.Error("LookPathIn should skip non-executable files")
+	}
+	if _, err := LookPathIn(bin, "missing-tool"); err == nil {
+		t.Error("LookPathIn should miss unknown names")
+	}
+
+	t.Setenv("MSBATCH_DRIVE_C", "/")
+	if got, err := LookPathIn(`C:`+strings.ReplaceAll(bin, "/", `\`), "probe-tool"); err != nil || got != filepath.Join(bin, "probe-tool") {
+		t.Errorf("LookPathIn windows-style dir = %q, %v", got, err)
 	}
 }

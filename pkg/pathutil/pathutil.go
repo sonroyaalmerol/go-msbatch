@@ -275,6 +275,59 @@ func ToWindowsPath(unixPath string) string {
 	return UnixToWinePath(unixPath)
 }
 
+var ErrNotFound = os.ErrNotExist
+
+// LookPathIn resolves name against a caller-supplied PATH list, MapPath'ing
+// Windows-style entries so batch SET PATH values resolve on Unix hosts.
+func LookPathIn(pathList, name string) (string, error) {
+	if strings.ContainsAny(name, `\/`) {
+		if isExecutableFile(MapPath(name)) {
+			return MapPath(name), nil
+		}
+		return "", ErrNotFound
+	}
+	for _, dir := range SplitPathList(pathList) {
+		if dir == "" {
+			dir = "."
+		}
+		candidate := filepath.Join(MapPath(dir), name)
+		if isExecutableFile(candidate) {
+			return candidate, nil
+		}
+	}
+	return "", ErrNotFound
+}
+
+// SplitPathList splits a PATH-style list on ';' and ':', keeping drive-letter
+// colons (C:\) intact. Batch SET PATH mixes both separator styles on Unix.
+func SplitPathList(list string) []string {
+	var parts []string
+	var cur []byte
+	for i := 0; i < len(list); i++ {
+		c := list[i]
+		if c == ';' || (c == ':' && !isDriveColon(list, i)) {
+			parts = append(parts, string(cur))
+			cur = cur[:0]
+			continue
+		}
+		cur = append(cur, c)
+	}
+	return append(parts, string(cur))
+}
+
+func isDriveColon(list string, i int) bool {
+	return i == 1 && isAlphaByte(list[0]) && i+1 < len(list) && (list[i+1] == '\\' || list[i+1] == '/')
+}
+
+func isAlphaByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir() && info.Mode().Perm()&0111 != 0
+}
+
 var (
 	driveDirsMu sync.RWMutex
 	driveDirs   = map[byte]string{}

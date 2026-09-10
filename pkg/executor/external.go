@@ -34,6 +34,27 @@ func exePrefix(p *processor.Processor) []string {
 	return strings.Fields(v)
 }
 
+// envLookPath resolves name against the interpreter's current PATH (so
+// batch-level SET PATH drives resolution, as in cmd.exe), falling back to
+// the process PATH.
+func envLookPath(p *processor.Processor, name string) (string, error) {
+	if pathList, ok := p.Env.Get("PATH"); ok && pathList != "" {
+		if resolved, err := pathutil.LookPathIn(pathList, name); err == nil {
+			return resolved, nil
+		}
+	}
+	return exec.LookPath(name)
+}
+
+// pathDirs lists env-PATH directories first, then process-PATH directories.
+func pathDirs(p *processor.Processor) []string {
+	var dirs []string
+	if pathList, ok := p.Env.Get("PATH"); ok {
+		dirs = append(dirs, pathutil.SplitPathList(pathList)...)
+	}
+	return append(dirs, filepath.SplitList(os.Getenv("PATH"))...)
+}
+
 // runExternal is the default fallback executor. If the command resolves to a
 // .bat or .cmd file it is run in-process by a child Processor (sharing the
 // parent's environment and I/O). Otherwise the command is forwarded to the
@@ -59,7 +80,7 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 				cmdName += ext
 				break
 			}
-			if resolved, ok := lookPathCaseInsensitive(cmdName + ext); ok {
+			if resolved, ok := lookPathCaseInsensitive(p, cmdName+ext); ok {
 				cmdName = resolved
 				break
 			}
@@ -82,7 +103,7 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			isExe = false
 			cmdName = "./" + nativeName
 			p.Logger.Debug("found native match in current dir", "native", cmdName)
-		} else if nativePath, err := exec.LookPath(nativeName); err == nil {
+		} else if nativePath, err := envLookPath(p, nativeName); err == nil {
 			isExe = false
 			cmdName = nativePath
 			p.Logger.Debug("found native match on PATH", "native", cmdName)
@@ -94,7 +115,7 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 
 	// If the command resolves to a batch file, run it in-process.
 	// (Batch files are never Wine candidates.)
-	if batPath, ok := resolveBatchFile(cmdName); ok {
+	if batPath, ok := resolveBatchFile(p, cmdName); ok {
 		// Strip CMD/CRT quoting so %1 inside the called batch receives the
 		// unquoted value (matching Windows CMD CALL semantics). Wildcards stay
 		// literal: real cmd never glob-expands call arguments.
@@ -185,10 +206,10 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// For bare command names on Linux, try a case-insensitive search on the PATH
 	// if the direct name isn't found. This matches CMD's case-insensitivity.
 	if runtime.GOOS != "windows" && !strings.ContainsAny(cmdName, "/\\") {
-		if _, err := exec.LookPath(cmdName); err != nil {
-			if resolved, ok := lookPathCaseInsensitive(cmdName); ok {
-				cmdName = resolved
-			}
+		if resolved, err := envLookPath(p, cmdName); err == nil {
+			cmdName = resolved
+		} else if resolved, ok := lookPathCaseInsensitive(p, cmdName); ok {
+			cmdName = resolved
 		}
 	}
 
@@ -274,11 +295,11 @@ func rawWriter(raw, fallback io.Writer) io.Writer {
 	return fallback
 }
 
-// lookPathCaseInsensitive searches for a command on the PATH case-insensitively.
-func lookPathCaseInsensitive(name string) (string, bool) {
+// lookPathCaseInsensitive searches for a command on the interpreter's PATH
+// case-insensitively (cmd ignores case in command names).
+func lookPathCaseInsensitive(p *processor.Processor, name string) (string, bool) {
 	lowerName := strings.ToLower(name)
-	pathEnv := os.Getenv("PATH")
-	for _, dir := range filepath.SplitList(pathEnv) {
+	for _, dir := range pathDirs(p) {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
@@ -442,6 +463,18 @@ func runOSCommand(p *processor.Processor, name string, args []string, displayNam
 	for k, v := range p.Env.Snapshot() {
 		envMap[strings.ToUpper(k)] = fmt.Sprintf("%s=%s", k, v)
 	}
+	if runtime.GOOS != "windows" {
+		if kv, ok := envMap["PATH"]; ok {
+			_, val, _ := strings.Cut(kv, "=")
+			dirs := make([]string, 0, 8)
+			for _, d := range pathutil.SplitPathList(val) {
+				if d != "" {
+					dirs = append(dirs, pathutil.MapPath(d))
+				}
+			}
+			envMap["PATH"] = "PATH=" + strings.Join(dirs, string(os.PathListSeparator))
+		}
+	}
 	c.Env = make([]string, 0, len(envMap))
 	for _, kv := range envMap {
 		c.Env = append(c.Env, kv)
@@ -463,7 +496,7 @@ func runOSCommand(p *processor.Processor, name string, args []string, displayNam
 // resolveBatchFile checks whether name resolves to a .bat or .cmd file,
 // searching the current directory and then the PATH.
 // Returns the resolved path and true on success.
-func resolveBatchFile(name string) (string, bool) {
+func resolveBatchFile(p *processor.Processor, name string) (string, bool) {
 	mappedName := pathutil.MapPath(name)
 	lower := strings.ToLower(mappedName)
 	isBatch := strings.HasSuffix(lower, ".bat") || strings.HasSuffix(lower, ".cmd")
@@ -494,7 +527,7 @@ func resolveBatchFile(name string) (string, bool) {
 			return candidate, true
 		}
 	}
-	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+	for _, dir := range pathDirs(p) {
 		for _, ext := range []string{".bat", ".cmd"} {
 			candidate := pathutil.MapPath(filepath.Join(dir, name+ext))
 			if fileExists(candidate) {
