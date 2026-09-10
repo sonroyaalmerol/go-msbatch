@@ -37,6 +37,48 @@ func TestParseBlockMultipleCommands(t *testing.T) {
 	}
 }
 
+// TestParseIfBracketQuotedOperands pins cmd operand collection: an embedded
+// quoted run inside brackets stays one operand, ["%A%"]==["%B%"] and friends.
+func TestParseIfBracketQuotedOperands(t *testing.T) {
+	tests := []struct {
+		name  string
+		src   string
+		left  string
+		op    parser.CompareOp
+		right string
+	}{
+		{"bracket quoted", `if ["%A%"]==["%B%"] echo x` + "\n", `["%A%"]`, parser.OpEqual, `["%B%"]`},
+		{"bracket unquoted", `if /I [%1]==[force] echo x` + "\n", `[%1]`, parser.OpEqual, `[force]`},
+		{"plain quoted", `if "%A%"=="%B%" echo x` + "\n", `"%A%"`, parser.OpEqual, `"%B%"`},
+		{"mixed quoted left", `if ["a"]==[b] echo x` + "\n", `["a"]`, parser.OpEqual, `[b]`},
+		{"quoted right", `if [a]==["b"] echo x` + "\n", `[a]`, parser.OpEqual, `["b"]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nodes := parse(tt.src)
+			if len(nodes) == 0 {
+				t.Fatal("expected a node")
+			}
+			ifn, ok := nodes[0].(*parser.IfNode)
+			if !ok {
+				t.Fatalf("expected *parser.IfNode, got %T", nodes[0])
+			}
+			if ifn.Cond.Left != tt.left {
+				t.Errorf("left = %q, want %q", ifn.Cond.Left, tt.left)
+			}
+			if ifn.Cond.Op != tt.op {
+				t.Errorf("op = %q, want %q", ifn.Cond.Op, tt.op)
+			}
+			if ifn.Cond.Right != tt.right {
+				t.Errorf("right = %q, want %q", ifn.Cond.Right, tt.right)
+			}
+			if _, ok := ifn.Then.(*parser.SimpleCommand); !ok {
+				t.Errorf("then = %T, want *parser.SimpleCommand", ifn.Then)
+			}
+		})
+	}
+}
+
 // TestParseIfEquals verifies if/== condition is parsed (phase 2 IF handling).
 func TestParseIfEquals(t *testing.T) {
 	nodes := parse(`if "%X%"=="yes" echo ok` + "\n")

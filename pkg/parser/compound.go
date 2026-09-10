@@ -146,7 +146,7 @@ func (p *Parser) parseCondition() (Condition, *AbortNode) {
 		cond.Level, _ = strconv.Atoi(stoken)
 	default:
 		cond.Kind = CondCompare
-		cond.Left, _, _ = p.collectStokenWithPos(0, 0)
+		cond.Left, _, _ = p.collectCompareOperand(0, 0)
 		p.skipWS()
 
 		opToken := p.peek()
@@ -166,7 +166,7 @@ func (p *Parser) parseCondition() (Condition, *AbortNode) {
 		}
 
 		p.skipWS()
-		cond.Right, _, _ = p.collectStokenWithPos(0, 0)
+		cond.Right, _, _ = p.collectCompareOperand(0, 0)
 	}
 
 	return cond, nil
@@ -408,6 +408,16 @@ func (p *Parser) collectQuotedStringWithToken() (string, lexer.Item) {
 
 // collectStokenWithPos collects a simple token and returns it along with updated end position.
 func (p *Parser) collectStokenWithPos(endLine, endCol int) (string, int, int) {
+	return p.collectStokenMode(endLine, endCol, false)
+}
+
+// collectCompareOperand collects an IF comparison operand, which unlike a
+// plain stoken spans embedded quoted runs: ["%V%"] is one operand in cmd.
+func (p *Parser) collectCompareOperand(endLine, endCol int) (string, int, int) {
+	return p.collectStokenMode(endLine, endCol, true)
+}
+
+func (p *Parser) collectStokenMode(endLine, endCol int, quotedContinues bool) (string, int, int) {
 	var sb strings.Builder
 	for p.pos < len(p.tokens) {
 		t := p.peek()
@@ -416,13 +426,15 @@ func (p *Parser) collectStokenWithPos(endLine, endCol int) (string, int, int) {
 			return sb.String(), endLine, endCol
 
 		case lexer.TokenStringDouble, lexer.TokenStringSingle, lexer.TokenStringBacktick:
-			if sb.Len() > 0 {
+			if sb.Len() > 0 && !quotedContinues {
 				return sb.String(), endLine, endCol
 			}
 			quoted, lastTok := p.collectQuotedStringWithToken()
 			sb.WriteString(quoted)
 			endLine, endCol = p.updatePos(endLine, endCol, lastTok)
-			return sb.String(), endLine, endCol
+			if !quotedContinues {
+				return sb.String(), endLine, endCol
+			}
 
 		case lexer.TokenKeyword:
 			consumed := p.consume()
