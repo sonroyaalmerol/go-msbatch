@@ -106,6 +106,7 @@ func cmdAssoc(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			delete(fileAssoc, ext)
 		} else {
 			fileAssoc[ext] = after
+			fmt.Fprintf(p.Stdout, "%s=%s\n", ext, after)
 		}
 	} else {
 		ext := strings.ToLower(strings.TrimSpace(arg))
@@ -136,6 +137,7 @@ func cmdFtype(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			delete(fileTypes, ft)
 		} else {
 			fileTypes[ft] = after
+			fmt.Fprintf(p.Stdout, "%s=%s\n", ft, after)
 		}
 	} else {
 		ft := strings.TrimSpace(arg)

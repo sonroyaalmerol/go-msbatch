@@ -3,6 +3,8 @@ PATH=C:\TestPath23
 VERIFY is off.
 VERIFY is on.
 .test23=TestFile23
+.test23=TestFile23
+TestFile23=notepad.exe
 TestFile23=notepad.exe
 date ok
 time ok
