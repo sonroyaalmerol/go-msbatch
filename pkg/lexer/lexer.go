@@ -11,7 +11,8 @@ type BatchLexer struct {
 	start          int
 	pos            int
 	state          stateFn
-	items          chan Item
+	pending        []Item
+	head           int
 	lineOffset     int
 	compoundDepth  int
 	atCommandStart bool
@@ -37,7 +38,7 @@ type BatchLexer struct {
 func New(src string) *BatchLexer {
 	bl := &BatchLexer{
 		input:          src,
-		items:          make(chan Item, 10),
+		pending:        make([]Item, 0, 16),
 		atCommandStart: true,
 		wlLine:         0,
 	}
@@ -77,17 +78,19 @@ func NewWithLine(src string, line int) *BatchLexer {
 // NextItem returns the next Item from the token stream.
 func (bl *BatchLexer) NextItem() Item {
 	for {
-		select {
-		case next := <-bl.items:
-			return next
-		default:
-			if bl.state != nil {
-				bl.state = bl.state()
-				continue
+		if bl.head < len(bl.pending) {
+			next := bl.pending[bl.head]
+			bl.head++
+			if bl.head == len(bl.pending) {
+				bl.pending = bl.pending[:0]
+				bl.head = 0
 			}
-			close(bl.items)
+			return next
+		}
+		if bl.state == nil {
 			return Item{}
 		}
+		bl.state = bl.state()
 	}
 }
 
@@ -139,14 +142,14 @@ func (bl *BatchLexer) ignore() {
 func (bl *BatchLexer) emit(t TokenType) {
 	startLine, startCol := bl.lineColAt(bl.start)
 	endLine, endCol := bl.lineColAt(bl.pos)
-	bl.items <- Item{
+	bl.pending = append(bl.pending, Item{
 		Line:    startLine,
 		Col:     startCol,
 		EndLine: endLine,
 		EndCol:  endCol,
 		Type:    t,
 		Value:   bl.input[bl.start:bl.pos],
-	}
+	})
 	bl.start = bl.pos
 }
 
