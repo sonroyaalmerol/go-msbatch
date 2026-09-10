@@ -13,11 +13,11 @@ func (bl *BatchLexer) stateSet() stateFn {
 		switch unicode.ToLower(flag) {
 		case 'a':
 			bl.emit(TokenKeyword)
-			return bl.stateArithmetic
+			return bl.fnArithmetic
 		case 'p':
 			bl.emit(TokenKeyword)
 			bl.skipWS()
-			return bl.stateSetVar
+			return bl.fnSetVar
 		default:
 			if flag != 0 {
 				bl.prev()
@@ -25,9 +25,9 @@ func (bl *BatchLexer) stateSet() stateFn {
 		}
 	}
 	if bl.check(func(r rune) bool { return r == '"' }) {
-		return bl.stateFollow
+		return bl.fnFollow
 	}
-	return bl.stateSetVar
+	return bl.fnSetVar
 }
 
 func (bl *BatchLexer) stateSetVar() stateFn {
@@ -42,53 +42,53 @@ func (bl *BatchLexer) stateSetVar() stateFn {
 		bl.next()
 		bl.emit(TokenPunctuation)
 	}
-	return bl.stateFollow
+	return bl.fnFollow
 }
 
 func (bl *BatchLexer) stateArithmetic() stateFn {
 	r := bl.next()
 	if r >= '0' && r <= '9' && bl.check(func(c rune) bool { return c == '<' || c == '>' }) {
 		bl.prev()
-		return bl.stateRedirect()
+		return bl.fnRedirect()
 	}
 	switch {
 	case r == 0:
-		return bl.stateRoot
+		return bl.fnRoot
 	case isNL(r):
 		bl.prev()
-		return bl.stateRoot
+		return bl.fnRoot
 	case r == '>' || r == '<':
 		return bl.stateRedirectRune(r)
 	case r == '|' || r == '&':
 		bl.backup()
-		return bl.stateRoot
+		return bl.fnRoot
 	case r == ')' && bl.compoundDepth > 0:
 		bl.backup()
-		return bl.stateRoot
+		return bl.fnRoot
 	case IsWS(r):
 		bl.acceptRun(IsWS)
 		bl.ignore()
-		return bl.stateArithmetic
+		return bl.fnArithmetic
 	case r == '(':
 		bl.compoundDepth++
 		bl.emit(TokenPunctuation)
-		return bl.stateArithmetic
+		return bl.fnArithmetic
 	case r == '"':
-		return bl.lexStringDoubleBody(bl.stateArithmetic)()
+		return bl.lexStringDoubleBody(bl.fnArithmetic)()
 	case r == ')':
 		bl.emit(TokenPunctuation)
-		return bl.stateArithmetic
+		return bl.fnArithmetic
 	case r == ',':
 		bl.emit(TokenPunctuation)
-		return bl.stateArithmetic
+		return bl.fnArithmetic
 	case r == '%':
 		bl.prev()
 		bl.lexPercent()
-		return bl.stateArithmetic
+		return bl.fnArithmetic
 	case r == '!':
 		bl.prev()
 		bl.lexDelayedVar()
-		return bl.stateArithmetic
+		return bl.fnArithmetic
 	case r == '0':
 		r2 := bl.next()
 		if r2 == 'x' || r2 == 'X' {
@@ -101,15 +101,15 @@ func (bl *BatchLexer) stateArithmetic() stateFn {
 			bl.prev()
 		}
 		bl.emit(TokenNumber)
-		return bl.stateArithmetic
+		return bl.fnArithmetic
 	case r >= '1' && r <= '9':
 		bl.acceptRun(func(r rune) bool { return r >= '0' && r <= '9' })
 		bl.emit(TokenNumber)
-		return bl.stateArithmetic
+		return bl.fnArithmetic
 	case strings.ContainsRune("=+-*/!~^", r):
 		bl.acceptRun(func(r rune) bool { return strings.ContainsRune("=+-*/!~^", r) })
 		bl.emit(TokenOperator)
-		return bl.stateArithmetic
+		return bl.fnArithmetic
 	default:
 		bl.acceptRun(func(r rune) bool {
 			return r != 0 && !isNL(r) && !IsWS(r) && !isPunct(r) &&
@@ -119,7 +119,7 @@ func (bl *BatchLexer) stateArithmetic() stateFn {
 			bl.emit(TokenVariable)
 		}
 	}
-	return bl.stateArithmetic
+	return bl.fnArithmetic
 }
 
 func (bl *BatchLexer) stateFor() stateFn {
@@ -205,9 +205,9 @@ func (bl *BatchLexer) stateFor() stateFn {
 		bl.next()
 		bl.compoundDepth++
 		bl.emit(TokenPunctuation)
-		return bl.stateRoot
+		return bl.fnRoot
 	}
-	return bl.stateRoot
+	return bl.fnRoot
 }
 
 func (bl *BatchLexer) stateIf() stateFn {
@@ -249,7 +249,7 @@ func (bl *BatchLexer) stateIf() stateFn {
 			}
 		}
 	}
-	return bl.stateFollow
+	return bl.fnFollow
 }
 
 func (bl *BatchLexer) stateGoto() stateFn {
@@ -260,7 +260,7 @@ func (bl *BatchLexer) stateGoto() stateFn {
 	}
 	bl.acceptRun(func(r rune) bool { return !IsWS(r) && !isNL(r) && !isPunct(r) && r != 0 })
 	bl.emit(TokenLabel)
-	return bl.stateRoot
+	return bl.fnRoot
 }
 
 func (bl *BatchLexer) stateCall() stateFn {
@@ -270,7 +270,7 @@ func (bl *BatchLexer) stateCall() stateFn {
 		bl.emit(TokenPunctuation)
 		bl.acceptRun(func(r rune) bool { return !IsWS(r) && !isNL(r) && !isPunct(r) && r != 0 })
 		bl.emit(TokenLabel)
-		return bl.stateFollow
+		return bl.fnFollow
 	}
-	return bl.stateFollow
+	return bl.fnFollow
 }

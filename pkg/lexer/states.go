@@ -11,36 +11,36 @@ func (bl *BatchLexer) stateRoot() stateFn {
 		bl.acceptRun(isNL)
 		bl.emit(TokenNewline)
 		bl.atCommandStart = true
-		return bl.stateRoot
+		return bl.fnRoot
 	case IsWS(r):
 		bl.acceptRun(IsWS)
 		bl.emit(TokenWhitespace)
-		return bl.stateRoot
+		return bl.fnRoot
 	case r == '(':
 		bl.atCommandStart = false
 		bl.compoundDepth++
 		bl.emit(TokenPunctuation)
-		return bl.stateRoot
+		return bl.fnRoot
 	case r == ')':
 		bl.atCommandStart = false
 		if bl.compoundDepth > 0 {
 			bl.compoundDepth--
 		}
 		bl.emit(TokenPunctuation)
-		return bl.stateRoot
+		return bl.fnRoot
 	case r == '@':
 		// @ is an echo-suppression prefix; treat it as transparent to label
 		// detection so that @:label still defines a label.
 		bl.acceptRun(func(r rune) bool { return r == '@' })
 		bl.emit(TokenPunctuation)
-		return bl.stateRoot
+		return bl.fnRoot
 	case r == ':':
 		if bl.check(func(r rune) bool { return r == ':' }) {
 			bl.next()
 			bl.acceptRun(func(r rune) bool { return !isNL(r) && r != 0 })
 			bl.emit(TokenComment)
 			bl.atCommandStart = false
-			return bl.stateRoot
+			return bl.fnRoot
 		}
 		// A colon defines a label only when it is the first non-whitespace
 		// token on the line.  In all other positions it is plain punctuation.
@@ -48,20 +48,20 @@ func (bl *BatchLexer) stateRoot() stateFn {
 		bl.atCommandStart = false
 		bl.emit(TokenPunctuation)
 		if isAtStart {
-			return bl.stateLabelName
+			return bl.fnLabelName
 		}
-		return bl.stateRoot
+		return bl.fnRoot
 	case r == '|' || r == '&':
 		bl.atCommandStart = false
 		bl.acceptRun(func(r rune) bool { return r == '|' || r == '&' })
 		bl.emit(TokenPunctuation)
-		return bl.stateRoot
+		return bl.fnRoot
 	case r == '>' || r == '<':
 		bl.atCommandStart = false
 		return bl.stateRedirectRune(r)
 	case r == '"':
 		bl.atCommandStart = false
-		return bl.lexStringDoubleBody(bl.stateRoot)()
+		return bl.lexStringDoubleBody(bl.fnRoot)()
 	case r == '^':
 		bl.atCommandStart = false
 		r2 := bl.next()
@@ -76,17 +76,17 @@ func (bl *BatchLexer) stateRoot() stateFn {
 			bl.start++
 			bl.emit(TokenEscape)
 		}
-		return bl.stateRoot
+		return bl.fnRoot
 	case r == '%':
 		bl.atCommandStart = false
 		bl.prev()
 		bl.lexPercent()
-		return bl.stateRoot
+		return bl.fnRoot
 	case r == '!':
 		bl.atCommandStart = false
 		bl.prev()
 		bl.lexDelayedVar()
-		return bl.stateRoot
+		return bl.fnRoot
 	case r == '=':
 		bl.atCommandStart = false
 		r2 := bl.next()
@@ -98,27 +98,27 @@ func (bl *BatchLexer) stateRoot() stateFn {
 			}
 			bl.emit(TokenPunctuation)
 		}
-		return bl.stateRoot
+		return bl.fnRoot
 	case r == '/':
 		bl.atCommandStart = false
 		bl.emit(TokenPunctuation)
-		return bl.stateRoot
+		return bl.fnRoot
 	case r >= '0' && r <= '9':
 		bl.atCommandStart = false
 		bl.acceptRun(func(r rune) bool { return r >= '0' && r <= '9' })
 		nextRune := bl.next()
 		if nextRune == '>' || nextRune == '<' {
 			bl.prev()
-			return bl.stateRedirect()
+			return bl.fnRedirect()
 		}
 		for i := 0; i < bl.width(); i++ {
 			bl.backup()
 		}
-		return bl.stateWord
+		return bl.fnWord
 	default:
 		bl.atCommandStart = false
 		bl.prev()
-		return bl.stateWord
+		return bl.fnWord
 	}
 }
 
@@ -134,14 +134,14 @@ func (bl *BatchLexer) stateWord() stateFn {
 			return nil
 		}
 		bl.prev()
-		return bl.stateRoot
+		return bl.fnRoot
 	}
 	word := bl.drainBuf()
 	lower := strings.ToLower(word)
 
 	if word == "==" {
 		bl.emit(TokenOperator)
-		return bl.stateFollow
+		return bl.fnFollow
 	}
 
 	if entry, ok := keywordTable[lower]; ok {
@@ -149,10 +149,10 @@ func (bl *BatchLexer) stateWord() stateFn {
 		if entry.next != nil {
 			return entry.next(bl)
 		}
-		return bl.stateFollow
+		return bl.fnFollow
 	}
 	bl.emit(TokenWord)
-	return bl.stateFollow
+	return bl.fnFollow
 }
 
 func (bl *BatchLexer) stateFollow() stateFn {
@@ -162,16 +162,16 @@ func (bl *BatchLexer) stateFollow() stateFn {
 	}
 	r := bl.next()
 	if r == 0 {
-		return bl.stateRoot
+		return bl.fnRoot
 	}
 	bl.prev()
-	return bl.stateRoot
+	return bl.fnRoot
 }
 
 func (bl *BatchLexer) stateRem() stateFn {
 	bl.acceptRun(func(r rune) bool { return !isNL(r) && r != 0 })
 	bl.emit(TokenComment)
-	return bl.stateRoot
+	return bl.fnRoot
 }
 
 func (bl *BatchLexer) stateLabelName() stateFn {
@@ -183,7 +183,7 @@ func (bl *BatchLexer) stateLabelName() stateFn {
 	// Discard it so ":021 TIDAL" defines label "021" with "TIDAL" ignored.
 	bl.acceptRun(func(r rune) bool { return !isNL(r) && r != 0 })
 	bl.ignore()
-	return bl.stateRoot
+	return bl.fnRoot
 }
 
 func (bl *BatchLexer) stateRedirectRune(r rune) stateFn {
@@ -194,7 +194,7 @@ func (bl *BatchLexer) stateRedirectRune(r rune) stateFn {
 		bl.next()
 	}
 	bl.emit(TokenRedirect)
-	return bl.stateFollow
+	return bl.fnFollow
 }
 
 func r2redirect(r rune) rune {
@@ -214,7 +214,7 @@ func (bl *BatchLexer) stateRedirect() stateFn {
 		if bl.width() > 0 {
 			bl.emit(TokenText)
 		}
-		return bl.stateRoot
+		return bl.fnRoot
 	}
 	return bl.stateRedirectRune(r)
 }

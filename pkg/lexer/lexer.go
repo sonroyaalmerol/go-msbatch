@@ -5,15 +5,30 @@ package lexer
 
 // BatchLexer tokenises a Windows batch script.
 type BatchLexer struct {
-	input      []rune
-	start      int
-	pos        int
-	state      stateFn
-	items      chan Item
-	lineOffset int // 0-based line number offset (for embedding in larger documents)
-	// batch-specific state
+	input          []rune
+	start          int
+	pos            int
+	state          stateFn
+	items          chan Item
+	lineOffset     int
 	compoundDepth  int
-	atCommandStart bool // true when : would start a label (no content on line yet)
+	atCommandStart bool
+	wlPos          int
+	wlLine         int
+	wlCol          int
+	fnRoot         stateFn
+	fnWord         stateFn
+	fnFollow       stateFn
+	fnSetVar       stateFn
+	fnArithmetic   stateFn
+	fnLabelName    stateFn
+	fnRedirect     stateFn
+	fnIf           stateFn
+	fnFor          stateFn
+	fnRem          stateFn
+	fnCall         stateFn
+	fnGoto         stateFn
+	fnSet          stateFn
 }
 
 // New creates a BatchLexer ready to tokenise src.
@@ -22,9 +37,29 @@ func New(src string) *BatchLexer {
 		input:          []rune(src),
 		items:          make(chan Item, 10),
 		atCommandStart: true,
+		wlLine:         0,
 	}
-	bl.state = bl.stateRoot
+	bl.bindStates()
+	bl.state = bl.fnRoot
 	return bl
+}
+
+// bindStates binds every state method once so transitions return fields
+// instead of allocating method values.
+func (bl *BatchLexer) bindStates() {
+	bl.fnRoot = bl.stateRoot
+	bl.fnWord = bl.stateWord
+	bl.fnFollow = bl.stateFollow
+	bl.fnSetVar = bl.stateSetVar
+	bl.fnArithmetic = bl.stateArithmetic
+	bl.fnLabelName = bl.stateLabelName
+	bl.fnRedirect = bl.stateRedirect
+	bl.fnIf = bl.stateIf
+	bl.fnFor = bl.stateFor
+	bl.fnRem = bl.stateRem
+	bl.fnCall = bl.stateCall
+	bl.fnGoto = bl.stateGoto
+	bl.fnSet = bl.stateSet
 }
 
 // NewWithLine creates a BatchLexer that stamps line on every emitted Item.
@@ -33,6 +68,7 @@ func New(src string) *BatchLexer {
 func NewWithLine(src string, line int) *BatchLexer {
 	bl := New(src)
 	bl.lineOffset = line
+	bl.wlLine = line
 	return bl
 }
 
@@ -106,23 +142,30 @@ func (bl *BatchLexer) emit(t TokenType) {
 	bl.start = bl.pos
 }
 
-// lineColAt returns the line and column at a given position.
-// This is O(n) where n is the position, but provides accurate LSP positions.
 func (bl *BatchLexer) lineColAt(pos int) (line, col int) {
-	line = bl.lineOffset
-	col = 0
-	for i := 0; i < pos && i < len(bl.input); i++ {
-		r := bl.input[i]
-		if r == '\n' {
-			line++
-			col = 0
-		} else if r == '\r' {
-			// Skip CR (CRLF is handled by LF)
-			continue
-		} else {
-			col++
+	if pos < bl.wlPos {
+		line = bl.lineOffset
+		col = 0
+		for i := 0; i < pos && i < len(bl.input); i++ {
+			if bl.input[i] == '\n' {
+				line++
+				col = 0
+			} else if bl.input[i] != '\r' {
+				col++
+			}
+		}
+	} else {
+		line, col = bl.wlLine, bl.wlCol
+		for i := bl.wlPos; i < pos && i < len(bl.input); i++ {
+			if bl.input[i] == '\n' {
+				line++
+				col = 0
+			} else if bl.input[i] != '\r' {
+				col++
+			}
 		}
 	}
+	bl.wlPos, bl.wlLine, bl.wlCol = pos, line, col
 	return line, col
 }
 
