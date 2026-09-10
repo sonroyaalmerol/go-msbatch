@@ -3,9 +3,11 @@
 // transitions to the next state by returning it.
 package lexer
 
+import "unicode/utf8"
+
 // BatchLexer tokenises a Windows batch script.
 type BatchLexer struct {
-	input          []rune
+	input          string
 	start          int
 	pos            int
 	state          stateFn
@@ -34,7 +36,7 @@ type BatchLexer struct {
 // New creates a BatchLexer ready to tokenise src.
 func New(src string) *BatchLexer {
 	bl := &BatchLexer{
-		input:          []rune(src),
+		input:          src,
 		items:          make(chan Item, 10),
 		atCommandStart: true,
 		wlLine:         0,
@@ -96,8 +98,9 @@ func (bl *BatchLexer) next() rune {
 	if bl.pos >= len(bl.input) {
 		return 0
 	}
-	bl.pos++
-	return bl.input[bl.pos-1]
+	r, w := utf8.DecodeRuneInString(bl.input[bl.pos:])
+	bl.pos += w
+	return r
 }
 
 // prev unconsumes the last rune (single-step undo).
@@ -105,11 +108,16 @@ func (bl *BatchLexer) prev() rune {
 	if bl.pos == 0 {
 		return 0
 	}
-	bl.pos--
+	i := bl.pos - 1
+	for i > 0 && bl.input[i]&0xC0 == 0x80 {
+		i--
+	}
+	r, _ := utf8.DecodeRuneInString(bl.input[i:bl.pos])
+	bl.pos = i
 	if bl.pos < bl.start {
 		bl.start = bl.pos
 	}
-	return bl.input[bl.pos]
+	return r
 }
 
 // backup resets pos to start, discarding the current buffered run.
@@ -146,23 +154,29 @@ func (bl *BatchLexer) lineColAt(pos int) (line, col int) {
 	if pos < bl.wlPos {
 		line = bl.lineOffset
 		col = 0
-		for i := 0; i < pos && i < len(bl.input); i++ {
-			if bl.input[i] == '\n' {
+		i := 0
+		for i < pos && i < len(bl.input) {
+			r, w := utf8.DecodeRuneInString(bl.input[i:])
+			if r == '\n' {
 				line++
 				col = 0
-			} else if bl.input[i] != '\r' {
+			} else if r != '\r' {
 				col++
 			}
+			i += w
 		}
 	} else {
 		line, col = bl.wlLine, bl.wlCol
-		for i := bl.wlPos; i < pos && i < len(bl.input); i++ {
-			if bl.input[i] == '\n' {
+		i := bl.wlPos
+		for i < pos && i < len(bl.input) {
+			r, w := utf8.DecodeRuneInString(bl.input[i:])
+			if r == '\n' {
 				line++
 				col = 0
-			} else if bl.input[i] != '\r' {
+			} else if r != '\r' {
 				col++
 			}
+			i += w
 		}
 	}
 	bl.wlPos, bl.wlLine, bl.wlCol = pos, line, col
@@ -175,7 +189,8 @@ func (bl *BatchLexer) check(fn func(rune) bool) bool {
 	if bl.pos >= len(bl.input) {
 		return fn(0)
 	}
-	return fn(bl.input[bl.pos])
+	r, _ := utf8.DecodeRuneInString(bl.input[bl.pos:])
+	return fn(r)
 }
 
 // accept consumes the next rune if fn returns true, otherwise unconsumes it.

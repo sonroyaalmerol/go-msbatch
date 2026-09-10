@@ -2,12 +2,12 @@ package lexer
 
 // Item is a single lexed token.
 type Item struct {
-	Line    int // 0-based line number at token start
-	Col     int // 0-based rune column at token start
-	EndLine int // 0-based line number at token end
-	EndCol  int // 0-based rune column at token end (exclusive)
+	Line    int
+	Col     int
+	EndLine int
+	EndCol  int
 	Type    TokenType
-	Value   []rune
+	Value   string
 }
 
 // stateFn is a state-machine transition. It operates on the receiver

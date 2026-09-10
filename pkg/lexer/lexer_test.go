@@ -22,7 +22,7 @@ func lex(src string) []tok {
 		if item.Type == TokenEOF {
 			break
 		}
-		out = append(out, tok{item.Type, string(item.Value)})
+		out = append(out, tok{item.Type, item.Value})
 	}
 	return out
 }

@@ -44,8 +44,8 @@ func (bl *BatchLexer) isFollowPlain(r rune) bool {
 	return true
 }
 
-// drainBuf returns the runes buffered since the last Emit/Ignore as a string.
-// It does not change pos.
+// drainBuf returns the bytes buffered since the last Emit/Ignore as a
+// zero-copy substring. It does not change pos.
 func (bl *BatchLexer) drainBuf() string {
-	return string(bl.input[bl.start:bl.pos])
+	return bl.input[bl.start:bl.pos]
 }
