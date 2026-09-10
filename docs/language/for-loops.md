@@ -61,7 +61,7 @@ FOR /R . %%f IN (*.log) DO DEL %%f
 FOR /R C:\data %%f IN (*.csv) DO ECHO %%f
 ```
 
-Walks the directory tree rooted at `root` (default: current directory) and matches `pattern` in each subdirectory.
+Walks the directory tree rooted at `root` (default: current directory) and matches `pattern` in each subdirectory. Like cmd.exe, the loop variable receives absolute Windows-style paths (e.g. `C:\data\sub\file.csv`) regardless of the host OS.
 
 **Caveat:** `root` is optional; if omitted the current directory is used. Unlike real cmd.exe, the pattern must be a filename pattern (not a bare directory). Pattern `*.*` and `*` both match all files.
 
