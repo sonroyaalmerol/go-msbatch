@@ -24,7 +24,11 @@ func DriveMount(letter byte) string {
 	upper := strings.ToUpper(lower)
 
 	if v := os.Getenv("MSBATCH_DRIVE_" + upper); v != "" {
-		return strings.TrimRight(v, "/")
+		v = strings.TrimRight(v, "/")
+		if v == "" {
+			return "/"
+		}
+		return v
 	}
 
 	if prefix := os.Getenv("MSBATCH_PREFIX"); prefix != "" {
@@ -243,7 +247,7 @@ func UnixToWinePath(unixPath string) string {
 			if mount == "" {
 				continue
 			}
-			if strings.HasPrefix(unixPath, mount+"/") || unixPath == mount {
+			if mount == "/" || strings.HasPrefix(unixPath, mount+"/") || unixPath == mount {
 				return toDrive(byte(drive), mount, unixPath)
 			}
 		}
@@ -255,7 +259,7 @@ func UnixToWinePath(unixPath string) string {
 		if mount == "" {
 			continue
 		}
-		if strings.HasPrefix(unixPath, mount+"/") || unixPath == mount {
+		if mount == "/" || strings.HasPrefix(unixPath, mount+"/") || unixPath == mount {
 			return toDrive(byte(drive), mount, unixPath)
 		}
 	}

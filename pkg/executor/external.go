@@ -524,6 +524,9 @@ func runBatchFile(p *processor.Processor, batPath string, args []string, called 
 	p.Env.SetBatchMode(true)
 	defer p.Env.SetBatchMode(batchMode)
 
+	restoreEcho := p.EnterBatchEcho()
+	defer restoreEcho()
+
 	cwd, _ := os.Getwd()
 	p.Logger.Debug("running batch file", "path", batPath, "args", args, "cwd", cwd)
 	p.Trace.CallFile(batPath, args)

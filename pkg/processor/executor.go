@@ -52,14 +52,22 @@ func (p *Processor) ExecuteNode(n parser.Node) error {
 	case *parser.Block:
 		return p.executeBlock(node)
 	case *parser.IfNode:
+		p.echoIf(node)
 		return p.executeIf(node)
 	case *parser.ForNode:
 		return p.executeFor(node)
 	case *parser.BinaryNode:
+		p.echoBinary(node)
+		p.echoBlockDepth++
+		defer func() { p.echoBlockDepth-- }()
 		return p.executeBinary(node)
 	case *parser.PipeNode:
+		p.echoPipe(node)
 		return p.executePipe(node)
-	case *parser.LabelNode, *parser.CommentNode:
+	case *parser.LabelNode:
+		return nil
+	case *parser.CommentNode:
+		p.echoComment(node)
 		return nil
 	default:
 		return fmt.Errorf("unknown node type: %T", n)
@@ -116,7 +124,330 @@ func (p *Processor) traceNode(n parser.Node) {
 	}
 }
 
+func redirectOpString(k parser.RedirectKind) string {
+	switch k {
+	case parser.RedirectAppend:
+		return ">>"
+	case parser.RedirectIn:
+		return "<"
+	case parser.RedirectOutFD:
+		return ">&"
+	case parser.RedirectInFD:
+		return "<&"
+	}
+	return ">"
+}
+
+// renderRawCommand renders trace text: env vars expanded via phase 1, FOR vars via phase 4 when active.
+func (p *Processor) renderRawCommand(n *parser.SimpleCommand) string {
+	text := p.ExpandPhase1(n.Name + strings.Join(n.RawArgs, ""))
+	text = p.ExpandPhase4(text)
+	for _, r := range n.Redirects {
+		text += " " + strconv.Itoa(r.FD) + redirectOpString(r.Kind) + p.ExpandPhase1(r.Target)
+	}
+	return text
+}
+
+func (p *Processor) renderTraceLines(n parser.Node) []string {
+	switch node := n.(type) {
+	case *parser.SimpleCommand:
+		return []string{p.renderRawCommand(node)}
+	case *parser.BinaryNode:
+		return []string{p.renderBinaryText(node)}
+	case *parser.PipeNode:
+		return []string{p.renderPipeText(node)}
+	case *parser.Block:
+		return p.renderBodyLines(node.Body)
+	case *parser.IfNode:
+		lines := []string{p.ifCondText(node) + " ("}
+		lines = append(lines, decorateTraceBody(p.renderTraceNodeNoForVars(node.Then))...)
+		return append(lines, ") ")
+	case *parser.ForNode:
+		lines := []string{p.forHeaderText(node)}
+		lines = append(lines, decorateTraceBody(p.renderTraceNodeNoForVars(node.Do))...)
+		return append(lines, ") ")
+	}
+	return nil
+}
+
+func (p *Processor) renderTraceNodeNoForVars(n parser.Node) []string {
+	saved := p.ForVars
+	p.ForVars = nil
+	var out []string
+	switch node := n.(type) {
+	case *parser.SimpleCommand:
+		out = []string{p.renderRawCommand(node)}
+	case *parser.Block:
+		out = p.renderBodyLines(node.Body)
+	case *parser.IfNode:
+		out = []string{p.ifCondText(node) + " ("}
+		out = append(out, decorateTraceBody(p.renderTraceNodeNoForVars(node.Then))...)
+		out = append(out, ") ")
+	case *parser.ForNode:
+		out = []string{p.forHeaderText(node)}
+		out = append(out, decorateTraceBody(p.renderTraceNodeNoForVars(node.Do))...)
+		out = append(out, ") ")
+	case *parser.BinaryNode:
+		op := binaryOpText(node.Op)
+		out = []string{p.renderTraceNodeNoForVars1(node.Left) + "  " + op + " " + p.renderTraceNodeNoForVars1(node.Right)}
+	case *parser.PipeNode:
+		out = []string{p.renderTraceNodeNoForVars1(node.Left) + "  | " + p.renderTraceNodeNoForVars1(node.Right)}
+	}
+	p.ForVars = saved
+	return out
+}
+
+func (p *Processor) renderTraceNodeNoForVars1(n parser.Node) string {
+	lines := p.renderTraceNodeNoForVars(n)
+	return strings.Join(lines, " ")
+}
+
+func (p *Processor) renderBodyLines(nodes []parser.Node) []string {
+	var out []string
+	for _, c := range nodes {
+		out = append(out, p.renderTraceLines(c)...)
+	}
+	return out
+}
+
+// decorateTraceBody mirrors cmd body spacing: first line flush, later lines one leading space, two trailing spaces except one on the last.
+func decorateTraceBody(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		lead := ""
+		if i > 0 {
+			lead = " "
+		}
+		trail := "  "
+		if i == len(lines)-1 {
+			trail = " "
+		}
+		out[i] = lead + l + trail
+	}
+	return out
+}
+
+func (p *Processor) emitTraceLines(lines []string) {
+	prompt, ok := p.Env.Get("PROMPT")
+	if !ok {
+		prompt = "$P$G"
+	}
+	expanded := p.ExpandPrompt(prompt)
+	fmt.Fprintln(p.Console)
+	for i, l := range lines {
+		if i == 0 {
+			l = expanded + l
+		}
+		fmt.Fprintln(p.Console, l)
+	}
+}
+
+func (p *Processor) echoComment(n *parser.CommentNode) {
+	if !p.Echo || p.echoBlockDepth > 0 || strings.HasPrefix(n.Text, ":") {
+		return
+	}
+	p.emitTraceLines([]string{"rem" + p.ExpandPhase1(n.Text) + " "})
+}
+
+func (p *Processor) ifCondText(n *parser.IfNode) string {
+	s := "if"
+	if n.CaseInsensitive {
+		s += " /I"
+	}
+	if n.Cond.Not {
+		s += " not"
+	}
+	c := n.Cond
+	switch c.Kind {
+	case parser.CondCompare:
+		s += " " + p.ExpandPhase1(c.Left) + " " + string(c.Op) + " " + p.ExpandPhase1(c.Right)
+	case parser.CondExist:
+		s += " exist " + p.ExpandPhase1(c.Arg)
+	case parser.CondDefined:
+		s += " defined " + p.ExpandPhase1(c.Arg)
+	case parser.CondErrorLevel:
+		s += " errorlevel " + strconv.Itoa(c.Level)
+	case parser.CondCmdExtVersion:
+		s += " cmdextversion " + strconv.Itoa(c.Level)
+	}
+	return s
+}
+
+type traceForm int
+
+const (
+	traceBare traceForm = iota
+	traceInline
+	traceMulti
+)
+
+// traceFormOf mirrors cmd: single-command block echoes inline, multi-command block multiline, bare command bare.
+func traceFormOf(n parser.Node) traceForm {
+	switch node := n.(type) {
+	case *parser.SimpleCommand:
+		return traceBare
+	case *parser.Block:
+		if len(node.Body) == 1 {
+			return traceInline
+		}
+		return traceMulti
+	}
+	return traceInline
+}
+
+func (p *Processor) echoIf(n *parser.IfNode) {
+	if !p.Echo || p.echoBlockDepth > 0 {
+		return
+	}
+	thenLines := p.renderTraceNodeNoForVars(n.Then)
+	var lines []string
+	switch traceFormOf(n.Then) {
+	case traceBare:
+		lines = []string{p.ifCondText(n) + " " + strings.Join(thenLines, " ") + " "}
+	case traceInline:
+		lines = []string{p.ifCondText(n) + " (" + strings.Join(thenLines, " ") + " ) "}
+	case traceMulti:
+		lines = []string{p.ifCondText(n) + " ("}
+		lines = append(lines, decorateTraceBody(thenLines)...)
+		lines = append(lines, ") ")
+	}
+	if n.Else != nil {
+		elseLines := p.renderTraceNodeNoForVars(n.Else)
+		if traceFormOf(n.Else) != traceMulti {
+			lines[len(lines)-1] += " else (" + strings.Join(elseLines, " ") + " ) "
+		} else {
+			lines[len(lines)-1] += " else ("
+			lines = append(lines, decorateTraceBody(elseLines)...)
+			lines = append(lines, ") ")
+		}
+	}
+	p.emitTraceLines(lines)
+}
+
+func binaryOpText(op parser.NodeKind) string {
+	switch op {
+	case parser.NodeAndThen:
+		return "&&"
+	case parser.NodeOrElse:
+		return "||"
+	}
+	return "&"
+}
+
+func (p *Processor) renderBinaryText(n *parser.BinaryNode) string {
+	return strings.Join(p.renderTraceLines(n.Left), " ") + "  " + binaryOpText(n.Op) + " " + strings.Join(p.renderTraceLines(n.Right), " ")
+}
+
+func (p *Processor) renderPipeText(n *parser.PipeNode) string {
+	return strings.Join(p.renderTraceLines(n.Left), " ") + "  | " + strings.Join(p.renderTraceLines(n.Right), " ")
+}
+
+func (p *Processor) echoBinary(n *parser.BinaryNode) {
+	if !p.Echo || p.echoBlockDepth > 0 {
+		return
+	}
+	p.emitTraceLines([]string{p.renderBinaryText(n) + " "})
+}
+
+func (p *Processor) echoPipe(n *parser.PipeNode) {
+	if !p.Echo || p.echoBlockDepth > 0 {
+		return
+	}
+	p.emitTraceLines([]string{p.renderPipeText(n) + " "})
+}
+
+func (p *Processor) forHeaderText(n *parser.ForNode) string {
+	s := "for"
+	switch n.Variant {
+	case parser.ForRange:
+		s += " /L"
+	case parser.ForDir:
+		s += " /D"
+	case parser.ForRecursive:
+		s += " /R"
+		if n.Options != "" {
+			s += " " + p.ExpandPhase1(n.Options)
+		}
+	case parser.ForF:
+		s += " /F"
+		if n.Options != "" {
+			opt := p.ExpandPhase1(n.Options)
+			if !strings.HasPrefix(opt, `"`) {
+				opt = `"` + opt + `"`
+			}
+			s += " " + opt
+		}
+	}
+	s += " %" + n.Variable + " in ("
+	sep := " "
+	if n.Variant == parser.ForRange {
+		sep = ","
+	}
+	items := make([]string, len(n.Set))
+	for i, it := range n.Set {
+		items[i] = p.ExpandPhase1(it)
+	}
+	return s + strings.Join(items, sep) + ") do "
+}
+
+func (p *Processor) echoForHeader(n *parser.ForNode) {
+	if !p.Echo || p.echoBlockDepth > 0 {
+		return
+	}
+	header := p.forHeaderText(n)
+	body := p.renderTraceNodeNoForVars(n.Do)
+	var lines []string
+	switch traceFormOf(n.Do) {
+	case traceBare:
+		lines = []string{header + strings.Join(body, " ") + " "}
+	case traceInline:
+		lines = []string{header + "(" + strings.Join(body, " ") + " ) "}
+	case traceMulti:
+		lines = []string{header + "("}
+		lines = append(lines, decorateTraceBody(body)...)
+		lines = append(lines, ") ")
+	}
+	p.emitTraceLines(lines)
+}
+
+func (p *Processor) execForBody(n *parser.ForNode) error {
+	if p.Echo && p.echoBlockDepth == 0 {
+		body := p.renderTraceLines(n.Do)
+		var lines []string
+		switch traceFormOf(n.Do) {
+		case traceBare:
+			lines = []string{strings.Join(body, " ") + " "}
+		case traceInline:
+			lines = []string{"(" + strings.Join(body, " ") + " ) "}
+		case traceMulti:
+			lines = []string{"("}
+			lines = append(lines, decorateTraceBody(body)...)
+			lines = append(lines, ") ")
+		}
+		p.emitTraceLines(lines)
+	}
+	p.echoBlockDepth++
+	err := p.ExecuteNode(n.Do)
+	p.echoBlockDepth--
+	return err
+}
+
 func (p *Processor) executeBlock(node *parser.Block) error {
+	if p.Echo && p.echoBlockDepth == 0 {
+		body := p.renderBodyLines(node.Body)
+		var lines []string
+		if traceFormOf(node) == traceMulti {
+			lines = []string{"("}
+			lines = append(lines, decorateTraceBody(body)...)
+			lines = append(lines, ") ")
+		} else {
+			lines = []string{"(" + strings.Join(body, " ") + " ) "}
+		}
+		p.emitTraceLines(lines)
+	}
+	p.echoBlockDepth++
+	defer func() { p.echoBlockDepth-- }()
+
 	rm := p.newRedirectManager()
 
 	if len(node.Redirects) > 0 {
@@ -244,7 +575,10 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 		}
 
 		p.Logger.Debug("echo console output", "line", sb.String())
-		fmt.Fprintln(p.Console, sb.String())
+		if p.echoBlockDepth == 0 {
+			fmt.Fprintln(p.Console)
+			fmt.Fprintln(p.Console, sb.String())
+		}
 	}
 
 	// 4. Final expansion: Phase 5 (delayed expansion)
@@ -311,11 +645,14 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 			oldPC := p.PC
 			oldArgs := p.Args
 			oldOriginalArgs := p.OriginalArgs
+			oldEchoDepth := p.echoBlockDepth
+			p.echoBlockDepth = 0
 			p.Args = append([]string{target}, restArgs...)
 			p.OriginalArgs = append([]string(nil), restArgs...)
 			if err := p.jumpToLabel(label); err != nil {
 				p.Args = oldArgs
 				p.OriginalArgs = oldOriginalArgs
+				p.echoBlockDepth = oldEchoDepth
 				p.Trace.Dedent()
 				fmt.Fprintln(p.Stderr, err)
 				p.Failure()
@@ -333,6 +670,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 						p.PC = oldPC
 						p.Args = oldArgs
 						p.OriginalArgs = oldOriginalArgs
+						p.echoBlockDepth = oldEchoDepth
 						return nil
 					}
 					return err
@@ -344,6 +682,7 @@ func (p *Processor) executeSimpleCommand(n *parser.SimpleCommand) error {
 			p.PC = oldPC
 			p.Args = oldArgs
 			p.OriginalArgs = oldOriginalArgs
+			p.echoBlockDepth = oldEchoDepth
 			return nil
 		}
 		var reconstructedRaw []string
@@ -717,9 +1056,15 @@ func (p *Processor) executeIf(n *parser.IfNode) error {
 	}
 
 	if conditionMet {
-		return p.ExecuteNode(n.Then)
+		p.echoBlockDepth++
+		err := p.ExecuteNode(n.Then)
+		p.echoBlockDepth--
+		return err
 	} else if n.Else != nil {
-		return p.ExecuteNode(n.Else)
+		p.echoBlockDepth++
+		err := p.ExecuteNode(n.Else)
+		p.echoBlockDepth--
+		return err
 	}
 	return nil
 }
@@ -787,6 +1132,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 	oldForVars := p.ForVars
 	p.ForVars = make(map[string]string)
 	maps.Copy(p.ForVars, oldForVars)
+	p.echoForHeader(n)
 	defer func() { p.ForVars = oldForVars }()
 
 	if n.Variant == parser.ForFiles {
@@ -799,7 +1145,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 				}
 				for _, m := range matches {
 					p.ForVars[n.Variable] = formatForPath(m, part, false)
-					if err := p.ExecuteNode(n.Do); err != nil {
+					if err := p.execForBody(n); err != nil {
 						return err
 					}
 					if p.Exited {
@@ -826,7 +1172,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 			if step > 0 {
 				for i := start; i <= end; i += step {
 					p.ForVars[n.Variable] = strconv.Itoa(i)
-					if err := p.ExecuteNode(n.Do); err != nil {
+					if err := p.execForBody(n); err != nil {
 						return err
 					}
 					if p.Exited {
@@ -836,7 +1182,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 			} else if step < 0 {
 				for i := start; i >= end; i += step {
 					p.ForVars[n.Variable] = strconv.Itoa(i)
-					if err := p.ExecuteNode(n.Do); err != nil {
+					if err := p.execForBody(n); err != nil {
 						return err
 					}
 					if p.Exited {
@@ -862,7 +1208,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 					}
 					if pathutil.MatchCaseInsensitive(pattern, e.Name()) {
 						p.ForVars[n.Variable] = formatForPath(filepath.Join(dir, e.Name()), part, false)
-						if err := p.ExecuteNode(n.Do); err != nil {
+						if err := p.execForBody(n); err != nil {
 							return err
 						}
 						if p.Exited {
@@ -907,7 +1253,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 						}
 						for _, m := range matches {
 							p.ForVars[n.Variable] = formatForPath(m, part, true)
-							if err := p.ExecuteNode(n.Do); err != nil {
+							if err := p.execForBody(n); err != nil {
 								walkErr = err
 								return errors.New("stop")
 							}
@@ -917,7 +1263,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 						}
 					} else {
 						p.ForVars[n.Variable] = formatForPath(fullPattern, part, true)
-						if err := p.ExecuteNode(n.Do); err != nil {
+						if err := p.execForBody(n); err != nil {
 							walkErr = err
 							return errors.New("stop")
 						}
@@ -999,7 +1345,7 @@ func (p *Processor) executeFor(n *parser.ForNode) error {
 				tokenMap := applyForTokens(parts, opts.tokens, n.Variable)
 				maps.Copy(p.ForVars, tokenMap)
 				if len(tokenMap) > 0 {
-					if err := p.ExecuteNode(n.Do); err != nil {
+					if err := p.execForBody(n); err != nil {
 						return err
 					}
 					if p.Exited {

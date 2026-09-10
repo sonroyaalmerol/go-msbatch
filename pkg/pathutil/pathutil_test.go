@@ -449,6 +449,32 @@ func TestMapArgUnixPathCaseResolution(t *testing.T) {
 	}
 }
 
+// With MSBATCH_DRIVE_C set to the filesystem root, Windows-form paths must render as C:\ instead of the Z:\ default.
+func TestUnixToWinePathRootMount(t *testing.T) {
+	t.Setenv("MSBATCH_DRIVE_C", "/")
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"nested path", "/sgprog-docker/SpeedTestFDB", "C:\\sgprog-docker\\SpeedTestFDB"},
+		{"deep path", "/home/user/file.txt", "C:\\home\\user\\file.txt"},
+		{"drive root", "/x", "C:\\x"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := UnixToWinePath(tt.input); got != tt.want {
+				t.Errorf("UnixToWinePath(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+
+	if got, want := MapPath(`C:\sgprog-docker\SpeedTestFDB`), "/sgprog-docker/SpeedTestFDB"; got != want {
+		t.Errorf("MapPath round-trip = %q, want %q", got, want)
+	}
+}
+
 func TestUnixToWinePath(t *testing.T) {
 	tests := []struct {
 		name     string

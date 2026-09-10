@@ -110,7 +110,7 @@ func Timeout(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			fmt.Fprintln(p.Stdout)
 			return p.Success()
 		case <-time.After(time.Second):
-			fmt.Fprintf(p.Stdout, "%d", remaining)
+			fmt.Fprintf(p.Stdout, "\b%d", remaining)
 		}
 	}
 	fmt.Fprintln(p.Stdout)

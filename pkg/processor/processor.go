@@ -37,6 +37,8 @@ type Processor struct {
 	Executor     CommandExecutor
 	Debugger     *Debugger
 	FDs          map[int]*FDHandle
+
+	echoBlockDepth int
 }
 
 // FDHandle is one open redirection target. Writers keep both the CRLF-translated and the raw stream, because duplicating into 1 or 2 must preserve the raw stream that external processes write to.
@@ -203,8 +205,13 @@ func ParseExpanded(line string) []parser.Node {
 	return pr.Parse()
 }
 
-// ShouldEcho reports whether this command should be echoed (phase 3).
-// A command suppressed by @ is never echoed.
+// EnterBatchEcho resets block echo suppression for a called batch file; the returned func restores the caller's depth.
+func (p *Processor) EnterBatchEcho() func() {
+	old := p.echoBlockDepth
+	p.echoBlockDepth = 0
+	return func() { p.echoBlockDepth = old }
+}
+
 func (p *Processor) ShouldEcho(n *parser.SimpleCommand) bool {
 	if n.Suppressed {
 		return false
