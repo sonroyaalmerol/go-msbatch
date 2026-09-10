@@ -62,6 +62,11 @@ func TestEchoRedirectAndCopy(t *testing.T) {
 			wantStdoutContains: []string{"1 file(s) copied"},
 		},
 		{
+			name:               "call_args_keep_wildcards_literal",
+			script:             "@echo off\necho @echo off> sub.bat\necho echo 1=[%%1] 2=[%%2] 3=[%%3] 4=[%%4]>> sub.bat\ncall sub.bat A * * B\n",
+			wantStdoutContains: []string{"1=[A] 2=[*] 3=[*] 4=[B]"},
+		},
+		{
 			name:               "copy_wildcard_after_dir_listing",
 			setupDirs:          []string{"dest"},
 			script:             "@echo off\necho content >> GRV1_TA-Flight-1026.sum\ndir *.sum /b\ncopy *.sum dest\\\n",

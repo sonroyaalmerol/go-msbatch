@@ -95,19 +95,12 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// If the command resolves to a batch file, run it in-process.
 	// (Batch files are never Wine candidates.)
 	if batPath, ok := resolveBatchFile(cmdName); ok {
-		// For batch files, map and glob-expand args as normal.
 		// Strip CMD/CRT quoting so %1 inside the called batch receives the
-		// unquoted value (matching Windows CMD CALL semantics).
+		// unquoted value (matching Windows CMD CALL semantics). Wildcards stay
+		// literal: real cmd never glob-expands call arguments.
 		var batArgs []string
 		for _, arg := range cmdWords {
-			mapped := pathutil.MapArg(stripExeArg(arg))
-			if strings.ContainsAny(mapped, "*?[") {
-				if matches, err := pathutil.GlobCaseInsensitive(mapped); err == nil && len(matches) > 0 {
-					batArgs = append(batArgs, matches...)
-					continue
-				}
-			}
-			batArgs = append(batArgs, mapped)
+			batArgs = append(batArgs, pathutil.MapArg(stripExeArg(arg)))
 		}
 		return runBatchFile(p, batPath, batArgs, cmd.Called)
 	}
@@ -186,14 +179,7 @@ func runExternal(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	// to the program.
 	var args []string
 	for _, arg := range cmdWords {
-		mapped := pathutil.MapArg(stripExeArg(arg))
-		if strings.ContainsAny(mapped, "*?[") {
-			if matches, err := pathutil.GlobCaseInsensitive(mapped); err == nil && len(matches) > 0 {
-				args = append(args, matches...)
-				continue
-			}
-		}
-		args = append(args, mapped)
+		args = append(args, pathutil.MapArg(stripExeArg(arg)))
 	}
 
 	// For bare command names on Linux, try a case-insensitive search on the PATH
