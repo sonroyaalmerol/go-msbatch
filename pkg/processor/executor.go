@@ -608,7 +608,7 @@ func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) bool
 			}
 			w, raw, rd, open := p.FDStreams(src)
 			if !open {
-				fmt.Fprintf(p.Stderr, "The handle could not be duplicated during redirection of handle %d.\n", r.FD)
+				fmt.Fprintf(p.Stderr, "The handle could not be duplicated\nduring redirection of handle %d.\n", r.FD)
 				p.Failure()
 				ok = false
 				continue
