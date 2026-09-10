@@ -165,11 +165,11 @@ func run7z(p *processor.Processor, cmd *parser.SimpleCommand, defaultMode pkzipM
 
 	cwd, _ := os.Getwd()
 	p.Logger.Debug("running 7z compatibility layer", "exe", exe, "args", finalArgs, "cwd", cwd)
-	c := exec.Command(exe, finalArgs...)
+	c := exec.CommandContext(p.Context, exe, finalArgs...)
 	c.Stdout = p.Stdout
 	c.Stderr = p.Stderr
 	c.Stdin = p.Stdin
-	c.Env = os.Environ()
+	c.Env = p.ChildEnv()
 
 	if err := c.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {

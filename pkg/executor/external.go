@@ -483,7 +483,7 @@ var ErrCommandNotFound = fmt.Errorf("command not found")
 func runOSCommand(p *processor.Processor, name string, args []string, displayName string) error {
 	cwd, _ := os.Getwd()
 	p.Logger.Debug("running OS command", "name", name, "args", args, "cwd", cwd)
-	c := exec.Command(name, args...)
+	c := exec.CommandContext(p.Context, name, args...)
 	// External processes write their own bytes: Wine/Windows binaries already
 	// emit CRLF, so bypass the LF-to-CRLF translation applied to built-in output.
 	c.Stdout = rawWriter(p.RawStdout, p.Stdout)
@@ -494,39 +494,7 @@ func runOSCommand(p *processor.Processor, name string, args []string, displayNam
 	defer closeExtra()
 	c.ExtraFiles = extraFiles
 
-	// Build a deduplicated environment: start with the OS environment as the
-	// baseline, then let batch-level SET variables override it.  This matches
-	// Windows CMD behaviour where SET changes are visible to child processes
-	// and take precedence over inherited values.  Without deduplication the OS
-	// value (first entry) would win on Linux because getenv() returns the first
-	// match, silently ignoring any SET PATH=… the batch script issued.
-	envMap := make(map[string]string, len(os.Environ()))
-	for _, kv := range os.Environ() {
-		if k, _, ok := strings.Cut(kv, "="); ok {
-			envMap[strings.ToUpper(k)] = kv // keep original casing in value
-		} else {
-			envMap[strings.ToUpper(kv)] = kv
-		}
-	}
-	for k, v := range p.Env.Snapshot() {
-		envMap[strings.ToUpper(k)] = fmt.Sprintf("%s=%s", k, v)
-	}
-	if runtime.GOOS != "windows" {
-		if kv, ok := envMap["PATH"]; ok {
-			_, val, _ := strings.Cut(kv, "=")
-			dirs := make([]string, 0, 8)
-			for _, d := range pathutil.SplitPathList(val) {
-				if d != "" {
-					dirs = append(dirs, pathutil.MapPath(d))
-				}
-			}
-			envMap["PATH"] = "PATH=" + strings.Join(dirs, string(os.PathListSeparator))
-		}
-	}
-	c.Env = make([]string, 0, len(envMap))
-	for _, kv := range envMap {
-		c.Env = append(c.Env, kv)
-	}
+	c.Env = p.ChildEnv()
 
 	if err := c.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {

@@ -1,10 +1,12 @@
 package processor
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -15,7 +17,9 @@ import (
 )
 
 type Processor struct {
+	Context      context.Context
 	Env          *Environment
+	BaseEnv      []string
 	Args         []string
 	OriginalArgs []string
 	Echo         bool
@@ -150,7 +154,9 @@ func New(env *Environment, args []string, exec CommandExecutor) *Processor {
 		originalArgs = append([]string(nil), args[1:]...)
 	}
 	return &Processor{
+		Context:      context.Background(),
 		Env:          env,
+		BaseEnv:      os.Environ(),
 		Args:         args,
 		OriginalArgs: originalArgs,
 		Echo:         true,
@@ -164,6 +170,42 @@ func New(env *Environment, args []string, exec CommandExecutor) *Processor {
 		Executor:     exec,
 		Debugger:     NewDebugger(),
 	}
+}
+
+// ChildEnv returns the environment for external commands with batch variables applied.
+func (p *Processor) ChildEnv() []string {
+	base := p.BaseEnv
+	if base == nil {
+		base = os.Environ()
+	}
+	envMap := make(map[string]string, len(base))
+	for _, kv := range base {
+		if k, _, ok := strings.Cut(kv, "="); ok {
+			envMap[strings.ToUpper(k)] = kv
+		} else {
+			envMap[strings.ToUpper(kv)] = kv
+		}
+	}
+	for k, v := range p.Env.Snapshot() {
+		envMap[strings.ToUpper(k)] = fmt.Sprintf("%s=%s", k, v)
+	}
+	if runtime.GOOS != "windows" {
+		if kv, ok := envMap["PATH"]; ok {
+			_, val, _ := strings.Cut(kv, "=")
+			dirs := make([]string, 0, 8)
+			for _, dir := range pathutil.SplitPathList(val) {
+				if dir != "" {
+					dirs = append(dirs, pathutil.MapPath(dir))
+				}
+			}
+			envMap["PATH"] = "PATH=" + strings.Join(dirs, string(os.PathListSeparator))
+		}
+	}
+	env := make([]string, 0, len(envMap))
+	for _, kv := range envMap {
+		env = append(env, kv)
+	}
+	return env
 }
 
 func (p *Processor) SetCurrentFile(filename string) {

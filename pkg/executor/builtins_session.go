@@ -280,10 +280,11 @@ func cmdStart(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		p.Success()
 		return nil
 	}
-	c := exec.Command(pathutil.MapPath(cmdArgs[0]), cmdArgs[1:]...)
+	c := exec.CommandContext(p.Context, pathutil.MapPath(cmdArgs[0]), cmdArgs[1:]...)
 	c.Stdout = p.Stdout
 	c.Stderr = p.Stderr
 	c.Stdin = p.Stdin
+	c.Env = p.ChildEnv()
 	if wait {
 		if err := c.Wait(); err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
