@@ -52,6 +52,11 @@ func TestEchoRedirectAndCopy(t *testing.T) {
 			},
 		},
 		{
+			name:               "copy_to_missing_dest_dir_prints_zero_copied",
+			script:             "@echo off\necho data > src.txt\ncopy /y src.txt C:\\nosuchdir\\f.txt\n",
+			wantStdoutContains: []string{"        0 file(s) copied."},
+		},
+		{
 			name:               "copy_plus_without_destination_writes_first_arg",
 			script:             "@echo off\necho line1 >> test.sum\nset OUTPUTFILE=test.sum\necho line2 >> temp_vars_output.txt\ncopy %OUTPUTFILE% + temp_vars_output.txt\n",
 			wantStdoutContains: []string{"1 file(s) copied"},

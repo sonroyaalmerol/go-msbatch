@@ -719,6 +719,7 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			} else {
 				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
 			}
+			fmt.Fprintf(p.Stdout, "        0 file(s) copied.\n")
 			p.Failure()
 			return nil
 		}
