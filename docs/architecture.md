@@ -112,7 +112,6 @@ Each side of a `|` runs concurrently in a goroutine. An `os.Pipe()` connects the
 - **`DISABLEDELAYEDEXPANSION`** turns delayed expansion off within the scope, as in cmd.exe.
 - **FOR variable names** are single characters (any character except `%`); multi-character names are not supported, matching cmd.exe.
 - **Invalid `%~` modifiers** are left literal instead of cmd.exe's two-line "path operator ... is invalid" error plus script abort.
-- **Unquoted `<<` in a batch line** (e.g. `set /a s=1<<4`) is evaluated instead of cmd.exe's `1<< was unexpected at this time.` error and script abort; quote the expression (`set /a "s=1<<4"`) as with cmd.exe.
 - **`FIND`, `SORT`, `WHERE`, `TIMEOUT`, `XCOPY`, `ROBOCOPY`, `TREE`, `MORE` are internal implementations** (external `.exe` programs on real Windows); edge-case output and flags may differ from the real executables.
 - **`GAWK`/`AWK` is an internal Go implementation** (goawk); programs relying on GNU awk extensions may behave differently, and files written from awk scripts get LF endings rather than CRLF.
 - **`PKZIP`, `PKUNZIP`, `PKZIPC` are mapped to 7-Zip** when available, since PKZIP does not exist on Unix hosts.

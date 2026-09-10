@@ -55,6 +55,7 @@ const (
 	RedirectIn                         // <
 	RedirectOutFD                      // >&N
 	RedirectInFD                       // <&N
+	RedirectBadDoubleIn                // << (always a cmd.exe error)
 )
 
 // Redirect represents a single I/O redirection.

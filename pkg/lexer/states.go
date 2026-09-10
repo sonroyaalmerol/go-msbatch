@@ -185,7 +185,7 @@ func (bl *BatchLexer) stateLabelName() stateFn {
 }
 
 func (bl *BatchLexer) stateRedirectRune(r rune) stateFn {
-	if r == '>' && bl.check(func(r rune) bool { return r == '>' }) {
+	if bl.check(func(r rune) bool { return r == r2redirect(r) }) {
 		bl.next()
 	}
 	if bl.check(func(r rune) bool { return r == '&' }) {
@@ -193,6 +193,13 @@ func (bl *BatchLexer) stateRedirectRune(r rune) stateFn {
 	}
 	bl.emit(TokenRedirect)
 	return bl.stateFollow
+}
+
+func r2redirect(r rune) rune {
+	if r == '<' {
+		return '<'
+	}
+	return '>'
 }
 
 func (bl *BatchLexer) stateRedirect() stateFn {

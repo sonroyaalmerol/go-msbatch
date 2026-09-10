@@ -47,12 +47,18 @@ func (bl *BatchLexer) stateSetVar() stateFn {
 
 func (bl *BatchLexer) stateArithmetic() stateFn {
 	r := bl.next()
+	if r >= '0' && r <= '9' && bl.check(func(c rune) bool { return c == '<' || c == '>' }) {
+		bl.prev()
+		return bl.stateRedirect()
+	}
 	switch {
 	case r == 0:
 		return bl.stateRoot
 	case isNL(r):
 		bl.prev()
 		return bl.stateRoot
+	case r == '>' || r == '<':
+		return bl.stateRedirectRune(r)
 	case r == '|' || r == '&':
 		bl.backup()
 		return bl.stateRoot
@@ -67,6 +73,8 @@ func (bl *BatchLexer) stateArithmetic() stateFn {
 		bl.compoundDepth++
 		bl.emit(TokenPunctuation)
 		return bl.stateArithmetic
+	case r == '"':
+		return bl.lexStringDoubleBody(bl.stateArithmetic)()
 	case r == ')':
 		bl.emit(TokenPunctuation)
 		return bl.stateArithmetic

@@ -879,6 +879,16 @@ func (rm *redirectManager) close(p *Processor) {
 func (rm *redirectManager) apply(p *Processor, redirects []parser.Redirect) bool {
 	ok := true
 	for _, r := range redirects {
+		if r.Kind == parser.RedirectBadDoubleIn {
+			op := "<<"
+			if r.FD >= 0 {
+				op = strconv.Itoa(r.FD) + op
+			}
+			fmt.Fprintf(p.Stderr, "%s was unexpected at this time.\n", op)
+			p.SetErrorLevel(255)
+			p.Exited = true
+			return false
+		}
 		targetPath := pathutil.MapPath(r.Target)
 		isNul := strings.EqualFold(r.Target, "nul")
 		kindStr := ">"

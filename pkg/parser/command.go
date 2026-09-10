@@ -87,6 +87,9 @@ func (p *Parser) parseSingleRedirect() (Redirect, int, int) {
 	r := Redirect{}
 
 	switch {
+	case strings.Contains(v, "<<"):
+		r.Kind = RedirectBadDoubleIn
+		r.FD = extractFD(v, "<<", -1)
 	case strings.Contains(v, ">>"):
 		r.Kind = RedirectAppend
 		r.FD = extractFD(v, ">>", 1)
