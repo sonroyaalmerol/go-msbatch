@@ -142,7 +142,7 @@ func Phase1PercentExpand(src string, env *Environment, args []string, originalAr
 			i += 2 // skip '%' and '~'
 
 			// Collect modifier letters.
-			const modChars = "fFdDpPnNxXsSeEaAtTzZ"
+			const modChars = "fFdDpPnNxXsSaAtTzZ"
 			var mods strings.Builder
 			for i < len(runes) && strings.ContainsRune(modChars, runes[i]) {
 				mods.WriteRune(runes[i])
@@ -388,7 +388,7 @@ func Phase4ForVarExpand(src string, forVars map[string]string) string {
 				if varIdx >= j {
 					mods := string(runes[j:varIdx])
 					varName := string(runes[varIdx])
-					if val, ok := forVars[varName]; ok {
+					if val, ok := forVars[varName]; ok && validModChars(mods) {
 						sb.WriteString(applyForVarModifiers(stripSurroundingQuotes(val), mods))
 						i = varIdx
 						continue
@@ -409,7 +409,16 @@ func Phase4ForVarExpand(src string, forVars map[string]string) string {
 	return sb.String()
 }
 
-// applyForVarModifiers applies FOR/positional-parameter tilde modifiers to val.
+// validModChars reports whether every modifier letter is one cmd.exe accepts.
+func validModChars(mods string) bool {
+	for _, r := range mods {
+		if !strings.ContainsRune("fFdDpPnNxXsSaAtTzZ", r) {
+			return false
+		}
+	}
+	return true
+}
+
 //
 // Path-component modifiers (d, p, n, x) are all extracted from the same
 // resolved value and their results concatenated, matching cmd.exe behaviour
@@ -417,14 +426,14 @@ func Phase4ForVarExpand(src string, forVars map[string]string) string {
 //
 // Supported modifiers:
 //
-//	f / s / e  — resolve to absolute path (applied first)
-//	d          — drive letter ("C:" on Windows, "" on Unix)
-//	p          — directory path with trailing separator
-//	n          — filename without extension
-//	x          — extension (including dot)
-//	a          — file attributes string
-//	t          — last-modified timestamp
-//	z          — file size in bytes
+
+// d          — drive letter ("C:" on Windows, "" on Unix)
+// p          — directory path with trailing separator
+// n          — filename without extension
+// x          — extension (including dot)
+// a          — file attributes string
+// t          — last-modified timestamp
+// z          — file size in bytes
 func applyForVarModifiers(val, mods string) string {
 	lower := strings.ToLower(mods)
 
@@ -433,7 +442,7 @@ func applyForVarModifiers(val, mods string) string {
 	hasN := strings.ContainsRune(lower, 'n')
 	hasX := strings.ContainsRune(lower, 'x')
 
-	if strings.ContainsAny(lower, "fse") || hasD || hasP {
+	if strings.ContainsAny(lower, "fs") || hasD || hasP {
 		val = absPathForModifiers(val)
 	}
 

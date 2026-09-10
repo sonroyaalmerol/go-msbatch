@@ -111,3 +111,8 @@ Each side of a `|` runs concurrently in a goroutine. An `os.Pipe()` connects the
 - **`ENABLEEXTENSIONS`** is accepted by `SETLOCAL` but has no effect; extensions are always active.
 - **`DISABLEDELAYEDEXPANSION`** turns delayed expansion off within the scope, as in cmd.exe.
 - **FOR variable names** are single characters (any character except `%`); multi-character names are not supported, matching cmd.exe.
+- **Invalid `%~` modifiers** are left literal instead of cmd.exe's two-line "path operator ... is invalid" error plus script abort.
+- **`FIND`, `SORT`, `WHERE`, `TIMEOUT`, `XCOPY`, `ROBOCOPY`, `TREE`, `MORE` are internal implementations** (external `.exe` programs on real Windows); edge-case output and flags may differ from the real executables.
+- **`GAWK`/`AWK` is an internal Go implementation** (goawk); programs relying on GNU awk extensions may behave differently, and files written from awk scripts get LF endings rather than CRLF.
+- **`PKZIP`, `PKUNZIP`, `PKZIPC` are mapped to 7-Zip** when available, since PKZIP does not exist on Unix hosts.
+- **`%DATE%` and `%TIME%` are fixed to the en-US layout** (`Mon MM/DD/YYYY`, `H:MM:SS.cc`) and do not follow the host locale.

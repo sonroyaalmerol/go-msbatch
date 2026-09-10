@@ -131,7 +131,25 @@ func TestPhase1TildeBasic(t *testing.T) {
 	}
 }
 
-// TestPhase1TildeN tests %~n0 (filename without extension).
+// TestPhase1TildeInvalidModifierLeftLiteral: %~ with non-cmd modifier letters stays literal.
+func TestPhase1TildeInvalidModifierLeftLiteral(t *testing.T) {
+	env := processor.NewEmptyEnvironment(true)
+	args := []string{"C:\\Windows\\notepad.exe"}
+	for _, expr := range []string{"%~e1", "%~q1"} {
+		if got := processor.Phase1PercentExpand(expr, env, args, nil); got != expr {
+			t.Errorf("%s: expected literal %q, got %q", expr, expr, got)
+		}
+	}
+}
+
+// TestPhase4InvalidModifierLeftLiteral: FOR %~ with non-cmd modifier letters stays literal.
+func TestPhase4InvalidModifierLeftLiteral(t *testing.T) {
+	got := processor.Phase4ForVarExpand("echo %~qf", map[string]string{"f": "x"})
+	if want := "echo %~qf"; got != want {
+		t.Errorf("expected %q, got %q", want, got)
+	}
+}
+
 func TestPhase1TildeN(t *testing.T) {
 	env := processor.NewEmptyEnvironment(true)
 	args := []string{"/tmp/tilde_test.bat"}
