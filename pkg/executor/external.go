@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
@@ -583,6 +586,54 @@ func resolveBatchFile(p *processor.Processor, name string) (string, bool) {
 	return "", false
 }
 
+type parseCacheEntry struct {
+	modTime time.Time
+	size    int64
+	nodes   []parser.Node
+}
+
+var (
+	parseCache      sync.Map
+	parseCacheCount atomic.Int64
+)
+
+const parseCacheMax = 512
+
+func loadOrParseBatch(batPath string) ([]parser.Node, error) {
+	key := filepath.Clean(batPath)
+	fi, err := os.Stat(batPath)
+	if err != nil {
+		return nil, err
+	}
+	if v, ok := parseCache.Load(key); ok {
+		e := v.(parseCacheEntry)
+		if e.size == fi.Size() && e.modTime.Equal(fi.ModTime()) {
+			return e.nodes, nil
+		}
+	}
+
+	content, err := os.ReadFile(batPath)
+	if err != nil {
+		return nil, err
+	}
+	src := processor.Phase0ReadLine(string(content))
+	nodes := processor.ParseExpanded(src)
+
+	fi, err = os.Stat(batPath)
+	if err == nil {
+		if parseCacheCount.Load() >= parseCacheMax {
+			parseCache.Range(func(k, v any) bool {
+				parseCache.Delete(k)
+				return true
+			})
+			parseCacheCount.Store(0)
+		}
+		parseCache.Store(key, parseCacheEntry{modTime: fi.ModTime(), size: fi.Size(), nodes: nodes})
+		parseCacheCount.Add(1)
+	}
+	return nodes, nil
+}
+
 func runBatchFile(p *processor.Processor, batPath string, args []string, called bool) error {
 	batchMode := p.Env.BatchMode()
 	p.Env.SetBatchMode(true)
@@ -597,7 +648,7 @@ func runBatchFile(p *processor.Processor, batPath string, args []string, called 
 	p.Trace.Indent()
 	defer p.Trace.Dedent()
 
-	content, err := os.ReadFile(batPath)
+	nodes, err := loadOrParseBatch(batPath)
 	if err != nil {
 		fmt.Fprintf(p.Stderr, "'%s' is not recognized as an internal or external command,\noperable program or batch file.\n", batPath)
 		p.FailureWithCode(9009)
@@ -620,9 +671,6 @@ func runBatchFile(p *processor.Processor, batPath string, args []string, called 
 	child.Echo = p.Echo
 	child.CallDepth = 1
 	child.SetCurrentFile(batPath)
-
-	src := processor.Phase0ReadLine(string(content))
-	nodes := processor.ParseExpanded(src)
 
 	execErr := child.Execute(nodes)
 	p.ExitCode = child.ExitCode
