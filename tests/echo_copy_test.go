@@ -29,9 +29,15 @@ func TestEchoRedirectAndCopy(t *testing.T) {
 			wantFilesExist:     []string{"dest/test.sum"},
 		},
 		{
-			name:               "copy_plus_concatenates",
+			name:               "copy_plus_concatenates_in_text_mode",
 			script:             "@echo off\necho line1 >> file1.sum\necho line2 >> file2.sum\ncopy file1.sum + file2.sum combined.sum\n",
-			wantStdoutContains: []string{"1 file(s) copied"},
+			wantStdoutContains: []string{"file1.sum", "file2.sum", "1 file(s) copied"},
+			wantFiles:          map[string]string{"combined.sum": "line1 \r\nline2 \r\n\x1a"},
+		},
+		{
+			name:               "copy_plus_binary_mode_preserves_bytes",
+			script:             "@echo off\necho line1 >> file1.sum\necho line2 >> file2.sum\ncopy /b file1.sum + file2.sum combined.sum\n",
+			wantStdoutContains: []string{"file1.sum", "file2.sum", "1 file(s) copied"},
 			wantFiles:          map[string]string{"combined.sum": "line1 \r\nline2 \r\n"},
 		},
 		{
@@ -61,7 +67,7 @@ func TestEchoRedirectAndCopy(t *testing.T) {
 			name:               "copy_plus_with_variable_source",
 			script:             "@echo off\nset OUTPUTFILE=test.sum\necho first >> %OUTPUTFILE%\necho second >> temp.txt\ncopy %OUTPUTFILE% + temp.txt combined.txt\n",
 			wantStdoutContains: []string{"1 file(s) copied"},
-			wantFiles:          map[string]string{"combined.txt": "first \r\nsecond \r\n"},
+			wantFiles:          map[string]string{"combined.txt": "first \r\nsecond \r\n\x1a"},
 		},
 		{
 			name:               "copy_after_cd_roundtrip",

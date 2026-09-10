@@ -449,6 +449,7 @@ func reportMissingSrc(p *processor.Processor, src struct {
 func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	var rawArgs []string
 	suppressPrompt := true
+	binaryMode := false
 
 	for _, arg := range cmd.Args {
 		lower := strings.ToLower(arg)
@@ -457,7 +458,11 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 			suppressPrompt = true
 		case "/-y":
 			suppressPrompt = false
-		case "/b", "/a", "/v":
+		case "/b":
+			binaryMode = true
+		case "/a":
+			binaryMode = false
+		case "/v":
 		default:
 			rawArgs = append(rawArgs, arg)
 		}
@@ -604,36 +609,45 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	}
 
 	switch {
-	case !hasPlus && len(srcs) > 1 && dstErr != nil && !dstIsDirIntent && !tools.HasWildcards(dstPattern):
+	case hasPlus || (!dstIsDirIntent && !dstIsDir && !tools.HasWildcards(dstPattern) && len(srcs) > 1):
 		var validSrcs []srcEntry
 		for _, src := range srcs {
-			if src.notFound {
-				reportMissingSrc(p, src)
-				continue
+			if !src.notFound {
+				validSrcs = append(validSrcs, src)
 			}
-			validSrcs = append(validSrcs, src)
 		}
 		if len(validSrcs) == 0 {
-			fmt.Fprintf(p.Stdout, "        0 file(s) copied.\n")
+			reportMissingSrc(p, srcs[0])
 			return p.Failure()
 		}
-		if !confirmOverwrite(dst) {
+		target := dstTarget
+		if !hasPlus {
+			target = dst
+		}
+		if !confirmOverwrite(target) {
 			return p.Success()
 		}
 		var buf bytes.Buffer
 		for _, src := range validSrcs {
+			fmt.Fprintf(p.Stdout, "%s\n", filepath.Base(src.path))
 			data, err := os.ReadFile(src.path)
 			if err != nil {
 				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
-				p.Failure()
-				return nil
+				return p.Failure()
+			}
+			if !binaryMode {
+				if i := bytes.IndexByte(data, 0x1a); i >= 0 {
+					data = data[:i]
+				}
 			}
 			buf.Write(data)
 		}
-		if err := os.WriteFile(dst, buf.Bytes(), 0666); err != nil {
+		if !binaryMode {
+			buf.WriteByte(0x1a)
+		}
+		if err := os.WriteFile(target, buf.Bytes(), 0666); err != nil {
 			fmt.Fprintf(p.Stderr, "Access is denied.\n")
-			p.Failure()
-			return nil
+			return p.Failure()
 		}
 		fmt.Fprintf(p.Stdout, "        1 file(s) copied.\n")
 	case !hasPlus && len(srcs) > 1:
@@ -659,6 +673,7 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		for _, src := range srcs {
 			if src.notFound {
 				reportMissingSrc(p, src)
+				hasFailure = true
 				continue
 			}
 			target := buildTarget(src.path, src.pattern, true)
@@ -684,7 +699,9 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 	case !hasPlus:
 		if srcs[0].notFound {
 			reportMissingSrc(p, srcs[0])
-			fmt.Fprintf(p.Stdout, "        0 file(s) copied.\n")
+			if tools.HasWildcards(srcs[0].pattern) {
+				fmt.Fprintf(p.Stdout, "        0 file(s) copied.\n")
+			}
 			return p.Failure()
 		}
 		if dstIsDirIntent && dstErr != nil {
@@ -707,39 +724,6 @@ func cmdCopy(p *processor.Processor, cmd *parser.SimpleCommand) error {
 		}
 		if tools.HasWildcards(srcs[0].pattern) {
 			fmt.Fprintf(p.Stdout, "%s\n", filepath.Base(srcs[0].path))
-		}
-		fmt.Fprintf(p.Stdout, "        1 file(s) copied.\n")
-	default:
-		var validSrcs []srcEntry
-		for _, src := range srcs {
-			if src.notFound {
-				reportMissingSrc(p, src)
-				continue
-			}
-			validSrcs = append(validSrcs, src)
-		}
-		if len(validSrcs) == 0 {
-			fmt.Fprintf(p.Stdout, "        0 file(s) copied.\n")
-			return p.Failure()
-		}
-		if !confirmOverwrite(dstTarget) {
-			return p.Success()
-		}
-		var buf bytes.Buffer
-		for _, src := range validSrcs {
-			fmt.Fprintf(p.Stdout, "%s\n", filepath.Base(src.path))
-			data, err := os.ReadFile(src.path)
-			if err != nil {
-				fmt.Fprintf(p.Stderr, "The system cannot find the file specified.\n")
-				p.Failure()
-				return nil
-			}
-			buf.Write(data)
-		}
-		if err := os.WriteFile(dstTarget, buf.Bytes(), 0666); err != nil {
-			fmt.Fprintf(p.Stderr, "Access is denied.\n")
-			p.Failure()
-			return nil
 		}
 		fmt.Fprintf(p.Stdout, "        1 file(s) copied.\n")
 	}
