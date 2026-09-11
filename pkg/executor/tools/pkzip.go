@@ -9,6 +9,7 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/procs"
 )
 
 type pkzipMode int
@@ -171,7 +172,7 @@ func run7z(p *processor.Processor, cmd *parser.SimpleCommand, defaultMode pkzipM
 	c.Stdin = p.Stdin
 	c.Env = p.ChildEnv()
 
-	if err := c.Run(); err != nil {
+	if err := procs.Run(p.Context, c); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			p.SetErrorLevel(exitErr.ExitCode())
 		} else {

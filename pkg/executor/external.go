@@ -15,6 +15,7 @@ import (
 	"github.com/sonroyaalmerol/go-msbatch/pkg/parser"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/pathutil"
 	"github.com/sonroyaalmerol/go-msbatch/pkg/processor"
+	"github.com/sonroyaalmerol/go-msbatch/pkg/procs"
 )
 
 // exePrefix returns the command tokens from the MSBATCH_EXE_PREFIX
@@ -496,7 +497,7 @@ func runOSCommand(p *processor.Processor, name string, args []string, displayNam
 
 	c.Env = p.ChildEnv()
 
-	if err := c.Run(); err != nil {
+	if err := procs.Run(p.Context, c); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			p.SetErrorLevel(exitErr.ExitCode())
 			return nil // Command ran but failed - don't try Wine fallback
