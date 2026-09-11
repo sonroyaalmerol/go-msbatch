@@ -630,6 +630,8 @@ func runBatchFile(p *processor.Processor, batPath string, args []string, called 
 
 	child := processor.New(p.Env, childArgs, p.Executor)
 	child.Logger = p.Logger
+	child.Context = p.Context
+	child.BaseEnv = p.BaseEnv
 	child.Trace = p.Trace
 	child.Stdout = p.Stdout
 	child.Stderr = p.Stderr
