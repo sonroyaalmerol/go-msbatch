@@ -32,6 +32,10 @@ func (p *Processor) Execute(nodes []parser.Node) error {
 	p.PC = 0
 	p.Exited = false
 	for p.PC < len(p.Nodes) && !p.Exited {
+		if p.Context != nil && p.Context.Err() != nil {
+			p.SetErrorLevel(-1)
+			return p.Context.Err()
+		}
 		n := p.Nodes[p.PC]
 		if err := p.ExecuteNode(n); err != nil {
 			return err
