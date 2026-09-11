@@ -447,12 +447,18 @@ func RestoreDriveDirs(dirs map[byte]string) {
 
 // Chdir changes the process directory and records its drive state. pi:keep
 func Chdir(dir string) error {
+	old, _ := os.Getwd()
 	if err := os.Chdir(dir); err != nil {
 		return err
 	}
+	logical := dir
+	if !filepath.IsAbs(logical) {
+		logical = filepath.Join(old, logical)
+	}
+	os.Setenv("PWD", filepath.Clean(logical))
 	abs, err := os.Getwd()
 	if err != nil {
-		abs = dir
+		abs = logical
 	}
 	if w := ToWindowsPath(abs); len(w) >= 2 && w[1] == ':' {
 		SetDriveDir(w[0], abs)
